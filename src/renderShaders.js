@@ -516,6 +516,22 @@ void main() {
   // 模擬範圍內：水面 = 海床 + 模擬出來的水深（略為墊高，薄薄一層水才不會被沙灘吃掉）
   // 周圍都是乾的陸地：把水面壓到地面下，省得白畫
   float shoreY = lift * (1.0 - win) + swl * (1.0 - aS) + aS * (bedH + hS + 0.03 - (hS <= 0.0 && bedH > 0.05 ? 1.0 : 0.0));
+  // 測試（?wno=fsvtw）：單獨關掉海面高度的某一項，查手機上海面被抬高是哪一項造成的
+#ifdef NO_F
+  d = vec3(0.0);
+#endif
+#ifdef NO_S
+  shoreY = 0.0;
+#endif
+#ifdef NO_V
+  vY.x = 0.0;
+#endif
+#ifdef NO_T
+  tw = vec3(0.0); tCurl = vec2(0.0);
+#endif
+#ifdef NO_W
+  swY = 0.0;
+#endif
   vec3 pos = vec3(xz.x + d.x + uTsu.x * tCurl.x, d.y + tw.x + tCurl.y + vY.x + swY + shoreY, xz.y + d.z + uTsu.y * tCurl.x);
   vP0 = xz;
   vWaveH = d.y;

@@ -393,6 +393,8 @@ waterFlag.renderOrder = 2.1;
 water.add(waterFlag);   // 跟著海面一起顯示、隱藏（畫倒影時海面是藏起來的）
 // 測試（?wlod0）：海面頂點不用縮小版的浪高圖，查手機上遠處海面翹起來的問題
 if (new URLSearchParams(window.location.search).has('wlod0')) for (const m of [water.material, waterFlag.material]) m.defines.WLOD0 = 1;
+// 測試（?wno=字母）：關掉海面高度的某幾項。f FFT 浪、s 岸邊的浪、v 漩渦／水龍捲、t 巨浪、w 颱風長浪
+for (const c of new URLSearchParams(window.location.search).get('wno') || '') if ('fsvtw'.includes(c)) for (const m of [water.material, waterFlag.material]) m.defines['NO_' + c.toUpperCase()] = 1;
 // 測試（?wflat）：海面強制放平，分辨「海面真的被抬高」還是「深度、繪製順序」造成的假象
 if (new URLSearchParams(window.location.search).has('wflat')) for (const m of [water.material, waterFlag.material]) m.defines.WFLAT = 1;
 scene.add(water);
