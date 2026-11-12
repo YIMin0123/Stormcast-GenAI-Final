@@ -1731,19 +1731,26 @@ canvas.addEventListener('pointerup', () => { keys.mouse = false; });
 canvas.addEventListener('pointercancel', () => { keys.mouse = false; });
 // 瀏覽器偶爾會回報一筆大得離譜的滑鼠位移（滑鼠鎖在畫面裡時，游標被拉回中央的那一下漏進來；
 // 剛鎖上、剛放開、視窗剛切回來的第一筆也常常是這樣），照單全收的話鏡頭會自己猛轉一大圈。
-// 所以：鎖定狀態剛變、視窗剛切回來的那一小段時間不收；平常則跟前一筆比，突然冒出來的一大步丟掉。
-// 手真的甩得很快時位移是一筆一筆變大的，不會被擋（頂多少掉開頭的一筆）
-let lookSkip = 0, lookT = 0, lookMag = 0;
-const lookPause = () => { lookSkip = performance.now() + 120; lookMag = 0; };
+// 鎖定狀態剛變、視窗剛切回來的那一小段時間不收；平常則跟「最近幾筆的平均」比（不是只跟前一筆）：
+//   比平均大很多的一筆、或是方向突然反過來又特別大的一筆，丟掉。
+// 以前門檻是 150 像素、只跟前一筆比，一兩百像素的怪值會漏過去，轉視角轉到一半畫面會突然甩到別的方向（使用者回報）。
+// 手真的甩得很快時位移是一筆一筆變大的：被擋下的那一筆也會把平均往上拉，接下來一兩筆就會收（頂多少掉開頭一兩筆）
+let lookSkip = 0, lookT = 0, lookAvg = 0, lookAx = 0, lookAy = 0;
+const lookPause = () => { lookSkip = performance.now() + 120; lookAvg = lookAx = lookAy = 0; };
 document.addEventListener('pointerlockchange', lookPause);
 window.addEventListener('focus', lookPause);
-function lookJump(e) {
-  const mag = Math.hypot(e.movementX, e.movementY), now = performance.now();
-  const calm = now - lookT > 120 ? 0 : lookMag;   // 停了一下再動：從零算起
+function lookJump(e, now = performance.now()) {
+  const dx = e.movementX, dy = e.movementY, mag = Math.hypot(dx, dy);
+  if (now - lookT > 120) lookAvg = lookAx = lookAy = 0;   // 停了一下再動：從零算起
   lookT = now;
-  if (now < lookSkip) { lookMag = 0; return true; }
-  if (mag > 150 && mag > 4 * calm + 40) { lookMag = Math.min(mag, 2 * calm + 60); return true; }
-  lookMag = mag;
+  if (now < lookSkip) return true;
+  const back = dx * lookAx + dy * lookAy < 0 && mag > 2 * lookAvg + 20;   // 正在往一邊轉，突然冒出一大步往反方向
+  if (mag > Math.max(70, 2.5 * lookAvg + 30) || back) {
+    lookAvg = Math.min(mag, lookAvg * 1.6 + 25);
+    return true;
+  }
+  lookAvg += (mag - lookAvg) * 0.35;
+  lookAx += (dx - lookAx) * 0.35; lookAy += (dy - lookAy) * 0.35;
   return false;
 }
 canvas.addEventListener('pointermove', (e) => {
