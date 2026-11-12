@@ -35,6 +35,12 @@ uniform float uFlash;      // 閃電
 uniform vec3 uFlashDir;    // 閃電在哪個方向（從鏡頭看過去）：那一片天空和雲被照得最亮
 uniform float uRain;       // 雨勢
 uniform vec2 uCloudT;      // 雲飄了多遠（風越大飄越快，所以是累加的，不是「速度 × 時間」）
+// 晴天的積雲：先畫好的一張環景圖（見 clouds.js）。有開 PAINT_SKY 的材質才會用到（天空一定開；海面的倒影看機器）
+#ifdef PAINT_SKY
+uniform samplerCube uCloudMap;   // RGB 雲表面朝哪個方向、A 有沒有雲
+uniform vec3 uPaint;             // (用不用 0–1, 整片雲繞著天頂轉了多少的 cos, sin)：雲慢慢飄
+#endif
+float gCloud = 0.0;              // skyBase 算完之後：這個方向被畫好的積雲擋住幾成（太陽、月亮躲在雲後面用）
 
 float hash21(vec2 p) {
   p = fract(p * vec2(123.34, 456.21));
@@ -89,11 +95,16 @@ vec3 skyBase(vec3 d, int oct) {
     float st = step(0.90, hash21(ip)) * smoothstep(0.10, 0.0, length(fp - o)) * (0.4 + 0.6 * hash21(ip + 1.3));
     c += vec3(0.9, 0.95, 1.0) * st * (1.0 - uDay) * (1.0 - uGloom) * (1.0 - uFog) * 1.3;
   }
-  if (d.y > 0.015) {
+  // 晴天用畫好的積雲，天色一沉就換回下面這套會變厚、變暗、會被閃電照亮的雲（paint：畫好的積雲佔幾成）
+  float paint = 0.0;
+#ifdef PAINT_SKY
+  paint = uPaint.x * (1.0 - smoothstep(0.08, 0.42, uGloom));
+#endif
+  if (d.y > 0.015 && paint < 0.995) {
     vec2 uv = d.xz / (d.y + 0.14) * 1.15 + uCloudT;
     float n = fbm(uv, oct);
     float soft = oct >= 5 ? 0.0 : 0.13;   // 倒影用的（oct 少的那份）邊緣放柔很多
-    float dens = smoothstep(0.55 - 0.36 * uGloom - soft, 0.66 - 0.2 * uGloom + soft, n) * smoothstep(0.015, 0.16, d.y);   // 雲的邊緣是清楚的塊面；天色越沉雲越厚
+    float dens = smoothstep(0.55 - 0.36 * uGloom - soft, 0.66 - 0.2 * uGloom + soft, n) * smoothstep(0.015, 0.16, d.y) * (1.0 - paint);   // 雲的邊緣是清楚的塊面；天色越沉雲越厚
     float s = max(dot(d, uSunDir), 0.0);
     vec3 lit = mix(vec3(1.0, 0.99, 0.97), vec3(0.70, 0.77, 0.93), smoothstep(0.71, 0.75, n)) * SKY_AMB;   // 雲只有亮面和偏藍的暗面兩階
     if (oct >= 5) {
@@ -107,7 +118,7 @@ vec3 skyBase(vec3 d, int oct) {
     lit += vec3(0.62, 0.68, 0.95) * uFlash * 0.38 * pow(max(dot(d, uFlashDir), 0.0), 3.0) * (1.0 - 0.75 * smoothstep(0.5, 0.8, n));
     c = mix(c, lit, dens * 0.92);
   }
-  if (oct >= 5 && d.y > -0.03 && d.y < 0.5) {
+  if (oct >= 5 && d.y > -0.03 && d.y < 0.5 && paint < 0.995) {
     // 夏天的積雨雲：從地平線往上堆，有的方向堆得特別高；頂端亮白、底部藍灰、朝太陽的一側更亮
     vec2 ap = normalize(d.xz + 1e-5) * 2.3;
     float tower = fbm(ap + 3.0, 3);
@@ -118,8 +129,38 @@ vec3 skyBase(vec3 d, int oct) {
     float sunSide = 0.5 + 0.5 * dot(normalize(d.xz + 1e-5), normalize(uSunDir.xz + 1e-5));
     vec3 ccol = mix(vec3(0.60, 0.69, 0.87), vec3(1.0, 0.99, 0.95), smoothstep(0.15, 0.7, hgt * 0.7 + (billow - 0.45) * 0.9 + 0.25 * sunSide));
     ccol = ccol * SKY_AMB * (1.0 - 0.62 * uGloom) * (1.0 - 0.3 * uRain) + vec3(1.0, 0.45, 0.15) * uDusk * 0.25 * sunSide * (1.0 - 0.9 * uGloom);   // 天陰下來就沒有夕陽把它染紅
-    c = mix(c, ccol, cum * 0.96);
+    c = mix(c, ccol, cum * 0.96 * (1.0 - paint));
   }
+#ifdef PAINT_SKY
+  if (paint > 0.004 && d.y > -0.02) {
+    // 畫好的積雲：只有幾個平塗的顏色——照到太陽的白、半亮、背光的藍灰、雲底的暖灰，交界都是乾淨的線
+    vec3 q = vec3(d.x * uPaint.y - d.z * uPaint.z, d.y, d.x * uPaint.z + d.z * uPaint.y);
+    vec4 cm = textureCube(uCloudMap, q);
+    float a = smoothstep(0.32, 0.60, cm.a) * smoothstep(-0.012, 0.012, d.y);   // 圖放大了邊緣會糊：收成一條利落的邊
+    if (a > 0.0) {
+      vec3 n = cm.rgb * 2.0 - 1.0;
+      n = normalize(vec3(n.x * uPaint.y + n.z * uPaint.z, n.y, n.z * uPaint.y - n.x * uPaint.z));
+      vec3 sc = SUN_COL;
+      float sm = max(sc.r, max(sc.g, sc.b));
+      vec3 tint = sm > 0.001 ? sc / sm : vec3(1.0);   // 太陽（月亮）光的顏色：黃昏是橘的
+      float s = max(dot(d, uSunDir), 0.0);
+      float ndl = dot(n, uSunDir);
+      float litK = smoothstep(-0.03, 0.06, ndl - 0.10);    // 背光 → 半亮
+      float fullK = smoothstep(0.44, 0.54, ndl);            // 半亮 → 全亮（正對著太陽的那幾塊）
+      float under = smoothstep(-0.45, -0.80, n.y);
+      vec3 amb = SKY_AMB * (1.0 - 0.3 * uRain);
+      float glow = uDusk * (1.0 - uGloom);                  // 朝霞、晚霞：受光面自己發亮的橘粉色
+      vec3 top = vec3(1.0, 0.99, 0.96) * mix(vec3(1.0), tint, 0.45 + 0.3 * uDusk) * amb + vec3(1.0, 0.60, 0.40) * glow * 0.42 + SUN_COL * pow(s, 8.0) * 0.18;
+      vec3 shade = vec3(0.57, 0.68, 0.91) * amb;
+      vec3 belly = mix(vec3(0.76, 0.76, 0.84), vec3(0.95, 0.66, 0.56), uDusk) * amb + vec3(0.9, 0.42, 0.34) * glow * 0.16;   // 雲底：白天是暖灰，黃昏被低低的太陽染成粉橘
+      vec3 cc = mix(mix(shade, belly, under), mix(mix(shade, top, 0.62), top, fullK), litK * (1.0 - under));
+      // 越靠近地平線的雲越遠：淡進天色裡，才有一層一層往後退的感覺
+      cc = mix(c, cc, 0.50 + 0.50 * smoothstep(0.0, 0.22, d.y));
+      c = mix(c, cc, a * paint);
+      gCloud = a * paint;
+    }
+  }
+#endif
   if (oct >= 5 && uRain > 0.02 && d.y > -0.03 && d.y < 0.55) {
     // 遠處的雨幕：雲底垂下來一道一道灰濛濛的雨簾，有的方向下得大、有的方向稀，被風吹得斜斜的
     vec2 ap = normalize(d.xz + 1e-5);
@@ -137,7 +178,8 @@ vec3 skyBase(vec3 d, int oct) {
 
 vec3 skyColor(vec3 d) {
   float s = max(dot(d, uSunDir), 0.0);
-  return skyBase(d, 5) + SUN_COL * pow(s, 1200.0) * 14.0;
+  vec3 c = skyBase(d, 5);
+  return c + SUN_COL * pow(s, 1200.0) * 14.0 * (1.0 - gCloud);
 }
 
 // 雲在海面與陸地上的影子（固定在世界座標，隨雲飄移）
