@@ -465,6 +465,7 @@ function dropBoat(b) {
 let kit = newKit();                                             // 自己的家當（伺服器保管，這裡只是照著顯示）
 let berth = { label: '', ...berthPose(BERTHS[0], 'skiff') };   // 自己分到的停船格
 const garage = new Map();                                       // 收在倉庫裡的船：船種 → Boat（油量、破洞、魚箱裡的魚都留在上面）
+const garageState = new Map();                                  // 重新整理頁面後，倉庫裡的船是什麼樣子（伺服器記著的）：船種 → { fuel, cracks }
 let myBoat = addBoat('skiff', berth);                           // 自己放在世界裡的那一艘
 let boat = myBoat;   // 「目前這艘」：最後踩上去的船（可能是別人的）。鏡頭、浪、船燈以它為準
 
@@ -1040,6 +1041,49 @@ function hullBlocked(b, x, z) {
   return [[h * 0.8, 0], [-h * 0.8, 0], [h * 0.6, w * 0.6], [h * 0.6, -w * 0.6], [-h * 0.6, w * 0.6], [-h * 0.6, -w * 0.6], [0, w * 0.8], [0, -w * 0.8]]
     .some(([a, e]) => boatGround(x + c * a - s * e, z + s * a + c * e) > -S.draft * 0.7);
 }
+// 船跟船會互相擋住。每個人只算自己的船：把兩艘船各當成一條「兩頭圓的長條」，疊在一起就把自己的船推開、往對方衝的速度歸零。
+// 開著（或還在滑行）的船才會被擋、被推開；停著沒人開的船不讓位——所以停好的船不會被別人擠走，別人的船也推不動
+const hullGap = { d: 0, nx: 0, nz: 0 };
+function boatGap(a, b) {
+  const ha = Math.max(0, (a.spec.len - a.spec.beam) / 2), hb = Math.max(0, (b.spec.len - b.spec.beam) / 2);
+  const d1x = 2 * ha * Math.cos(a.heading), d1z = 2 * ha * Math.sin(a.heading), d2x = 2 * hb * Math.cos(b.heading), d2z = 2 * hb * Math.sin(b.heading);
+  const p1x = a.x - d1x / 2, p1z = a.z - d1z / 2, p2x = b.x - d2x / 2, p2z = b.z - d2z / 2;
+  const rx = p1x - p2x, rz = p1z - p2z;
+  const A = d1x * d1x + d1z * d1z, E = d2x * d2x + d2z * d2z, C = d1x * rx + d1z * rz, F = d2x * rx + d2z * rz, B = d1x * d2x + d1z * d2z;
+  // 兩條線段上最近的兩點
+  const den = A * E - B * B;
+  let s = den > 1e-6 ? clamp((B * F - C * E) / den, 0, 1) : 0, t = E > 1e-6 ? (B * s + F) / E : 0;
+  if (t < 0) { t = 0; s = A > 1e-6 ? clamp(-C / A, 0, 1) : 0; } else if (t > 1) { t = 1; s = A > 1e-6 ? clamp((B - C) / A, 0, 1) : 0; }
+  let cx = p1x + d1x * s - (p2x + d2x * t), cz = p1z + d1z * s - (p2z + d2z * t);
+  const d = Math.hypot(cx, cz);
+  if (d < 1e-4) { cx = a.x - b.x; cz = a.z - b.z; const l = Math.hypot(cx, cz) || 1; cx /= l; cz /= l; } else { cx /= d; cz /= d; }
+  hullGap.d = d - (a.spec.beam + b.spec.beam) / 2; hullGap.nx = cx; hullGap.nz = cz;   // d < 0：疊在一起了；n：從對方指向自己
+  return hullGap;
+}
+let bumpAt = 0;
+function collideBoats(b, helm) {
+  if (b.sinking || !(helm || Math.abs(b.speed) > 0.5)) return;
+  let moved = false;
+  for (const o of boats) {
+    if (o === b || o.sinking) continue;
+    if (Math.hypot(o.x - b.x, o.z - b.z) > (o.spec.len + b.spec.len) / 2 + 1) continue;
+    const g = boatGap(b, o);
+    if (g.d >= 0) continue;
+    // 推開（推過去會卡進岸壁就不推，只把速度擋下來）
+    const nx = b.x - g.nx * g.d, nz = b.z - g.nz * g.d;
+    if (!hullBlocked(b, nx, nz) || hullBlocked(b, b.x, b.z)) { b.x = nx; b.z = nz; moved = true; }
+    const along = Math.cos(b.heading) * g.nx + Math.sin(b.heading) * g.nz, into = b.speed * along;   // 往對方衝的速度（負的才是）
+    if (into < 0) {
+      b.speed -= into * along;
+      if (into < -1.2 && time - bumpAt > 0.6) {
+        bumpAt = time;
+        audio.play('drop', clamp(-into / 5, 0.4, 1));
+        if (player.boat === b) jetShake = Math.max(jetShake, clamp(-into / 12, 0.1, 0.5));
+      }
+    }
+  }
+  if (moved) b._pose();
+}
 const tieBoat = (m) => { m.boat.moor = { i: m.i, lx: m.lx, lz: m.lz, len: Math.max(m.d + 1, 2.5) }; };
 function updateMooring(dt, helm) {
   for (const b of boats) {
@@ -1150,6 +1194,8 @@ function useBoat(type, pose) {
   old.setManned(false);
   if (old.sinking || old._lost) fish.wreck(old, false); else { old.stored = true; garage.set(old.spec.id, old); }
   let b = garage.get(type);
+  const kept = garageState.get(type);
+  garageState.delete(type);
   if (b) {
     garage.delete(type);
     b.stored = false;
@@ -1160,6 +1206,10 @@ function useBoat(type, pose) {
     const lv = kit.boats[type] ?? { engineLv: 0, boxLv: 0 };
     b = addBoat(type, pose, lv.boxLv);
     b.engineLv = lv.engineLv;
+    if (kept) {   // 收進倉庫之後重新整理過頁面：油量、破洞照收進去時的樣子
+      b.fuel = clamp(kept.fuel, 0, b.spec.tank);
+      for (const c of kept.cracks) b.restoreCrack(c[0], c[1], c[2]);
+    }
   }
   if (player.boat === old && mode === 'walk') player.place(walkWorld, player.x, player.z);
   myBoat = b;
@@ -1318,6 +1368,7 @@ function interact() {
       const types = BOAT_ORDER.filter((t) => kit.boats[t]);
       if (types.length < 2) return toast(`你的${myBoat.spec.name}停在 ${berth.label}。買了別的船可以來這裡換`);
       if (myBoat.sinking || !inHarbor(myBoat.x, myBoat.z)) return toast('船不在港裡，要先開回來才能換');
+      sendBoatDetail();   // 先把這艘船現在的油量、破洞告訴伺服器（收進倉庫時它要記著）
       return net.send({ t: 'swap', type: types[(types.indexOf(kit.active) + 1) % types.length] });
     }
     default: if (player.seat) standUp();
@@ -2024,7 +2075,15 @@ function applyWorld(w, snap = false) {
 }
 
 // 每 0.1 秒把自己的位置和船的狀態送出去（沒變就不送，每秒至少一次）
-let sendAcc = 0, lastPosMsg = '', lastPosAt = 0, lastBoatMsg = '', lastBoatAt = 0, lastBoatDetail = '', detailN = 0;
+let sendAcc = 0, lastPosMsg = '', lastPosAt = 0, lastBoatMsg = '', lastBoatAt = 0, lastBoatDetail = '', detailN = 0, lastHold = '', lastLine = '';
+// 自己的船的油量、破洞、纜繩（伺服器記著，斷線重連和換船時還回來）：有變才送
+function sendBoatDetail() {
+  if (myBoat.sinking || myBoat._lost) return;
+  net.send({ t: 'b', s: myBoat.netState() });
+  const d = { t: 'bd', cracks: myBoat.damage.slice(0, 8).map((c) => [r2(c.lx), r2(c.lz), r2(c.dmg)]), moor: myBoat.moor ? myBoat.moor.i : -1 };
+  const dm = JSON.stringify(d);
+  if (dm !== lastBoatDetail) { lastBoatDetail = dm; net.send(d); }
+}
 const r3 = (v) => Math.round(v * 1000) / 1000;
 function sendState(dt) {
   if (!inGame || !net.online) return;
@@ -2042,18 +2101,20 @@ function sendState(dt) {
   }
   let msg = JSON.stringify(st);
   if (msg !== lastPosMsg || now - lastPosAt > 1000) { lastPosMsg = msg; lastPosAt = now; net.send({ t: 'p', s: st }); }
+  // 手上拿著什麼、釣線另一頭的浮標在哪：給別人看的，有變才送
+  const h = fish.held, hk = h ? `${h.id}:${r2(h.len)}` : '';
+  if (hk !== lastHold) { lastHold = hk; net.send({ t: 'h', id: h ? h.id : '', len: h ? r2(h.len) : 0 }); }
+  const bp = fishing.bob.position, fs = fishing.state;
+  const ln = fishing.bob.visible && mode === 'walk' ? [r2(bp.x), r2(bp.y), r2(bp.z), fs === 'fly' ? 1 : fs === 'fight' ? 3 : 2] : null;
+  const lk = ln ? ln.join() : '';
+  if (lk !== lastLine) { lastLine = lk; net.send({ t: 'fl', s: ln }); }
   // 船：停著沒人開的時候不用送那麼勤
   if (myBoat.sinking || myBoat._lost) return;
   const bs = myBoat.netState(), idle = !myBoat.manned && Math.abs(myBoat.speed) < 0.3;
   msg = JSON.stringify(bs);
   if ((msg !== lastBoatMsg && (!idle || now - lastBoatAt > 400)) || now - lastBoatAt > 1000) { lastBoatMsg = msg; lastBoatAt = now; net.send({ t: 'b', s: bs }); }
-  // 破洞和纜繩：只有斷線重連時要還回來，兩秒看一次、有變才送
-  if (++detailN >= 20) {
-    detailN = 0;
-    const d = { t: 'bd', cracks: myBoat.damage.slice(0, 8).map((c) => [r2(c.lx), r2(c.lz), r2(c.dmg)]), moor: myBoat.moor ? myBoat.moor.i : -1 };
-    const dm = JSON.stringify(d);
-    if (dm !== lastBoatDetail) { lastBoatDetail = dm; net.send(d); }
-  }
+  // 破洞和纜繩：兩秒看一次
+  if (++detailN >= 20) { detailN = 0; sendBoatDetail(); }
 }
 
 // 自己身上、船上、籃子裡所有魚的編號
@@ -2069,6 +2130,8 @@ net.on('k', (m) => {
 });
 net.on('world', (m) => applyWorld(m));
 net.on('join', (m) => others.add({ id: m.id, name: m.name, here: m.here, boat: m.boat }));
+net.on('h', (m) => others.setHold(m.id, m.s));
+net.on('fl', (m) => others.setLine(m.id, m.s));
 net.on('leave', (m) => others.leave(m.id));
 net.on('boatGone', (m) => others.boatGone(m.id));
 net.on('boat', (m) => { if (m.id !== net.id) others.setBoat(m.id, m.boat); });
@@ -2176,6 +2239,7 @@ net.on('rejoin', (j) => {
   if (gone.length) net.send({ t: 'fishGone', uids: gone });
   if (myBoat._wrecked && !j.resume?.boat?.sunk) net.send({ t: 'sink', why: myBoat.sunkBy, side: myBoat._side });
   lastPosMsg = lastBoatMsg = lastBoatDetail = '';
+  lastHold = lastLine = '?';
 });
 
 // 進到房間裡（從大廳點進來，或是關掉分頁後 30 秒內回來）
@@ -2183,6 +2247,8 @@ function enterRoom(j) {
   room = j.room;
   fish.clearAll();
   garage.clear();
+  garageState.clear();
+  for (const [type, v] of Object.entries(j.resume?.stored ?? {})) garageState.set(type, v);
   others.sync(j.players);
   kit = j.kit;
   berth = j.berth;
@@ -2231,6 +2297,7 @@ function enterRoom(j) {
   player.yaw = view.walk.yaw = yaw;
   applyViewSettings();
   lastPosMsg = lastBoatMsg = lastBoatDetail = '';
+  lastHold = lastLine = '?';
   chat.clear();
   chat.show(true);
   chat.sys(back ? `回到${room.name}了` : `歡迎來到${room.name}。按 Enter 可以聊天`, 'info');
@@ -2255,6 +2322,7 @@ function advance(dt) {
   ocean.cacheBlock(boat.x, boat.z);
   mb.update(dt, mb === boat ? boatEnv : calmEnv);
   others.update(dt);
+  collideBoats(mb, helm);
   updateMooring(dt, helm);
   const core = !mb.sinking && sea.vortices.length ? sea.coreAt(mb.x, mb.z) : null;
   if (core) mb.founder(core, 1);   // 被拉進漩渦或水龍捲的中心

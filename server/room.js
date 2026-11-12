@@ -33,6 +33,9 @@ export function newPlayer(id, ws, token, name) {
     boat: null, boatDirty: false,               // 放在世界裡的那艘船：{ type, s: [x, z, 航向, 高度, 傾斜 x, z, 船速, 舵, 油門, 狀態, 油量, 耐久], cracks, moor, sunk }
     berth: -1,                                  // 分到第幾個停船格
     fish: new Map(),                            // 釣到還沒賣的魚：uid → { id, kg, len, value }
+    stored: {},                                 // 收在倉庫的船離開世界時的樣子：船種 → { fuel, cracks }
+    hold: null,                                 // 手上拿著什麼（給別人看的）：[魚種或 'can', 身長]
+    line: null,                                 // 釣線另一頭的浮標在哪（給別人看的）：[x, y, z, 狀態]
     fishing: null,                              // 正在釣：{ x, z, state, fish, biteAt, biteUntil, fightAt }
     chatAt: [], msgAt: 0, msgN: 0,
     gone: 0, left: false, suspect: 0,
@@ -104,12 +107,15 @@ export class Room {
   // 一艘剛放到停船格的船
   parkBoat(p) {
     const type = p.kit.active, pose = berthPose(BERTHS[p.berth], type), S = BOAT_TYPES[type];
-    p.boat = { type, s: [pose.x, pose.z, pose.heading, 0, 0, 0, 0, 0, 0, 1, S.tank, 1], cracks: [], moor: -1, sunk: false };
+    const was = p.stored[type];   // 從倉庫換出來的：油量、破洞照收進去時的樣子
+    delete p.stored[type];
+    const lost = was ? was.cracks.reduce((sum, c) => sum + c[2], 0) : 0;
+    p.boat = { type, s: [pose.x, pose.z, pose.heading, 0, 0, 0, 0, 0, 0, 1, was ? was.fuel : S.tank, Math.max(0, 1 - lost / S.hp)], cracks: was ? was.cracks : [], moor: -1, sunk: false };
     p.boatDirty = true;
   }
   boatInfo(p) { return p.boat && { type: p.boat.type, boxLv: p.kit.boats[p.boat.type]?.boxLv ?? 0, s: p.boat.s, sunk: p.boat.sunk }; }
   roster(except) {
-    return [...this.players.values()].filter((p) => p !== except).map((p) => ({ id: p.id, name: p.name, here: !!p.ws, pos: p.ws ? p.pos : null, boat: this.boatInfo(p) }));
+    return [...this.players.values()].filter((p) => p !== except).map((p) => ({ id: p.id, name: p.name, here: !!p.ws, pos: p.ws ? p.pos : null, boat: this.boatInfo(p), hold: p.ws ? p.hold : null, line: p.ws ? p.line : null }));
   }
   boards() { return { t: 'boards', room: this.board.slice(0, 10).map(pub), daily: this.hub.daily.top() }; }
 
@@ -145,7 +151,7 @@ export class Room {
   }
   // 斷線重連時還給他的進度
   resumeData(p) {
-    return { pos: p.pos, boat: p.boat && { ...p.boat }, fish: [...p.fish].map(([uid, f]) => ({ uid, ...f })) };
+    return { pos: p.pos, boat: p.boat && { ...p.boat }, stored: p.stored, fish: [...p.fish].map(([uid, f]) => ({ uid, ...f })) };
   }
 
   // 連線斷了：人先從畫面上消失，位置和家當留著等他回來
@@ -153,6 +159,7 @@ export class Room {
     p.ws = null;
     p.gone = Date.now();
     p.fishing = null;
+    p.hold = p.line = null;
     this.all({ t: 'leave', id: p.id });
   }
   // 自己按了離開：進度清掉、不能再接回來；船留到時間到才收
@@ -235,6 +242,18 @@ export class Room {
         p.boat.s = m.s; p.boatDirty = true;
         return;
       }
+      case 'h': {   // 手上拿著什麼（魚、油桶；空手是 ''）：只是轉給別人看
+        const ok = typeof m.id === 'string' && (m.id === '' || m.id === 'can' || SPECIES[m.id]) && typeof m.len === 'number' && m.len >= 0 && m.len < 30;
+        if (!ok) return;
+        p.hold = m.id ? [m.id, m.len] : null;
+        return this.all({ t: 'h', id: p.id, s: p.hold }, p);
+      }
+      case 'fl': {   // 釣線另一頭的浮標（沒在釣是 null）：只是轉給別人看
+        if (m.s !== null && !(nums(m.s, 4) && m.s.length === 4)) return;
+        if (m.s === null && !p.line) return;
+        p.line = m.s;
+        return this.all({ t: 'fl', id: p.id, s: p.line }, p);
+      }
       case 'bd': {   // 船上的破洞、纜繩（只為了斷線重連時還給他）
         if (!p.boat || !Array.isArray(m.cracks) || m.cracks.length > 8 || !m.cracks.every((c) => nums(c, 3))) return;
         p.boat.cracks = m.cracks;
@@ -260,6 +279,7 @@ export class Room {
         if (!kit.boats[type] || type === kit.active || !p.boat || p.boat.sunk) return;
         if (!this.near(p, BOARDS.berth.x, BOARD_Z + 1.2, 4.5)) return this.send(p, { t: 'no', msg: '要到停船位置牌前面才能換船' });
         if (!inHarbor(p.boat.s[0], p.boat.s[1])) return this.send(p, { t: 'no', msg: '船不在港裡，要先開回來才能換' });
+        p.stored[kit.active] = { fuel: p.boat.s[10], cracks: p.boat.cracks };   // 收進倉庫的那艘：油量、破洞記著，下次換出來照舊
         kit.active = type;
         return this.newBoat(p, {});
       }
@@ -385,10 +405,15 @@ export class Room {
   // 釣到一條魚：看有沒有上榜
   record(p, f) {
     const e = { pid: p.id, key: p.token, name: p.name, id: f.id, len: f.len, kg: f.kg, value: f.value };
-    this.board.push(e);
-    this.board.sort((a, b) => b.value - a.value);
-    const rank = this.board.indexOf(e);
-    this.board.length = Math.min(this.board.length, 60);
+    // 本房紀錄每人只留最好的一條：沒有比自己榜上那條值錢就不算
+    const mine = this.board.find((o) => o.pid === p.id);
+    let rank = 99;
+    if (!mine || f.value > mine.value) {
+      this.board = this.board.filter((o) => o !== mine);
+      this.board.push(e);
+      this.board.sort((a, b) => b.value - a.value);
+      rank = this.board.indexOf(e);
+    }
     const dr = this.hub.daily.offer(e);
     const what = `${p.name} 釣到 ${SPECIES[f.id].name} ${Math.round(f.len * 100)} 公分・${money(f.value)}`;
     if (rank < 10) this.sys(`${what}，登上本房紀錄第 ${rank + 1} 名！${dr >= 0 && dr < 10 ? `也登上今日紀錄第 ${dr + 1} 名！` : ''}`, 'record');

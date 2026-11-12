@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { Player } from './player.js';
 import { ACTION_BY_ID } from './emotes.js';
+import { SPECIES, makeFishMesh, makeCanMesh } from './fish.js';
 
 // 頭上的名牌：一張畫著名字的小圖，永遠面向鏡頭、遠近都一樣大
 function nameTag(name) {
@@ -26,7 +27,8 @@ function nameTag(name) {
   return s;
 }
 
-const ROD_LEN = 2.7, GRIP = 0.14, ROD_ANGLE = 0.7;
+const ROD_LEN = 2.7, GRIP = 0.14, ROD_ANGLE = 0.7, LINE_N = 16;
+const _tip = new THREE.Vector3();
 const ease = (dt, k) => 1 - Math.exp(-dt * k);
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const dispose = (root) => root.traverse((m) => { if (m.isMesh || m.isSprite) { m.geometry?.dispose(); for (const mat of [].concat(m.material)) { mat.map?.dispose(); mat.dispose(); } } });
@@ -43,14 +45,16 @@ export class Others {
   }
 
   // 房裡的一個人。here：他現在連著線（沒有的話只有船，人不在）；boat：{ type, boxLv, s, sunk }
-  add({ id, name, here = true, pos = null, boat = null }) {
+  add({ id, name, here = true, pos = null, boat = null, hold = null, line = null }) {
     let o = this.map.get(id);
-    if (!o) { o = { id, name, fig: null, tag: null, rod: null, boat: null, st: null, lastAct: '' }; this.map.set(id, o); }
+    if (!o) { o = { id, name, fig: null, tag: null, rod: null, boat: null, st: null, lastAct: '', hold: null, held: null, ln: null, bob: null, line: null, rodA: ROD_ANGLE }; this.map.set(id, o); }
     o.name = name;
     if (here && !o.fig) this._figure(o);
     if (!here) this._unfigure(o);
     if (boat) this.setBoat(id, boat);
     if (pos) this.setPos(id, pos);
+    this.setHold(id, hold);
+    this.setLine(id, line);
     return o;
   }
 
@@ -65,15 +69,44 @@ export class Others {
     fig.mesh.visible = false;   // 收到第一筆位置才出現
     o.tag = nameTag(o.name);
     o.tag.visible = false;
-    this.env.scene.add(fig.mesh, o.tag);
+    // 釣線和浮標：他在釣魚的時候才顯示
+    o.bob = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), new THREE.MeshBasicMaterial({ color: 0xff4a33 }));
+    const lg = new THREE.BufferGeometry();
+    lg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(LINE_N * 3), 3));
+    o.line = new THREE.Line(lg, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75 }));
+    o.line.frustumCulled = false;
+    o.bob.visible = o.line.visible = false;
+    this.env.scene.add(fig.mesh, o.tag, o.bob, o.line);
     o.st = null;
   }
 
   _unfigure(o) {
     if (!o.fig) return;
-    o.fig.mesh.removeFromParent(); o.tag.removeFromParent();
-    dispose(o.fig.mesh); dispose(o.tag);
-    o.fig = o.tag = o.rod = o.st = null;
+    o.fig.mesh.removeFromParent(); o.tag.removeFromParent(); o.bob.removeFromParent(); o.line.removeFromParent();
+    dispose(o.fig.mesh); dispose(o.tag); dispose(o.bob);
+    o.line.geometry.dispose(); o.line.material.dispose();
+    o.fig = o.tag = o.rod = o.st = o.bob = o.line = o.held = o.hold = o.ln = null;
+  }
+
+  // 他手上拿著什麼：[魚種或 'can', 身長]；空手是 null。跟自己拿著的時候一樣橫著捧在胸前
+  setHold(id, s) {
+    const o = this.map.get(id);
+    if (!o || !o.fig) return;
+    if (o.held) { o.held.removeFromParent(); dispose(o.held); o.held = null; }
+    o.hold = s && (s[0] === 'can' || SPECIES[s[0]]) ? s : null;
+    if (!o.hold) return;
+    o.held = o.hold[0] === 'can' ? makeCanMesh() : makeFishMesh(SPECIES[o.hold[0]], o.hold[1]);
+    o.held.position.set(0.5, 1.08, 0);
+    o.held.rotation.set(0, Math.PI / 2, 0);
+    o.fig.mesh.add(o.held);
+  }
+
+  // 他的釣線另一頭的浮標在哪：[x, y, z, 狀態（1 還在飛、2 等魚咬、3 正在拉）]；沒在釣是 null
+  setLine(id, s) {
+    const o = this.map.get(id);
+    if (!o || !o.fig) return;
+    if (s && !o.ln) o.bob.position.set(s[0], s[1], s[2]);   // 剛拋出去：浮標直接出現在那裡
+    o.ln = s;
   }
 
   // 人走了（斷線或離開）：人偶拿掉，船先留著
@@ -157,15 +190,30 @@ export class Others {
       f.look(s[6], s[7]);
       f.off.set(0, 0, 0);
       f.puppet(dt, { moving: !!(flags & 1), run: !!(flags & 2), swim: !!(flags & 4), carry: !!(flags & 8), rod: !!(flags & 16), seated: !!(flags & 64), h: s[5] });
-      // 釣竿握在右手
-      const rod = o.rod;
+      // 釣竿握在右手；線放出去之後竿子的角度跟著變（拋出去時往前倒、拉魚時往後扳）
+      const rod = o.rod, ln = o.ln;
       rod.visible = !!(flags & 16) && !helm;
+      const fishing = rod.visible && !!ln;
+      o.bob.visible = o.line.visible = fishing;
       if (rod.visible) {
+        o.rodA += ((ln ? (ln[3] === 1 ? 1.0 : ln[3] === 3 ? 0.45 : 0.85) : ROD_ANGLE) - o.rodA) * ease(dt, 8);
         f.mesh.updateMatrixWorld(true);
         f.mesh.userData.arms[1].userData.grip.getWorldPosition(rod.position);
         f.mesh.worldToLocal(rod.position);
-        rod.rotation.z = -ROD_ANGLE;
-        rod.position.x -= Math.sin(ROD_ANGLE) * GRIP; rod.position.y -= Math.cos(ROD_ANGLE) * GRIP;
+        rod.rotation.z = -o.rodA;
+        rod.position.x -= Math.sin(o.rodA) * GRIP; rod.position.y -= Math.cos(o.rodA) * GRIP;
+      }
+      if (fishing) {
+        // 浮標平滑地跟到他傳來的位置；線從竿尖垂到浮標（中間往下墜一點）
+        const b = o.bob.position, kb = ease(dt, 14), a = o.line.geometry.attributes.position, sag = ln[3] === 1 ? 0.1 : ln[3] === 3 ? 0.3 : 0.2;
+        b.x += (ln[0] - b.x) * kb; b.y += (ln[1] - b.y) * kb; b.z += (ln[2] - b.z) * kb;
+        rod.updateMatrixWorld(true);
+        _tip.set(0, ROD_LEN, 0).applyMatrix4(rod.matrixWorld);
+        for (let i = 0; i < LINE_N; i++) {
+          const s = i / (LINE_N - 1);
+          a.setXYZ(i, _tip.x + (b.x - _tip.x) * s, _tip.y + (b.y - _tip.y) * s - sag * 4 * s * (1 - s), _tip.z + (b.z - _tip.z) * s);
+        }
+        a.needsUpdate = true;
       }
       // 名牌：在頭頂上；掌舵時掛在舵位上方
       o.tag.visible = true;
