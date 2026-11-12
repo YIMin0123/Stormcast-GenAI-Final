@@ -144,7 +144,7 @@ const wss = new WebSocketServer({
 
 wss.on('connection', (ws) => {
   let me = null;        // 進房之後才有
-  let name = '', token = '';
+  let name = '', token = '', look = 'girl';   // look：選的角色（只收得到 girl／boy）
   let burstAt = 0, burst = 0;
 
   ws.on('message', (raw) => {
@@ -164,6 +164,7 @@ wss.on('connection', (ws) => {
 
     if (m.t === 'hello') {
       name = cleanName(m.name);
+      look = m.look === 'boy' ? 'boy' : 'girl';
       if (!name) return send(ws, { t: 'denied', msg: '請先填好名字' });
       if (isRude(name)) { name = ''; return send(ws, { t: 'denied', msg: '這個名字不能用，換一個吧' }); }
       token = typeof m.token === 'string' && /^[0-9a-f]{32}$/.test(m.token) ? m.token : '';
@@ -172,11 +173,11 @@ wss.on('connection', (ws) => {
       if (old && old.room && !old.left) {
         if (old.ws) { send(old.ws, { t: 'kicked', msg: '你在另一個視窗進入了遊戲' }); const w = old.ws; old.ws = null; w.close(); old.room.all({ t: 'leave', id: old.id }); }
         me = old;
-        me.ws = ws; me.gone = 0; me.name = name;
+        me.ws = ws; me.gone = 0; me.name = name; me.look = look;   // 重新整理後可能換了角色
         hub.lobby.delete(ws);
         const r = me.room;
         r.send(me, { t: 'joined', resume: r.resumeData(me), ...r.snapshot(me) });
-        r.all({ t: 'join', id: me.id, name: me.name, here: true, boat: r.boatInfo(me), quiet: true }, me);
+        r.all({ t: 'join', id: me.id, name: me.name, look: me.look, here: true, boat: r.boatInfo(me), quiet: true }, me);
         console.log(`[back] ${name} 回到 ${r.name}`);
         return;
       }
@@ -200,7 +201,7 @@ wss.on('connection', (ws) => {
       if (r.count >= MAX_PLAYERS) return send(ws, { t: 'full', msg: '這間房滿了，挑別間吧', ...lobbyList() });
       if (hub.merge && hub.merge.from === r) return send(ws, { t: 'full', msg: '這間房正要合併到別間，挑別間吧', ...lobbyList() });
       token = randomBytes(16).toString('hex');   // 每次進房都是新的開始，認人的代碼也換新的
-      me = newPlayer(hub.nextId++, ws, token, name);
+      me = newPlayer(hub.nextId++, ws, token, name, look);
       hub.sessions.set(token, me);
       hub.lobby.delete(ws);
       r.enter(me);

@@ -2,7 +2,7 @@
 // 船身與人物座標：+X 前方、+Y 向上、+Z 右側；船的原點在水線中央。
 import * as THREE from 'three';
 import { bulb } from './toon.js';
-import { buildFigure, ARM_LEN } from './figure.js';
+import { buildFigure } from './figure.js';
 export { buildFigure };
 
 import { BOAT_TYPES, BOX_CAP, MAX_LEVEL } from './boatdata.js';
@@ -748,7 +748,7 @@ export class Boat {
           this._d.set(P.wheelPos.x - P.helmsman.position.x - 0.03, P.wheelPos.y - S.deck + Math.cos(ang) * WHEEL_R, Math.sin(ang) * WHEEL_R).sub(arm.userData.base);
           const len = this._d.length();
           arm.quaternion.setFromUnitVectors(DOWN, this._d.divideScalar(len));
-          arm.userData.stretch(len / ARM_LEN);
+          arm.userData.stretch(len / P.helmsman.userData.armLen);
         }
       } else {
         // 小舢舨：右手往後握著舵柄

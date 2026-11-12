@@ -1,4 +1,5 @@
 // 跟多人伺服器的連線：填名字進大廳、挑房間、收發訊息、斷線時在 30 秒內自動接回去。
+import { myLook } from './look.js';
 // 伺服器位址：網址加 ?server=ws://… 可以指定；開發時（npm run dev）連本機的 8787；正式版連雲端那台
 const PROD_SERVER = 'wss://35-229-248-193.sslip.io';
 const params = new URLSearchParams(window.location.search);
@@ -45,7 +46,7 @@ export class Net {
     this.name = name;
     return new Promise((resolve, reject) => {
       this._want = { kind: 'hello', resolve, reject };
-      if (this.ws && this.ws.readyState === 1) this._raw({ t: 'hello', name, token: this.token });
+      if (this.ws && this.ws.readyState === 1) this._raw({ t: 'hello', name, look: myLook(), token: this.token });
       else this._connect();
     });
   }
@@ -65,7 +66,7 @@ export class Net {
     let ws;
     try { ws = new WebSocket(this.url); } catch { this._fail('連不上伺服器'); return; }
     this.ws = ws;
-    ws.onopen = () => ws.send(JSON.stringify({ t: 'hello', name: this.name, token: this.token }));
+    ws.onopen = () => ws.send(JSON.stringify({ t: 'hello', name: this.name, look: myLook(), token: this.token }));
     ws.onmessage = (ev) => {
       let m;
       try { m = JSON.parse(ev.data); } catch { return; }
