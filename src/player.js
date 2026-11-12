@@ -221,10 +221,10 @@ export class Player {
     const armR = this.carry ? 1.15 : paddle ? 2.3 - stroke * (this.moving ? 0.9 : 0.25) : this.rod ? 0.95 : swing * 1.05 - loose;
     arms[0].rotation.z += (armL - arms[0].rotation.z) * ease;
     arms[1].rotation.z += (armR - arms[1].rotation.z) * ease;
-    // 手臂往兩旁張開多少：平常微微張開，走路時多一點，跳起來時舉高
+    // 手臂往兩旁張開多少：平常張成 A 字（手才不會插進裙子），走路時多一點，跳起來時舉高
     for (const arm of arms) {
       const side = arm.userData.side, busy = this.carry || paddle || (this.rod && side > 0);
-      const out = busy ? 0 : 0.16 + (air ? 0.95 : this.moving ? 0.14 : 0.05 * Math.sin(T * 1.7 + side));
+      const out = busy ? 0 : 0.36 + (air ? 0.8 : this.moving ? 0.08 : 0.04 * Math.sin(T * 1.7 + side));
       arm.rotation.x += (-side * out - arm.rotation.x) * ease;
     }
     if (swim && !this.moving) this.phase += dt * 2.5;   // 停在水裡時踩水
