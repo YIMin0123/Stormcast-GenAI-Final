@@ -1,13 +1,16 @@
 # 把 Tripo 生成的人物模型整理成遊戲用的 public/models/girl.glb、boy.glb（用 Blender 從命令列跑）：
-#   "C:/TOOL/blender/blender-5.2.2-windows-x64/blender.exe" -b --python tools/tripo_figure.py -- tools/src/girl_tripo.glb public/models/girl.glb [預覽圖路徑]
-#   男版：先用 tools/tripo_bake.py 把 Tripo 拆分後的模型（刪掉眼睛、眉毛、嘴零件；頭的零件 tripo_part_1 塗成膚色）烘上原本的貼圖 → tools/src/boy_baked.glb，
-#        再 ... -- tools/src/boy_baked.glb public/models/boy.glb --shorts --eyes=0.106,1.16
+#   "C:/TOOL/blender/blender-5.2.2-windows-x64/blender.exe" -b --python tools/tripo_figure.py -- tools/src/girl_tripo.glb public/models/girl.glb --eyes=0.11,1.15 [預覽圖路徑]
+#   "C:/TOOL/blender/blender-5.2.2-windows-x64/blender.exe" -b --python tools/tripo_figure.py -- tools/src/boy_tripo.glb public/models/boy.glb --shorts --eyes=0.106,1.16
+# 輸入是 Tripo「智能拆分」後、每個零件各帶一張貼圖的模型（用沒有五官的設定圖生成，臉是乾淨的）。
 # 做的事：
-#   1. 轉成遊戲的座標：面向前方（Blender +X，遊戲 +X）、身高 1.62、兩腳中間在原點
-#   2. 綁一副骨架，關節跟原本程式拼的人物一樣：root（髖）、upper（腰）、head（脖子）、arm.L/R（肩膀）、leg.L/R（髖關節）
-#      權重先讓 Blender 自動算，再照貼圖顏色修：肩膀以上的棕色（頭髮）、上面的紅色（蝴蝶結）全歸頭；腰以下的深藍（裙子）全歸身體，不跟著腿擺
-#   3. 臉：把 Tripo 畫在貼圖上的眼睛、嘴、腮紅抹成膚色；另外複製一層貼著臉的薄片（face），
-#      UV 對到遊戲的表情圖（110×110、一格 4 公釐、眼睛中心在圖中心下方 6 公分、左右各 11.2 公分），換表情就是換這層的貼圖
+#   1. 每個零件的貼圖拼成一張大貼圖（直接搬像素、UV 跟著縮放到各自的格子，不用烘焙）
+#   2. 轉成遊戲的座標：面向前方（Blender +X，遊戲 +X）、身高 1.62、兩腳中間在原點
+#   3. 綁一副骨架：root（髖）、upper（腰）、head（脖子）、arm.L/R（肩膀）、leg.L/R（髖關節）。
+#      男女版比例不同，關節位置各自一組（JOINTS），存進模型（rig 的 extras.joints），遊戲讀模型時一起讀
+#      權重照零件分：頭、頭髮、蝴蝶結 → 頭；腿、鞋 → 腿；兩旁的手臂、袖子 → 手臂（肩膀那段和上半身漸變）；
+#      裙子 → 身體（裙襬那段分一點給腿）；短褲 → 身體往下漸變到腿；其餘（上衣、領子、領巾）→ 上半身
+#   4. 臉：另外複製一層貼著臉的薄片（face），UV 對到遊戲的表情圖（110×110、一格 4 公釐），換表情就是換這層的貼圖。
+#      眼睛的位置用 --eyes=離中線距離,高度 給（臉上沒有五官，量不出來）
 import bpy, bmesh, sys, math
 from mathutils import Vector, Matrix
 
@@ -16,20 +19,75 @@ FLAGS = {a for a in argv if a.startswith('--')}
 argv = [a for a in argv if not a.startswith('--')]
 SRC, DST = argv[0], argv[1]
 PREVIEW = argv[2] if len(argv) > 2 else None
-SHORTS = '--shorts' in FLAGS   # 穿短褲的（男版）：沒有裙子；腰以下、腿以上的褲子歸身體，往下漸變到腿
+SHORTS = '--shorts' in FLAGS   # 穿短褲的（男版）：沒有裙子；短褲往下漸變到腿
 
 H = 1.62                      # 身高
-X0, Y0 = -0.033, -0.04        # 原檔裡兩腳中間的位置（量出來的）
-# 關節（遊戲的公尺；Blender 的 -Y 是人物的右手邊）
-HIP, HIP_Z = 0.486, 0.151
-WAIST = 0.76
-SHOULDER, SHOULDER_Z = 0.923, 0.219
-HAND, HAND_Z = 0.60, 0.373
-NECK = 0.97
+# 關節（遊戲的公尺；Blender 的 -Y 是人物的右手邊）：從 Tripo 零件的範圍量的。HIP_Z、HAND、HAND_Z 下面從零件算
+JOINTS = (dict(NECK=1.0, SHOULDER=0.92, SHOULDER_Z=0.17, WAIST=0.71, HIP=0.6) if SHORTS else
+          dict(NECK=0.96, SHOULDER=0.88, SHOULDER_Z=0.17, WAIST=0.73, HIP=0.6))
+NECK, SHOULDER, SHOULDER_Z, WAIST, HIP = (JOINTS[k] for k in ('NECK', 'SHOULDER', 'SHOULDER_Z', 'WAIST', 'HIP'))
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=SRC)
 meshes = [o for o in bpy.data.objects if o.type == 'MESH']
+
+# ---- 每個零件：面的方向照 Tripo 存的頂點法線擺正、記下是哪個零件 ----
+# 有些面的頂點順序是反的（遊戲裡背面不畫，會看穿、露出裡面的貼圖）。零件不是封閉的，Blender 自動重算方向會猜錯，
+# 所以照原檔每個角的法線：面的朝向跟那幾個法線的平均相反，就把這一面翻過來
+for o in meshes:
+    cn = o.data.corner_normals
+    flip = [p.index for p in o.data.polygons
+            if p.normal.dot(sum((cn[i].vector for i in p.loop_indices), Vector())) < 0]
+    if flip:
+        bm = bmesh.new(); bm.from_mesh(o.data); bm.faces.ensure_lookup_table()
+        bmesh.ops.reverse_faces(bm, faces=[bm.faces[i] for i in flip], flip_multires=False)
+        bm.to_mesh(o.data); bm.free()
+        print('FLIP', o.name, len(flip), '/', len(o.data.polygons))
+    o.vertex_groups.new(name='P:' + o.name).add(list(range(len(o.data.vertices))), 1.0, 'REPLACE')
+
+# ---- 拼貼圖：每個零件的貼圖（邊長超過 512 的先縮到 512）放進一張 2048 的大圖 ----
+# 邊長都是 2 的次方，用四分樹切格子剛好塞得下；每格四周留 2 像素（複製邊緣的顏色），縮小貼圖時才不會混到隔壁格
+ATLAS, PAD, CAP = 2048, 2, 512
+def part_image(o):
+    for s in o.material_slots:
+        if s.material and s.material.node_tree:
+            n = s.material.node_tree.nodes.get('Image Texture')
+            if n and n.image: return n.image
+parts = sorted(meshes, key=lambda o: -part_image(o).size[0])
+free = [(0, 0, ATLAS)]
+cells = {}
+for o in parts:
+    sz = min(CAP, part_image(o).size[0])
+    cand = sorted([f for f in free if f[2] >= sz], key=lambda f: f[2])
+    if not cand: raise SystemExit('ATLAS FULL')
+    x, y, s = cand[0]; free.remove(cand[0])
+    while s > sz:   # 切成四塊，留一塊用，其餘三塊放回去
+        s //= 2; free += [(x + s, y, s), (x, y + s, s), (x + s, y + s, s)]
+    cells[o.name] = (x, y, s)
+apx = [0.0] * (ATLAS * ATLAS * 4)
+for o in parts:
+    x0, y0, s = cells[o.name]
+    im = part_image(o); w = im.size[0]; src = im.pixels[:]
+    inner = s - 2 * PAD
+    for yy in range(s):
+        sy = min(w - 1, max(0, int((yy - PAD + 0.5) * w / inner)))
+        row = (y0 + yy) * ATLAS
+        for xx in range(s):
+            sx = min(w - 1, max(0, int((xx - PAD + 0.5) * w / inner)))
+            si = (sy * w + sx) * 4; di = (row + x0 + xx) * 4
+            apx[di:di + 4] = src[si:si + 4]
+    for l in o.data.uv_layers[0].data:   # UV 縮放到這一格裡面（扣掉四周留的邊）
+        u, v = l.uv
+        l.uv = ((x0 + PAD + u * inner) / ATLAS, (y0 + PAD + v * inner) / ATLAS)
+atlas = bpy.data.images.new('atlas', ATLAS, ATLAS)
+atlas.pixels[:] = apx
+amat = bpy.data.materials.new('body'); amat.use_nodes = True
+tn = amat.node_tree.nodes.new('ShaderNodeTexImage'); tn.image = atlas; tn.name = 'Image Texture'
+amat.node_tree.links.new(tn.outputs['Color'], amat.node_tree.nodes['Principled BSDF'].inputs['Base Color'])
+for o in meshes:
+    o.data.materials.clear(); o.data.materials.append(amat)
+print('ATLAS', len(parts), 'parts')
+
 for o in bpy.data.objects:
     o.select_set(o.type == 'MESH')
 bpy.context.view_layer.objects.active = meshes[0]
@@ -39,11 +97,38 @@ body = bpy.context.view_layer.objects.active
 body.name = 'body'
 bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
 zmax = max(v.co.z for v in body.data.vertices)
-if SHORTS:   # 兩腳中間的位置直接從腳底的頂點算（女版沿用原本量的數字，輸出才不會變）
-    low = [v.co for v in body.data.vertices if v.co.z < 0.03]
-    X0, Y0 = sum(c.x for c in low) / len(low), sum(c.y for c in low) / len(low)
+low = [v.co for v in body.data.vertices if v.co.z < 0.03]   # 兩腳中間的位置：腳底的頂點平均
+X0, Y0 = sum(c.x for c in low) / len(low), sum(c.y for c in low) / len(low)
 body.data.transform(Matrix.Scale(H / zmax, 4) @ Matrix.Rotation(math.radians(90), 4, 'Z') @ Matrix.Translation((-X0, -Y0, 0)))
 body.data.update()
+
+# ---- 每個零件是什麼（頭／腿／手臂／下身的衣服／上半身），照它在身上的範圍判斷 ----
+pverts = {}
+gname = {g.index: g.name[2:] for g in body.vertex_groups if g.name.startswith('P:')}
+vpart = [None] * len(body.data.vertices)
+for v in body.data.vertices:
+    for g in v.groups:
+        if g.group in gname: vpart[v.index] = gname[g.group]; pverts.setdefault(vpart[v.index], []).append(v.co.copy())
+role = {}
+for n, cs in pverts.items():
+    zs = [c.z for c in cs]; ys = [c.y for c in cs]; cyy = sum(ys) / len(ys)
+    if max(zs) > NECK + 0.08: r = 'head'
+    elif max(zs) < WAIST - 0.06 and max(ys) - min(ys) < 0.3: r = 'leg'
+    elif abs(cyy) > 0.12 and (max(zs) > WAIST + 0.06 or abs(cyy) > 0.22): r = 'arm'   # 手掌整個在腰以下，靠離中線夠遠判斷
+    elif min(zs) < WAIST + 0.02 and max(zs) <= WAIST + 0.06: r = 'low'
+    else: r = 'torso'
+    role[n] = r
+print('ROLES', {r: sorted(n for n in role if role[n] == r) for r in set(role.values())})
+for g in [g for g in body.vertex_groups if g.name.startswith('P:')]: body.vertex_groups.remove(g)
+# 從零件量：髖關節離中線多遠（腿的零件左右各自的中心）、手（手臂零件最低那一截的中心）
+legy = [abs(sum(c.y for c in pverts[n]) / len(pverts[n])) for n in role if role[n] == 'leg' and len(pverts[n]) > 60]
+HIP_Z = sum(legy) / len(legy)
+armv = [c for n in role if role[n] == 'arm' for c in pverts[n]]
+amin = min(c.z for c in armv)
+tip = [c for c in armv if c.z < amin + 0.06]
+HAND, HAND_Z = sum(c.z for c in tip) / len(tip) + 0.03, sum(abs(c.y) for c in tip) / len(tip)
+JOINTS.update(HIP_Z=round(HIP_Z, 3), HAND=round(HAND, 3), HAND_Z=round(HAND_Z, 3))
+print('JOINTS', JOINTS)
 
 # ---- 貼圖顏色分類 ----
 img = body.data.materials[0].node_tree.nodes['Image Texture'].image if body.data.materials[0].node_tree.nodes.get('Image Texture') else bpy.data.images[0]
@@ -62,20 +147,39 @@ def kind(c):
     if r > 200 and g > 190 and b > 190: return 'white'
     if r + g + b < 330: return 'dark'
     return 'other'
-uv = body.data.uv_layers[0].data
-vcol = [[0, 0, 0, 0] for _ in body.data.vertices]
-pcol, pavg = [], []
+def classify():
+    global uv, vcol, pcol, pavg, vkind
+    uv = body.data.uv_layers[0].data
+    vcol = [[0, 0, 0, 0] for _ in body.data.vertices]
+    pcol, pavg = [], []
+    for p in body.data.polygons:
+        acc = [0, 0, 0]
+        for li in p.loop_indices:
+            c = tex(*uv[li].uv)
+            acc = [acc[k] + c[k] for k in range(3)]
+            vi = body.data.loops[li].vertex_index
+            for k in range(3): vcol[vi][k] += c[k]
+            vcol[vi][3] += 1
+        pavg.append([a / len(p.loop_indices) for a in acc])
+        pcol.append(kind(pavg[-1]))
+    vkind = [kind([c[k] / max(1, c[3]) for k in range(3)]) for c in vcol]
+classify()
+# 頭髮零件上膚色的面：Tripo 把臉頰的顏色烘到側髮的內側，平光下看不出來，遊戲裡一打光就是臉旁邊一塊階梯狀的暗斑（女版很明顯）。
+# 頭髮零件（頭上的零件、大部分是棕色的）裡膚色的面直接刪掉，露出後面真正的臉
+hairp = {}
 for p in body.data.polygons:
-    acc = [0, 0, 0]
-    for li in p.loop_indices:
-        c = tex(*uv[li].uv)
-        acc = [acc[k] + c[k] for k in range(3)]
-        vi = body.data.loops[li].vertex_index
-        for k in range(3): vcol[vi][k] += c[k]
-        vcol[vi][3] += 1
-    pavg.append([a / len(p.loop_indices) for a in acc])
-    pcol.append(kind(pavg[-1]))
-vkind = [kind([c[k] / max(1, c[3]) for k in range(3)]) for c in vcol]
+    n = vpart[p.vertices[0]]
+    if role[n] == 'head': hairp.setdefault(n, []).append(p.index)
+skinn = lambda n: sum(pcol[i] in ('skin', 'white') for i in hairp[n])
+facepart = max(hairp, key=skinn)   # 膚色的面最多的是頭本身（臉、頭皮），不是頭髮
+hair = {n for n, ps in hairp.items() if n != facepart and sum(pcol[i] == 'brown' for i in ps) > 0.5 * len(ps)}
+drop = [i for n in hair for i in hairp[n] if pcol[i] in ('skin', 'white')]
+if drop:
+    bm = bmesh.new(); bm.from_mesh(body.data); bm.faces.ensure_lookup_table()
+    bmesh.ops.delete(bm, geom=[bm.faces[i] for i in drop], context='FACES_ONLY')
+    bm.to_mesh(body.data); bm.free(); body.data.update()
+    classify()
+print('HAIRSKIN', len(drop), sorted(hair), 'face part', facepart)
 
 # ---- 骨架 ----
 arm_data = bpy.data.armatures.new('rig')
@@ -84,6 +188,7 @@ bpy.context.scene.collection.objects.link(rig)
 bpy.ops.object.select_all(action='DESELECT')
 bpy.context.view_layer.objects.active = rig
 rig.select_set(True)
+rig['joints'] = JOINTS   # 匯出成 extras，遊戲照這個擺骨頭
 bpy.ops.object.mode_set(mode='EDIT')
 def bone(name, h, t, parent=None):
     b = arm_data.edit_bones.new(name)
@@ -100,9 +205,7 @@ body.select_set(True); rig.select_set(True)
 bpy.context.view_layer.objects.active = rig
 bpy.ops.object.parent_set(type='ARMATURE_NAME')
 
-# 權重：Tripo 的網格不是封閉的，Blender 自動算權重會失敗，所以照位置和貼圖顏色自己分：
-#   頭髮（肩膀以上的棕色）、蝴蝶結、脖子以上 → 頭；裙子（腰以下的深藍）→ 身體（不跟腿擺）；
-#   裙襬以下 → 左右腿；兩旁（離身體中線夠遠）→ 手臂，肩膀那一段和上半身漸變；其餘（上衣、領子、領巾）→ 上半身；脖子那段頭和上半身漸變
+# 權重：照零件（上面的 role）和位置分
 groups = {}
 for name in ['root', 'upper', 'head', 'arm.L', 'arm.R', 'leg.L', 'leg.R']:
     groups[name] = body.vertex_groups.get(name) or body.vertex_groups.new(name=name)
@@ -111,25 +214,31 @@ def setw(vi, ws):
     for name, w in ws.items():
         if w > 1e-3: groups[name].add([vi], w, 'REPLACE')
 clamp = lambda v: min(1.0, max(0.0, v))
+hem = {n: min(c.z for c in pverts[n]) for n in role if role[n] == 'low'}
 count = {}
 for v in body.data.vertices:
-    k, (x, y, z) = vkind[v.index], v.co
+    (x, y, z), r = v.co, role[vpart[v.index]]
     side = 'L' if y > 0 else 'R'
-    if (k == 'brown' and z > 0.8) or (k == 'red' and z > 1.25) or z > NECK + 0.05: c, ws = 'head', {'head': 1}
-    elif not SHORTS and (k == 'navy' and z < 0.84 or 0.38 < z < 0.6 and abs(y) < 0.25 and min(math.hypot(x, y - HIP_Z), math.hypot(x, y + HIP_Z)) > 0.072):
-        # （裙襬底下有幾個頂點貼圖混到膚色，不能只看顏色：裙襬高度裡、在腿的粗細以外的都算裙子）
+    if r == 'head': c, ws = 'head', {'head': 1}
+    elif r == 'leg': c, ws = 'leg', {'leg.' + side: 1}
+    elif r == 'low' and WAIST - hem[vpart[v.index]] < 0.1:
+        c, ws = 'belt', {'root': 1}   # 腰帶、釦子這種窄窄一圈的
+    elif r == 'low' and not SHORTS:
         # 裙子跟著身體；但裙襬那段要分一點給腿（越靠近裙襬越多、左右兩邊各跟同側的腿），
         # 不然走路時腿往後擺，大腿會從裙子後面穿出來，看起來像裙子被扯開
-        t = 0.3 * clamp((0.6 - z) / 0.17); sl = clamp(0.5 + y / 0.42)   # 左右漸變要寬：太陡的話兩腳一前一後，裙子中間會裂開
+        h0 = hem[vpart[v.index]]
+        t = 0.3 * clamp((h0 + 0.15 - z) / 0.15); sl = clamp(0.5 + y / 0.42)   # 左右漸變要寬：太陡的話兩腳一前一後，裙子中間會裂開
         c, ws = 'skirt', {'root': 1 - t, 'leg.L': t * sl, 'leg.R': t * (1 - sl)}
-    elif SHORTS and z < WAIST - 0.03 and abs(y) < 0.2:
-        t = clamp((0.62 - z) / 0.08); c, ws = ('leg' if t > 0.99 else 'shorts'), {'leg.' + side: t, 'root': 1 - t}
-    elif z < 0.53: c, ws = 'leg', {'leg.' + side: 1}
-    elif z > NECK - 0.02:
-        t = clamp((z - (NECK - 0.02)) / 0.07); c, ws = 'neck', {'head': t, 'upper': 1 - t}
-    else:
-        a = clamp((abs(y) - 0.185) / 0.06)
-        c, ws = ('arm' if a > 0.99 else 'shoulder' if a > 0 else 'upper'), {'arm.' + side: a, 'upper': 1 - a}
+    elif r == 'low':   # 短褲：褲襠以下跟著同側的腿
+        t = clamp((HIP - z) / 0.1); c, ws = ('leg' if t > 0.99 else 'shorts'), {'leg.' + side: t, 'root': 1 - t}
+    elif r == 'arm':   # 手臂、袖子：肩膀那段（靠近身體、又在肩膀高度的）和上半身漸變
+        a = 1.0 if z < SHOULDER - 0.1 else clamp((abs(y) - (SHOULDER_Z - 0.06)) / 0.08)
+        c, ws = ('arm' if a > 0.99 else 'shoulder'), {'arm.' + side: a, 'upper': 1 - a}
+    elif z > NECK - 0.03:
+        t = clamp((z - (NECK - 0.03)) / 0.06); c, ws = 'neck', {'head': t, 'upper': 1 - t}
+    elif z < WAIST + 0.03:
+        t = clamp((WAIST + 0.03 - z) / 0.06); c, ws = 'waist', {'root': t, 'upper': 1 - t}
+    else: c, ws = 'upper', {'upper': 1}
     count[c] = count.get(c, 0) + 1
     setw(v.index, ws)
 print('WEIGHTS', count)
@@ -140,7 +249,7 @@ print('WEIGHTS', count)
 cand = [p for p in body.data.polygons if p.normal.x > 0.45 and NECK + 0.03 < p.center.z < 1.34 and abs(p.center.y) < 0.165]
 # 男版 Tripo 把眼睛做成凸出臉的一層（後面也有臉的面），顏色又是深棕，跟瀏海一樣：
 # 在眼睛的範圍裡（離中線 4–16 公分、瀏海尖端以下）、顏色不像頭髮那麼紅的那些面是眼睛，留著
-eyeish = lambda p: SHORTS and pavg[p.index][0] - pavg[p.index][2] < 75 and 0.04 < abs(p.center.y) < 0.16 and p.center.z < 1.23   # 頭髮偏紅（紅減藍約 100）
+eyeish = lambda p: False and pavg[p.index][0] - pavg[p.index][2] < 75 and 0.04 < abs(p.center.y) < 0.16 and p.center.z < 1.23   # 頭髮偏紅（紅減藍約 100）
 cand = [p for p in cand if eyeish(p) or not any(abs(q.center.y - p.center.y) < 0.025 and abs(q.center.z - p.center.z) < 0.025
                                    and q.center.x < p.center.x - 0.008 for q in cand)]
 # 1. 找眼睛（臉上最暗的那些像素）的三維位置；2. 把這些面在貼圖上的範圍抹成膚色（棕色的像素是瀏海，不抹）
@@ -180,6 +289,11 @@ for i in set(paint):
 keep_face = {p.index for p in cand}
 side = [p for p in body.data.polygons if p.index not in keep_face and p.normal.x > -0.2
         and NECK < p.center.z < 1.36 and abs(p.center.y) < 0.21]
+# 主頭部零件（臉的面大多在它上面）：Tripo 在它的貼圖上連鬢角、瀏海的影子都畫成棕色，但真正的頭髮是另外的零件，
+# 沒蓋到的地方（臉頰兩旁）會露出一塊階梯狀的暗斑。這個零件朝前、在臉的高度裡的面，不管什麼顏色都整片抹成膚色
+from collections import Counter
+headpart = Counter(vpart[body.data.polygons[p.index].vertices[0]] for p in cand).most_common(1)[0][0]
+wipe = lambda p: vpart[p.vertices[0]] == headpart and p.normal.x > 0.25 and p.center.z < 1.3
 fixed = 0
 for p in side:
     li = list(p.loop_indices)
@@ -188,9 +302,9 @@ for p in side:
             i = (y * W + x) * 4
             c = [pix[i + k] ** (1 / 2.2) * 255 for k in range(3)]
             grey = max(c) - min(c) < 45 and 250 < sum(c) < 700
-            if kind(c) == 'skin' or grey:
+            if kind(c) == 'skin' or grey or pcol[p.index] == 'skin' or wipe(p):   # 膚色的面整片抹（Tripo 原本畫的嘴、眉毛、斑點在這裡，女版左眼下像破皮）
                 pix[i], pix[i + 1], pix[i + 2] = lin; fixed += 1
-print('CHEEKFIX', len(side), fixed)
+print('CHEEKFIX', len(side), fixed, 'headpart', headpart)
 img.pixels[:] = pix
 img.update(); img.pack()
 # 眼睛：只看臉中間偏兩旁的暗點（避開嘴、瀏海邊緣），各取中位數；兩眼高度取平均（兩眼本來就同高）
@@ -225,6 +339,8 @@ ring = [p.index for p in side if p.normal.x > 0.2 and p.center.z > NECK + 0.03 a
 keep |= set(ring)
 print('RING', len(ring))
 bmesh.ops.delete(bm, geom=[f for f in bm.faces if f.index not in keep], context='FACES')
+# 同一個位置有好幾個頂點（Tripo 的網格在貼圖接縫處沒接起來）：先焊起來再往外推，不然各推各的，三角形之間會裂出細縫，眼睛裡看得到一條亮虛線
+bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)
 bm.normal_update()
 for v in bm.verts: v.co += v.normal * 0.005
 luv = bm.loops.layers.uv.active
@@ -241,9 +357,25 @@ face.vertex_groups.new(name='head').add(list(range(len(face_me.vertices))), 1.0,
 face.modifiers.new('rig', 'ARMATURE').object = rig
 print('FACE', len(face_me.polygons), 'polys, scale', round(k, 3), 'center', round(cy, 3), round(cz, 3))
 
+# ---- 平滑著色的記號 ----
+# 整個人是平面著色（看得到稜角），但頭部的膚色（臉、耳朵、脖子）在側光下一格一格的很明顯：
+# 法線改成平滑的匯出，再用頂點顏色的紅色標出「這裡用平滑」，遊戲的材質照這個在兩種之間混（見 figure.js 的 pixelMat）
+for ob in [body] + [o for o in bpy.data.objects if o.name.startswith('face')]:
+    bpy.ops.object.select_all(action='DESELECT'); ob.select_set(True); bpy.context.view_layer.objects.active = ob
+    if ob.data.has_custom_normals: bpy.ops.mesh.customdata_custom_splitnormals_clear()
+    ob.data.shade_smooth()
+# 頭（脖子以上）不是頭髮、蝴蝶結、領子的頂點，加上臉的面用到的頂點、整個主頭部零件（臉頰兩旁原本貼圖是棕色的那幾圈也要平滑，不然背光時一階一階的像黑漬）（女版的膚色很淡，會被分到 white，不能排除）
+fp = {v for p in face_polys for v in p.vertices}
+sm = [1.0 if v.index in fp or vpart[v.index] == headpart or (v.co.z > NECK + 0.01 and vkind[v.index] not in ('brown', 'red', 'navy')) else 0.0 for v in body.data.vertices]
+ca = body.data.color_attributes.new('smooth', 'BYTE_COLOR', 'POINT')
+for i, v in enumerate(sm): ca.data[i].color = (v, v, v, 1.0)
+body.data.color_attributes.active_color = ca
+print('SMOOTHMARK', int(sum(sm)), '/', len(sm))
+
 # ---- 輸出 ----
 bpy.ops.object.select_all(action='SELECT')
-bpy.ops.export_scene.gltf(filepath=DST, export_format='GLB', export_skins=True, export_animations=False, export_yup=True, export_apply=False)
+bpy.ops.export_scene.gltf(filepath=DST, export_format='GLB', export_skins=True, export_animations=False, export_yup=True, export_apply=False,
+                          export_vertex_color='ACTIVE', export_extras=True)
 print('EXPORTED', DST)
 
 # ---- 預覽：擺幾個姿勢看權重對不對 ----
