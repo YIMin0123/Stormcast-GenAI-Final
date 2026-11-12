@@ -2,6 +2,8 @@
 // 船身與人物座標：+X 前方、+Y 向上、+Z 右側；船的原點在水線中央。
 import * as THREE from 'three';
 import { bulb } from './toon.js';
+import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // len / beam / draft：長、寬、吃水；deck：甲板離水線的高度；bul：舷牆高；rise：船首翹起的高度
 // speed：極速（公尺/秒）；tiltK：隨浪搖晃的程度；costK：引擎升級的價錢倍率
@@ -52,90 +54,133 @@ function box(w, h, d, mat, x, y, z) {
   return m;
 }
 
-// ---- 人物：Q 版的少女漁夫，約 2.5 頭身。草帽、馬尾、白上衣配吊帶褲、黃雨靴。
-// 四肢各自掛在關節上，走路或握舵時轉動關節即可
+// ---- 人物：低多邊形的紙片風少女漁夫（早期 3D 主機的那種味道），約兩頭身。草帽、馬尾、白上衣配吊帶褲、黃雨靴。
+// 全身用稜角分明的平面拼成、每個面一個顏色；頭髮是幾片有厚度的尖角板子；眼睛、腮紅、嘴是畫在平平的臉上的一張小圖。
+// 四肢各自掛在關節上，走路或握舵時轉動關節即可（關節的位置和四肢的長度跟以前一樣，動作、手上拿的東西都不用改）
+const flat = (color) => new THREE.MeshLambertMaterial({ color, flatShading: true });
+// 把一堆點包起來的凸多面體。法線取相鄰面的平均（描邊是沿法線往外推的，這樣輪廓線才不會在稜角上裂開），
+// 表面的明暗則由材質的 flatShading 一個面一個面算
+function solid(points, mat) {
+  let geo = new ConvexGeometry(points.map((p) => new THREE.Vector3(...p)));
+  geo.deleteAttribute('normal');
+  geo.deleteAttribute('uv');
+  geo = mergeVertices(geo, 1e-4);
+  geo.computeVertexNormals();
+  return new THREE.Mesh(geo, mat);
+}
+// 一圈八個點（切了角的長方形）：高度 y、前後 x0–x1、左右半寬 hz、切角 c
+const ring = (y, x0, x1, hz, c) => [[x0, y, hz - c], [x0, y, c - hz], [x1, y, hz - c], [x1, y, c - hz], [x0 + c, y, hz], [x0 + c, y, -hz], [x1 - c, y, hz], [x1 - c, y, -hz]];
+// 稜柱（上下半徑不同的幾邊形柱子）；四邊的轉 45 度，面才會朝正前、正側
+function prism(mat, rTop, rBot, len, sides) {
+  const geo = new THREE.CylinderGeometry(rTop, rBot, len, sides, 1);
+  if (sides === 4) geo.rotateY(Math.PI / 4);
+  return new THREE.Mesh(geo, mat);
+}
+// 臉：一張 32×18 的小圖，放大時不做平滑（一格一格的）
+let faceTex = null;
+function faceTexture() {
+  if (faceTex) return faceTex;
+  const cv = document.createElement('canvas');
+  cv.width = 32; cv.height = 18;
+  const g = cv.getContext('2d');
+  for (const x of [6, 20]) {
+    g.fillStyle = '#2c1f18'; g.fillRect(x, 3, 6, 11);           // 眼睛：又大又高的深色方塊
+    g.fillStyle = '#6a4632'; g.fillRect(x + 1, 10, 4, 3);       // 下半淡一點
+    g.fillStyle = '#ffffff'; g.fillRect(x + 1, 4, 2, 3);        // 亮點
+  }
+  g.fillStyle = '#f5a3a0'; g.fillRect(1, 14, 4, 2); g.fillRect(27, 14, 4, 2);   // 腮紅
+  g.fillStyle = '#c9584f'; g.fillRect(15, 15, 2, 1);                             // 嘴
+  faceTex = new THREE.CanvasTexture(cv);
+  faceTex.magFilter = faceTex.minFilter = THREE.NearestFilter;
+  faceTex.generateMipmaps = false;
+  faceTex.colorSpace = THREE.SRGBColorSpace;
+  return faceTex;
+}
 export function buildFigure() {
   const g = new THREE.Group();
-  const skin = lambert(0xf7d2b2), hair = lambert(0x74442a), denim = lambert(0x4474ba), shirt = lambert(0xfbf7ec);
-  const boot = lambert(0xf4c520), straw = lambert(0xecd28a), ribbon = lambert(0xdc463c), dark = lambert(0x2c1f18);
-  const blush = lambert(0xf5a3a0), white = lambert(0xffffff), lip = lambert(0xc9584f);
-  // 一段圓柱狀的肢體：上端在關節上，往下垂
-  const limb = (mat, r, len, x, y, z) => {
+  const skin = flat(0xf7d2b2), hair = flat(0x74442a), denim = flat(0x4474ba), shirt = flat(0xfbf7ec);
+  const boot = flat(0xf4c520), straw = flat(0xecd28a), ribbon = flat(0xdc463c);
+  const face = new THREE.MeshLambertMaterial({ map: faceTexture(), alphaTest: 0.5, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+  // 一段稜柱狀的肢體：上端在關節上，往下垂
+  const limb = (mat, rTop, rBot, len, x, y, z) => {
     const joint = new THREE.Group();
     joint.position.set(x, y, z);
-    const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, len - 2 * r, 4, 12), mat);
+    const m = prism(mat, rTop, rBot, len, 4);
     m.position.y = -len / 2;
     joint.add(m);
     g.add(joint);
     return joint;
   };
   const legs = [-1, 1].map((side) => {
-    const joint = limb(denim, 0.08, 0.40, 0, 0.44, side * 0.094);
-    // 雨靴：短短的靴筒加上圓圓的鞋頭
-    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.09, 0.17, 12), boot);
+    const joint = limb(denim, 0.075, 0.066, 0.27, 0, 0.44, side * 0.094);
+    // 雨靴：短短的靴筒加上一塊楔形的鞋頭
+    const shaft = prism(boot, 0.088, 0.082, 0.17, 5);
     shaft.position.y = -0.30;
-    const toe = new THREE.Mesh(new THREE.SphereGeometry(0.097, 12, 10), boot);
-    toe.scale.set(1.3, 0.75, 1);
-    toe.position.set(0.04, -0.385, 0);
+    const toe = solid([[-0.085, -0.44, 0.085], [-0.085, -0.44, -0.085], [0.165, -0.44, 0.072], [0.165, -0.44, -0.072], [0.165, -0.40, 0.066], [0.165, -0.40, -0.066],
+      [0.06, -0.345, 0.075], [0.06, -0.345, -0.075], [-0.085, -0.345, 0.085], [-0.085, -0.345, -0.085]], boot);
     joint.add(shaft, toe);
     return joint;
   });
   const arms = [-1, 1].map((side) => {
-    const joint = limb(skin, 0.05, ARM_LEN, 0, 0.845, side * 0.2);
-    const sleeve = new THREE.Mesh(new THREE.SphereGeometry(0.078, 12, 10), shirt);   // 短袖
-    sleeve.position.y = -0.035;
-    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.062, 12, 10), skin);
-    hand.position.y = -ARM_LEN;
+    const joint = limb(skin, 0.05, 0.042, ARM_LEN - 0.03, 0, 0.845, side * 0.2);
+    const sleeve = prism(shirt, 0.06, 0.088, 0.1, 5);   // 短袖
+    sleeve.position.y = -0.03;
+    const hand = solid(ring(-ARM_LEN - 0.05, -0.05, 0.05, 0.05, 0.02).concat(ring(-ARM_LEN + 0.05, -0.045, 0.045, 0.045, 0.015)), skin);
     joint.add(sleeve, hand);
     joint.userData.side = side;
     return joint;
   });
   const body = [];
   let parent = g, oy = 0;   // 現在往哪個關節上加東西、那個關節的高度
-  const put = (geo, mat, x, y, z, sx = 1, sy = 1, sz = 1) => {
-    const m = new THREE.Mesh(geo, mat);
+  const put = (m, x, y, z) => {
     m.position.set(x, y - oy, z);
-    m.scale.set(sx, sy, sz);
     parent.add(m);
     body.push(m);
     return m;
   };
   // ---- 身體：白上衣、吊帶褲 ----
-  put(new THREE.CapsuleGeometry(0.17, 0.14, 6, 16), shirt, 0, 0.70, 0, 0.82, 1, 1);
-  put(new THREE.SphereGeometry(0.19, 16, 12), denim, 0, 0.52, 0, 0.86, 0.78, 1.03);            // 褲子
-  put(new THREE.BoxGeometry(0.04, 0.2, 0.2), denim, 0.128, 0.72, 0);                           // 胸前的布片
+  put(solid(ring(0.60, -0.125, 0.125, 0.17, 0.05).concat(ring(0.86, -0.085, 0.085, 0.115, 0.035)), shirt), 0, 0, 0);
+  put(solid(ring(0.40, -0.14, 0.14, 0.185, 0.05).concat(ring(0.62, -0.135, 0.135, 0.18, 0.05)), denim), 0, 0, 0);   // 褲子
+  put(new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.19, 0.2), denim), 0.118, 0.70, 0).rotation.z = 0.15;            // 胸前的布片
   for (const side of [-1, 1]) {
-    put(new THREE.BoxGeometry(0.03, 0.11, 0.04), denim, 0.118, 0.84, side * 0.082).rotation.z = 0.4;   // 吊帶（貼著肩膀往後斜）
-    put(new THREE.SphereGeometry(0.02, 8, 6), boot, 0.152, 0.80, side * 0.082);                // 扣子
+    put(new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.12, 0.04), denim), 0.098, 0.825, side * 0.08).rotation.z = 0.5;   // 吊帶（貼著肩膀往後斜）
+    put(new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.035, 0.035), boot), 0.142, 0.775, side * 0.08);                  // 扣子
   }
   const torso = body.splice(0);   // 到這裡為止是軀幹：第一人稱走路時留著（低頭看得到自己的身體），掌舵時才藏
-  put(new THREE.CylinderGeometry(0.05, 0.056, 0.07, 10), skin, 0, 0.93, 0);                    // 脖子
-  // ---- 頭：大大的頭、大眼睛、腮紅。整顆頭（連頭髮和草帽）掛在脖子的關節上，可以轉頭、抬頭、低頭 ----
+  put(prism(skin, 0.05, 0.056, 0.08, 6), 0, 0.925, 0);                                                              // 脖子
+  // ---- 頭：很大的一顆，正面是平的。整顆頭（連頭髮和草帽）掛在脖子的關節上，可以轉頭、抬頭、低頭 ----
   const head = new THREE.Group();
   head.position.y = 0.95;
   g.add(head);
   parent = head; oy = 0.95;
-  put(new THREE.SphereGeometry(0.27, 24, 18), skin, 0.01, 1.17, 0, 0.95, 0.95, 1);
-  for (const side of [-1, 1]) {
-    put(new THREE.SphereGeometry(0.052, 14, 12), dark, 0.243, 1.165, side * 0.105, 0.35, 1.3, 0.85);    // 眼睛
-    put(new THREE.SphereGeometry(0.017, 8, 6), white, 0.262, 1.195, side * 0.105 - 0.016, 0.5, 1, 1);    // 眼裡的亮點
-    put(new THREE.SphereGeometry(0.042, 10, 8), blush, 0.226, 1.09, side * 0.165, 0.3, 0.55, 1);         // 腮紅
-    put(new THREE.CapsuleGeometry(0.03, 0.13, 4, 8), hair, 0.13, 1.115, side * 0.225, 0.7, 1, 1);         // 臉頰旁的髮束
+  const HY = 1.17;   // 頭的中心高度
+  const at = (pts) => pts.map(([x, y, z]) => [x, y + HY, z]);
+  put(solid(at([...ring(-0.215, -0.13, 0.15, 0.17, 0.06), ...ring(-0.13, -0.24, 0.25, 0.27, 0.07), ...ring(0.085, -0.25, 0.25, 0.285, 0.07),
+    ...ring(0.2, -0.22, 0.22, 0.25, 0.09), ...ring(0.255, -0.13, 0.13, 0.15, 0.06)]), skin), 0, 0, 0);
+  const faceMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.236), face);
+  faceMesh.rotation.y = Math.PI / 2;
+  put(faceMesh, 0.2515, HY - 0.033, 0);
+  // ---- 頭髮：蓋住頭頂和後腦的一大塊、額前幾片尖尖的瀏海、臉頰旁的兩片、後面一束馬尾 ----
+  put(solid(at([...ring(-0.19, -0.3, -0.09, 0.25, 0.08), ...ring(-0.05, -0.31, -0.02, 0.305, 0.08), ...ring(0.115, -0.3, 0.275, 0.305, 0.09),
+    ...ring(0.225, -0.25, 0.245, 0.275, 0.1), ...ring(0.29, -0.15, 0.14, 0.16, 0.06)]), hair), 0, 0, 0);
+  for (const [zc, w, tip, lean] of [[-0.205, 0.12, -0.03, -0.03], [-0.095, 0.13, 0.045, 0.02], [0.015, 0.1, -0.04, -0.015], [0.125, 0.13, 0.05, 0.03], [0.215, 0.11, -0.035, 0.03]]) {
+    put(solid(at([[0.268, 0.13, zc - w / 2], [0.268, 0.13, zc + w / 2], [0.24, 0.13, zc - w / 2], [0.24, 0.13, zc + w / 2], [0.268, tip, zc + lean], [0.25, tip, zc + lean]]), hair), 0, 0, 0);   // 瀏海
   }
-  put(new THREE.SphereGeometry(0.022, 8, 6), lip, 0.264, 1.075, 0, 0.3, 0.6, 1.3);                        // 嘴
-  // ---- 頭髮：蓋住頭頂與後腦、瀏海、綁紅緞帶的馬尾 ----
-  put(new THREE.SphereGeometry(0.286, 20, 14, 0, Math.PI * 2, 0, Math.PI * 0.52), hair, -0.008, 1.185, 0, 0.97, 0.98, 1.03).rotation.z = 0.55;
-  for (const [z, y, k] of [[-0.12, 1.305, 0.95], [0, 1.318, 1.05], [0.12, 1.305, 0.95]]) put(new THREE.SphereGeometry(0.09, 10, 8), hair, 0.212, y, z, 0.5, 0.75 * k, 1.05);
-  put(new THREE.SphereGeometry(0.052, 10, 8), ribbon, -0.268, 1.235, 0);
-  put(new THREE.SphereGeometry(0.095, 12, 10), hair, -0.37, 1.085, 0, 0.8, 2.0, 0.8).rotation.z = -0.5;
-  // ---- 草帽：寬帽簷、紅緞帶 ----
+  for (const side of [-1, 1]) {
+    put(solid(at([[0.07, 0.12, side * 0.3], [0.23, 0.12, side * 0.3], [0.07, 0.12, side * 0.27], [0.23, 0.12, side * 0.27],
+      [0.2, -0.1, side * 0.305], [0.2, -0.1, side * 0.28], [0.15, -0.27, side * 0.285], [0.15, -0.27, side * 0.265]]), hair), 0, 0, 0);   // 臉頰旁的髮片
+  }
+  put(solid(at([[-0.3, 0.11, 0.05], [-0.3, 0.11, -0.05], [-0.29, 0.02, 0.04], [-0.29, 0.02, -0.04], [-0.48, -0.03, 0.085], [-0.48, -0.03, -0.085],
+    [-0.38, -0.12, 0.08], [-0.38, -0.12, -0.08], [-0.45, -0.37, 0]]), hair), 0, 0, 0);                                                    // 馬尾
+  put(solid(at([[-0.31, 0.075, 0.07], [-0.31, 0.075, -0.07], [-0.37, 0.11, 0], [-0.33, 0.03, 0], [-0.27, 0.07, 0], [-0.35, 0.07, 0]]), ribbon), 0, 0, 0);   // 綁馬尾的紅緞帶
+  // ---- 草帽：八角形的寬帽簷、六角形的帽頂、一圈紅緞帶 ----
   const tip = 0.1;
-  put(new THREE.CylinderGeometry(0.40, 0.43, 0.026, 28), straw, -0.02, 1.385, 0).rotation.z = tip;
-  put(new THREE.SphereGeometry(0.238, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), straw, -0.02, 1.39, 0, 1, 0.72, 1).rotation.z = tip;
-  put(new THREE.CylinderGeometry(0.243, 0.243, 0.05, 24), ribbon, -0.022, 1.412, 0).rotation.z = tip;
+  put(prism(straw, 0.43, 0.43, 0.028, 8), -0.02, HY + 0.235, 0).rotation.z = tip;
+  put(prism(straw, 0.16, 0.245, 0.17, 6), -0.03, HY + 0.33, 0).rotation.z = tip;
+  put(prism(ribbon, 0.236, 0.252, 0.05, 6), -0.024, HY + 0.272, 0).rotation.z = tip;
   // fpHide：掌舵的第一人稱要藏起來的部分（脖子以上）；mats：這個人用到的所有材質
   g.traverse((m) => { if (m.isMesh) m.userData.figure = true; });
-  g.userData = { legs, arms, head, fpHide: body, torso, mats: [skin, hair, denim, shirt, boot, straw, ribbon, dark, blush, white, lip] };
+  g.userData = { legs, arms, head, fpHide: body, torso, mats: [skin, hair, denim, shirt, boot, straw, ribbon, face] };
   return g;
 }
 
