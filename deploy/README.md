@@ -25,7 +25,7 @@ sudo apt-get install -y nodejs caddy
 # 2. 放程式
 sudo useradd --system --home /opt/stormcast --shell /usr/sbin/nologin stormcast
 sudo mkdir -p /opt/stormcast /var/lib/stormcast
-sudo git clone -b multiplayer https://github.com/YIMin0123/Stormcast.git /opt/stormcast
+sudo git clone -b main https://github.com/YIMin0123/Stormcast.git /opt/stormcast
 cd /opt/stormcast/server && sudo npm ci --omit=dev
 sudo chown -R stormcast:stormcast /opt/stormcast /var/lib/stormcast
 
@@ -55,7 +55,7 @@ cd /opt/stormcast && sudo -u stormcast git pull && cd server && sudo -u stormcas
 
 1. repo 要是公開的（免費帳號要公開才能用 Pages）。
 2. repo 的 Settings → Pages → Source 選「GitHub Actions」。
-3. 把 `multiplayer` 分支推上去（多人版目前從這個分支上線，合併進 main 之後再改回 main），`.github/workflows/pages.yml` 會自動打包、發佈到 `https://yimin0123.github.io/Stormcast/`。
+3. 把 `main` 分支推上去，`.github/workflows/pages.yml` 會自動打包、發佈到 `https://yimin0123.github.io/Stormcast/`。
 
 網頁預設連 `wss://35-229-248-193.sslip.io`（寫在 `src/net.js` 的 `PROD_SERVER`）。伺服器換位址的話改那一行，
 或是打包時設環境變數 `VITE_SERVER_URL`。
