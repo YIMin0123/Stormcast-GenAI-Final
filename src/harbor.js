@@ -952,7 +952,7 @@ export function makeHarbor(bedAt) {
   // 晒架上掛著的漁網與浮球
   const nt = netTexture();
   nt.repeat.set(5, 2.6);
-  const net = new THREE.Mesh(new THREE.PlaneGeometry(3.1, 1.55, 6, 3), new THREE.MeshLambertMaterial({ map: nt, transparent: true, alphaTest: 0.35, side: THREE.DoubleSide }));
+  const net = new THREE.Mesh(new THREE.PlaneGeometry(3.1, 1.55, 6, 3), new THREE.MeshLambertMaterial({ map: nt, transparent: true, alphaTest: 0.35, side: THREE.DoubleSide, forceSinglePass: true }));
   {
     const p = net.geometry.attributes.position;   // 網子中間往下垂、往外鼓
     for (let i = 0; i < p.count; i++) { const k = 1 - Math.abs(p.getX(i)) / 1.55; p.setZ(i, 0.18 * k * (0.775 - p.getY(i))); p.setY(i, p.getY(i) - 0.1 * k); }

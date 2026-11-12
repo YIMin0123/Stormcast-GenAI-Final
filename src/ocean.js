@@ -8,13 +8,17 @@ const TAU = Math.PI * 2;
 const quadVert = /* glsl */ `void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }`;
 
 // h(k,t) = h0(k) e^{-iωt} + conj(h0(-k)) e^{+iωt}，並同時準備水平位移的頻譜
+// 三層並排在同一張 3N×N 的圖上一起算（手機的顯示晶片每換一次繪製目標都有固定的開銷，分開算要多換很多次）
 const spectrumFrag = /* glsl */ `
 uniform sampler2D uH0;
 uniform int uN;
-uniform float uPatch, uTime;
+uniform vec3 uPatches;
+uniform float uTime;
 void main() {
   ivec2 p = ivec2(gl_FragCoord.xy);
-  vec2 mn = vec2(p);
+  int ci = p.x / uN;
+  float uPatch = ci == 0 ? uPatches.x : (ci == 1 ? uPatches.y : uPatches.z);
+  vec2 mn = vec2(float(p.x - ci * uN), float(p.y));
   float n = float(uN);
   mn = mix(mn, mn - n, step(n * 0.5, mn));
   vec2 k = 6.2831853 * mn / uPatch;
@@ -32,7 +36,7 @@ void main() {
 }
 `;
 
-// Stockham 形式的 FFT，一次處理一個階段；不需要位元反轉
+// Stockham 形式的 FFT，一次處理一個階段；不需要位元反轉。三層並排（橫向那幾趟各自在自己那一塊裡做）
 const fftFrag = /* glsl */ `
 uniform sampler2D uInput;
 uniform int uN, uSub;
@@ -40,11 +44,12 @@ uniform bool uHoriz;
 vec2 cmul(vec2 a, vec2 b) { return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
 void main() {
   ivec2 p = ivec2(gl_FragCoord.xy);
-  int idx = uHoriz ? p.x : p.y;
+  int base = (p.x / uN) * uN;
+  int idx = uHoriz ? p.x - base : p.y;
   int hs = uSub / 2;
   int ev = (idx / uSub) * hs + (idx % hs);
-  ivec2 pe = uHoriz ? ivec2(ev, p.y) : ivec2(p.x, ev);
-  ivec2 po = uHoriz ? ivec2(ev + uN / 2, p.y) : ivec2(p.x, ev + uN / 2);
+  ivec2 pe = uHoriz ? ivec2(base + ev, p.y) : ivec2(p.x, ev);
+  ivec2 po = uHoriz ? ivec2(base + ev + uN / 2, p.y) : ivec2(p.x, ev + uN / 2);
   vec4 e = texelFetch(uInput, pe, 0), o = texelFetch(uInput, po, 0);
   float a = 6.2831853 * float(idx % uSub) / float(uSub);
   vec2 tw = vec2(cos(a), sin(a));
@@ -62,12 +67,14 @@ const dispFrag = /* glsl */ `
 ${wrapFn}
 uniform sampler2D uFft;
 uniform sampler2D uPrev;
+uniform int uOff;   // 這一層在並排的 FFT 圖裡從第幾格開始
 uniform float uPatch, uChop, uDecay, uFoamBias, uScale;
+vec4 F(ivec2 q) { q = wrap(q); return texelFetch(uFft, ivec2(q.x + uOff, q.y), 0); }
 void main() {
   ivec2 p = ivec2(gl_FragCoord.xy);
-  vec4 c = texelFetch(uFft, p, 0);
-  vec4 xp = texelFetch(uFft, wrap(p + ivec2(1, 0)), 0), xm = texelFetch(uFft, wrap(p - ivec2(1, 0)), 0);
-  vec4 zp = texelFetch(uFft, wrap(p + ivec2(0, 1)), 0), zm = texelFetch(uFft, wrap(p - ivec2(0, 1)), 0);
+  vec4 c = F(p);
+  vec4 xp = F(p + ivec2(1, 0)), xm = F(p - ivec2(1, 0));
+  vec4 zp = F(p + ivec2(0, 1)), zm = F(p - ivec2(0, 1));
   float k = uChop * uScale / (2.0 * uPatch / float(uN));
   float dDxdx = k * (xp.y - xm.y), dDzdz = k * (zp.z - zm.z);
   float dDxdz = k * (zp.y - zm.y), dDzdx = k * (xp.z - xm.z);
@@ -111,7 +118,7 @@ export class FftOcean {
     const U = opts.windSpeed ?? 14, fetch = opts.fetch ?? 2e5, hsTarget = opts.hs ?? 2.2;
     // floatRT：顯示晶片能不能畫進 32 位元浮點貼圖（不少手機只能畫 16 位元的）。不能的話 FFT 整個改用 16 位元算
     this.floatRT = renderer.extensions.has('EXT_color_buffer_float');
-    const fftType = this.floatRT ? THREE.FloatType : THREE.HalfFloatType;
+    const fftType = this.floatRT && !opts.fft16 ? THREE.FloatType : THREE.HalfFloatType;
     // 位移圖能做線性過濾時才用 32 位元；否則退回 16 位元。船的浮力照樣讀回（16 位元的另外換算，見 _read）
     const mapType = this.floatRT && renderer.extensions.has('OES_texture_float_linear') ? THREE.FloatType : THREE.HalfFloatType;
     this.canRead = true;
@@ -152,8 +159,8 @@ export class FftOcean {
     // aniso：各向異性過濾。只給斜率圖（像素著色器取樣、貼著水面看遠處才清楚）；
     // 位移圖是頂點著色器用 textureLod 取樣的，頂點階段用不到它，而且 Adreno（三星、小米等）在頂點階段
     // 「指定層級取樣＋各向異性過濾」會讀到亂值，海面變成越遠越高的斜坡
-    const target = (type, mip, aniso = false) => {
-      const t = new THREE.WebGLRenderTarget(N, N, {
+    const target = (type, mip, aniso = false, w = N) => {
+      const t = new THREE.WebGLRenderTarget(w, N, {
         type, format: THREE.RGBAFormat, depthBuffer: false, stencilBuffer: false,
         minFilter: mip ? THREE.LinearMipmapLinearFilter : THREE.NearestFilter,
         magFilter: mip ? THREE.LinearFilter : THREE.NearestFilter,
@@ -164,7 +171,8 @@ export class FftOcean {
       return t;
     };
 
-    this.fft = [target(fftType, false), target(fftType, false)];
+    const NC = this.patches.length;
+    this.fft = [target(fftType, false, false, NC * N), target(fftType, false, false, NC * N)];
     // JONSWAP 的能量集中在長浪，短浪偏弱，海面會太平滑；這裡把中、短波加強到接近實測的海面粗糙度
     const gain = opts.gain ?? [1, 1.7, 2.0];
     this.cascades = raw.map((h, ci) => {
@@ -191,13 +199,23 @@ export class FftOcean {
       };
     });
 
+    // 三層的初始頻譜並排成一張（第 j 列 = 各層的第 j 列接在一起）
+    const atlas = new Float32Array(NC * N * N * 4);
+    this.cascades.forEach((c, ci) => {
+      const d = c.h0.image.data;
+      for (let j = 0; j < N; j++) atlas.set(d.subarray(j * N * 4, (j + 1) * N * 4), (j * NC * N + ci * N) * 4);
+    });
+    this.h0Atlas = new THREE.DataTexture(atlas, NC * N, N, THREE.RGBAFormat, THREE.FloatType);
+    this.h0Atlas.minFilter = this.h0Atlas.magFilter = THREE.NearestFilter;
+    this.h0Atlas.needsUpdate = true;
+
     const mat = (frag, uniforms) => new THREE.ShaderMaterial({
       vertexShader: quadVert, fragmentShader: frag, uniforms, depthTest: false, depthWrite: false,
     });
-    this.mSpec = mat(spectrumFrag, { uH0: { value: null }, uN: { value: N }, uPatch: { value: 1 }, uTime: { value: 0 } });
+    this.mSpec = mat(spectrumFrag, { uH0: { value: this.h0Atlas }, uN: { value: N }, uPatches: { value: new THREE.Vector3(...this.patches) }, uTime: { value: 0 } });
     this.mFft = mat(fftFrag, { uInput: { value: null }, uN: { value: N }, uSub: { value: 2 }, uHoriz: { value: true } });
     this.mDisp = mat(dispFrag, {
-      uFft: { value: null }, uPrev: { value: null }, uN: { value: N }, uPatch: { value: 1 },
+      uFft: { value: null }, uPrev: { value: null }, uN: { value: N }, uPatch: { value: 1 }, uOff: { value: 0 },
       uChop: { value: this.chop }, uDecay: { value: 1 }, uFoamBias: { value: 0.8 }, uScale: { value: 1 },
     });
     this.mSlope = mat(slopeFrag, { uDisp: { value: null }, uN: { value: N }, uPatch: { value: 1 } });
@@ -240,23 +258,23 @@ export class FftOcean {
   update(t, dt, scale, foamScale = scale) {
     this.scale = scale;
     const N = this.N;
+    // 頻譜與逆 FFT：三層並排一起算
+    this.mSpec.uniforms.uTime.value = t % 2048;
+    this.pass(this.mSpec, this.fft[0]);
+    let src = 0;
+    const fu = this.mFft.uniforms;
+    for (let s = 0; s < this.stages * 2; s++) {
+      fu.uInput.value = this.fft[src].texture;
+      fu.uHoriz.value = s < this.stages;
+      fu.uSub.value = 2 << (s % this.stages);
+      this.pass(this.mFft, this.fft[1 - src]);
+      src = 1 - src;
+    }
+    // 位移圖（含泡沫）與斜率圖：每層各自一張（要能重複鋪、要有縮小版）
     this.cascades.forEach((c, ci) => {
-      const su = this.mSpec.uniforms;
-      su.uH0.value = c.h0; su.uPatch.value = c.patch; su.uTime.value = t % 2048;
-      this.pass(this.mSpec, this.fft[0]);
-
-      let src = 0;
-      const fu = this.mFft.uniforms;
-      for (let s = 0; s < this.stages * 2; s++) {
-        fu.uInput.value = this.fft[src].texture;
-        fu.uHoriz.value = s < this.stages;
-        fu.uSub.value = 2 << (s % this.stages);
-        this.pass(this.mFft, this.fft[1 - src]);
-        src = 1 - src;
-      }
-
       const du = this.mDisp.uniforms;
       du.uFft.value = this.fft[src].texture;
+      du.uOff.value = ci * N;
       du.uPrev.value = c.disp[c.cur].texture;
       du.uPatch.value = c.patch;
       du.uScale.value = foamScale;
@@ -271,6 +289,64 @@ export class FftOcean {
       this.pass(this.mSlope, c.slope);
     });
     this.renderer.setRenderTarget(null);
+    this._pump(t);
+  }
+
+  // 船的浮力、游泳、鏡頭在不在水下……要知道浪高的地方，用的是背景執行緒（oceanWorker.js）用 CPU 算的同一片海：
+  // 以前是從顯示晶片讀回來，但手機上的 Chrome 每讀一次 CPU 都要停下來等十幾毫秒（連只讀一個像素也一樣）。
+  // 兩層各一個背景執行緒。算一份要好幾幀，所以請它算「稍微未來」的時間，主執行緒在前後兩份之間內插出現在的浪高，
+  // 浮沉才是連續的。開不了背景執行緒的瀏覽器才退回從顯示晶片讀
+  _pump(t) {
+    t %= 2048;
+    this._now = t;
+    if (this._workers === undefined) {
+      this._workers = null;
+      try {
+        this._workers = [0, 1].map((ci) => {
+          const w = new Worker(new URL('./oceanWorker.js', import.meta.url), { type: 'module' });
+          const st = { w, busy: false, cost: 0.2, sent: 0, prev: null, cur: null, spare: null };
+          w.postMessage({ init: { N: this.N, chop: this.chop, patch: [this.patches[ci]], h0: [this.cascades[ci].h0.image.data] } });
+          w.onmessage = (e) => {
+            st.busy = false;
+            st.cost = 0.8 * st.cost + 0.2 * (performance.now() - st.sent) / 1000;   // 算一份要多久（秒）
+            if (st.prev) st.spare = st.prev.data;
+            st.prev = st.cur;
+            st.cur = { t: e.data.t, data: e.data.bufs[0] };
+          };
+          w.onerror = () => { this._workers = null; };
+          return st;
+        });
+      } catch (err) { this._workers = null; }
+    }
+    if (!this._workers) return;
+    for (const st of this._workers) {
+      if (st.busy) continue;
+      st.busy = true; st.sent = performance.now();
+      const buf = st.spare; st.spare = null;
+      st.w.postMessage({ t: (t + st.cost * 1.3 + 0.03) % 2048, bufs: buf ? [buf] : undefined }, buf ? [buf.buffer] : []);
+    }
+  }
+
+  // 背景執行緒的結果有沒有到（兩層都要有）
+  get _cpuReady() { return !!(this._workers && this._workers[0].cur && this._workers[1].cur); }
+
+  // 從背景執行緒的結果取一塊（x、y 已在範圍內）寫進 out（RGBA）：在前後兩份之間依現在的時間內插
+  _copy(ci, x, y, w, h, out) {
+    const st = this._workers[ci], N = this.N, b = st.cur, a = st.prev;
+    let k = 1;
+    if (a && b.t > a.t && this._now > a.t - 1 && this._now < b.t + 1) k = Math.min(1, Math.max(0, (this._now - a.t) / (b.t - a.t)));
+    for (let r = 0; r < h; r++) {
+      const src = ((y + r) * N + x) * 4, dst = r * w * 4;
+      if (k >= 1) out.set(b.data.subarray(src, src + w * 4), dst);
+      else for (let q = 0; q < w * 4; q++) out[dst + q] = a.data[src + q] + (b.data[src + q] - a.data[src + q]) * k;
+    }
+  }
+
+  // 從背景執行緒算的那一份拿；還沒有（剛開始的頭幾幀）才從顯示晶片讀
+  _get(ci, x, y, w, h, out) {
+    if (this._cpuReady) { this._copy(ci, x, y, w, h, out); return; }
+    const c = this.cascades[ci];
+    this._read(c.disp[c.cur], x, y, w, h, out);
   }
 
   // 一次讀回 (x, z) 周圍 8×8 格的浪高，之後用 sampleCached 取樣，避免每個取樣點都向 GPU 要資料
@@ -283,7 +359,7 @@ export class FftOcean {
     this.blockX0 = x - (gx - bi) * c.patch / N;
     this.blockZ0 = z - (gz - bj) * c.patch / N;
     if (!this.blockBuf) this.blockBuf = new Float32Array(B * B * 4);
-    this._read(c.disp[c.cur], bi, bj, B, B, this.blockBuf);
+    this._get(0, bi, bj, B, B, this.blockBuf);
     // 第二層（波長三到十幾公尺的中浪）也讀一塊：畫面上的海面是這兩層加起來的，船要跟著同一片水面浮沉，
     // 不然小一點的浪會直接穿過船身。這一層每 113 公尺重複一次，船常常跨在接縫上，所以要繞回另一頭去讀
     const c1 = this.cascades[1], B1 = this.B1 = 48, t1 = N / c1.patch;
@@ -293,7 +369,7 @@ export class FftOcean {
     if (!this.block1) { this.block1 = new Float32Array(B1 * B1 * 4); this._tmp1 = new Float32Array(B1 * B1 * 4); }
     const wi = ((i1 % N) + N) % N, wj = ((j1 % N) + N) % N, w0 = Math.min(B1, N - wi), h0 = Math.min(B1, N - wj);
     const part = (sx, sy, w, h, dx, dy) => {
-      this._read(c1.disp[c1.cur], sx, sy, w, h, this._tmp1);
+      this._get(1, sx, sy, w, h, this._tmp1);
       for (let r = 0; r < h; r++) this.block1.set(this._tmp1.subarray(r * w * 4, (r + 1) * w * 4), ((dy + r) * B1 + dx) * 4);
     };
     part(wi, wj, w0, h0, 0, 0);
@@ -344,7 +420,7 @@ export class FftOcean {
     const gx = ((x / c.patch) % 1 + 1) % 1 * N - 0.5, gz = ((z / c.patch) % 1 + 1) % 1 * N - 0.5;
     const i = Math.min(N - 2, Math.max(0, Math.floor(gx))), j = Math.min(N - 2, Math.max(0, Math.floor(gz)));
     const fx = Math.min(1, Math.max(0, gx - i)), fz = Math.min(1, Math.max(0, gz - j));
-    this._read(c.disp[c.cur], i, j, 2, 2, this.readBuf);
+    this._get(0, i, j, 2, 2, this.readBuf);
     const b = this.readBuf;
     return ((b[1] * (1 - fx) + b[5] * fx) * (1 - fz) + (b[9] * (1 - fx) + b[13] * fx) * fz) * this.scale;
   }

@@ -291,7 +291,10 @@ function makePolarGeometry(nA = 384, nR = 420, r0 = 0.8, rMax = 34000) {
   return g;
 }
 
-const ocean = new FftOcean(renderer, { hs: HS, windAngle: WAVE_ANGLE });
+// 手機：海浪的 FFT 用 16 位元算（每幀要搬的資料少一半，手機的記憶體頻寬吃不消 32 位元；浪高的誤差在毫米等級）。
+// ?fft16 / ?fft32：強制用哪一種，比較用
+const FFT16 = /[?&]fft16/.test(location.search) || (TOUCH && !/[?&]fft32/.test(location.search));
+const ocean = new FftOcean(renderer, { hs: HS, windAngle: WAVE_ANGLE, fft16: FFT16 });
 const sunDir = new THREE.Vector3(-0.5, 0.52, 0.6).normalize(); // 太陽在西南方，店面與碼頭是向陽面
 const wake = Array.from({ length: 16 }, () => new THREE.Vector4(0, 0, -1e6, 0));
 
@@ -366,10 +369,32 @@ const shared = {
   uSwe: { value: null }, uSweWet: { value: null }, uSweOrigin: { value: new THREE.Vector2() }, uSweSize: { value: 1 }, uSweOn: { value: 0 },
 };
 
-const terrain = new THREE.Mesh(makeTerrainGeometry(), new THREE.ShaderMaterial({
-  vertexShader: terrainVert, fragmentShader: terrainFrag, uniforms: shared,
-}));
-terrain.frustumCulled = false;
+// 地形切成 128 公尺見方的一塊塊（共用同一份頂點），各自有邊界框：
+// 陰影只照身邊幾十公尺、倒影只照 450 公尺內，只畫照得到的那幾塊（以前整座島每一趟都要畫一遍，手機上很吃力）
+const terrain = new THREE.Group();
+{
+  const mat = new THREE.ShaderMaterial({ vertexShader: terrainVert, fragmentShader: terrainFrag, uniforms: shared });
+  const g = makeTerrainGeometry(), idx = g.index.array, pos = g.attributes.position.array, T = 16;
+  const buckets = Array.from({ length: T * T }, () => []);
+  for (let t = 0; t < idx.length; t += 3) {
+    const a = idx[t] * 3;
+    const tx = clamp(Math.floor((pos[a] / L + 0.5) * T), 0, T - 1), tz = clamp(Math.floor((pos[a + 2] / L + 0.5) * T), 0, T - 1);
+    buckets[tz * T + tx].push(idx[t], idx[t + 1], idx[t + 2]);
+  }
+  for (const b of buckets) {
+    if (!b.length) continue;
+    const cg = new THREE.BufferGeometry();
+    cg.setAttribute('position', g.attributes.position);
+    cg.setAttribute('normal', g.attributes.normal);
+    cg.setIndex(new THREE.BufferAttribute(new Uint32Array(b), 1));
+    const box = new THREE.Box3(), v = new THREE.Vector3();
+    for (const k of b) box.expandByPoint(v.fromArray(pos, k * 3));
+    cg.boundingBox = box;
+    cg.boundingSphere = box.getBoundingSphere(new THREE.Sphere());
+    terrain.add(new THREE.Mesh(cg, mat));
+  }
+  terrain.material = mat;
+}
 scene.add(terrain);
 
 const water = new THREE.Mesh(makePolarGeometry(), new THREE.ShaderMaterial({
@@ -502,7 +527,7 @@ function shade(obj) {
     m.receiveShadow = !mat.isMeshBasicMaterial && !mat.userData.noReceive;
   });
 }
-terrain.castShadow = true;
+for (const m of terrain.children) m.castShadow = true;
 
 // ---- 雜草 -------------------------------------------------------------------
 // 一塊 48 公尺見方的草皮跟著鏡頭走，上面一萬四千叢草；位置、高矮、顏色、隨風擺動都在顯示卡上算。
@@ -533,6 +558,12 @@ scenery.setProxy(!/[?&]hishadow/.test(location.search));   // 精細的樹不投
 if (/[?&]noocc/.test(location.search)) scenery.setOccl(false);   // ?noocc：不做「被山擋住不畫」，比較用
 sun.shadow.camera.layers.enable(SHADOW_LAYER);   // 陰影貼圖也畫只投影用的那一層
 scene.add(scenery.group);
+// 景物（兩千多棵樹、石頭、燈塔）擺好就不會動：位置矩陣算一次就好，不用每一趟繪製都全部重算（燈塔的光束會轉，照舊）。
+// 場景本身也不會動：它每次重算的話，底下每個物件都會被逼著跟著重算
+scene.matrixAutoUpdate = false;
+scenery.group.updateMatrixWorld(true);
+scenery.group.traverse((o) => { o.matrixAutoUpdate = false; });
+scenery.beam.traverse((o) => { o.matrixAutoUpdate = true; });
 
 const harbor = makeHarbor(bedAt);
 scene.add(harbor);
@@ -749,7 +780,10 @@ const UP = new THREE.Vector3(0, 1, 0);
 const _rp = new THREE.Vector3(), _cw = new THREE.Vector3(), _vp = new THREE.Vector3();
 const _look = new THREE.Vector3(), _tg = new THREE.Vector3(), _rot = new THREE.Matrix4();
 const _cc = new THREE.Color();
-const clipOn = [new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)], clipOff = [];
+// 平常也留一個裁切平面（放在一千萬公尺外，什麼都切不到）：倒影那一趟要切掉水面下的東西，
+// 裁切平面的數量兩趟要一樣，不然每個材質每一幀都要在兩種程式之間換來換去（手機上每幀多花好幾毫秒）
+const clipOn = [new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)], clipOff = [new THREE.Plane(new THREE.Vector3(0, 1, 0), 1e7)];
+renderer.clippingPlanes = clipOff;
 const BIAS = new THREE.Matrix4().set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1);
 
 let reflTick = 0, drawCount = 0;
@@ -964,6 +998,30 @@ const camBlockers = [];
     m.applyMatrix4(inv);
     harbor.add(m);
     for (const o of list) o.removeFromParent();
+  }
+  // 陰影用不到材質：所有不會動、會投影的零件再合成一整塊「只投影」的網格（只在陰影那一層畫），
+  // 原本的零件就不投影了。陰影一模一樣，畫陰影時從一百多次縮成一次
+  harbor.updateMatrixWorld(true);
+  const casters = [];
+  harbor.traverse((o) => {
+    if (!o.isMesh || !o.castShadow || o.isInstancedMesh || o.isSkinnedMesh || Array.isArray(o.material) || o.material.transparent) return;
+    if (o.children.length || !o.frustumCulled || o.morphTargetInfluences || !shown(o) || keep.has(o.material) || o.material.alphaTest > 0) return;
+    if (o.customDepthMaterial || o.matrixWorld.determinant() < 0) return;
+    casters.push(o);
+  });
+  const geo = mergeGeometries(casters.map((o) => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', o.geometry.attributes.position.clone());
+    if (o.geometry.index) g.setIndex(o.geometry.index.clone());
+    return (g.index ? g.toNonIndexed() : g).applyMatrix4(o.matrixWorld);
+  }));
+  if (geo) {
+    const proxy = new THREE.Mesh(geo, new THREE.MeshBasicMaterial());
+    proxy.layers.set(SHADOW_LAYER);
+    proxy.castShadow = true;
+    proxy.applyMatrix4(inv);
+    harbor.add(proxy);
+    for (const o of casters) o.castShadow = false;
   }
 }
 
@@ -2875,7 +2933,7 @@ function drawFrame(dt) {
   grass.material.uniforms.uGrassCam.value.copy(cp).addScaledVector(_gd.normalize(), 13);
   grass.visible = gfx.grass > 0;
   updateBoatShadow();
-  // 倒影隔一幀重畫一次；陰影每一幀都重畫
+  // 倒影隔一幀重畫一次（偶數幀）；陰影平常每一幀都重畫，畫質「手機」只在奇數幀畫，兩個錯開
   const even = (drawCount++ & 1) === 0;
   // 地面是濕的、鏡頭在港口附近時，還要畫積水的倒影：跟海面倒影輪流，各自每四幀更新一次
   const deckWet = gfx.wet && !under && WET.wet.value > 0.04 && cp.y > DECK_Y + 0.3 && Math.hypot(cp.x + 4, cp.z - 128) < 120;
@@ -2884,7 +2942,8 @@ function drawFrame(dt) {
   if (deckTurn || (deckWet && !deckReady)) { renderDeckReflection(); deckReady = true; }
   if (!deckWet) deckReady = false;
   WET.reflOn.value = deckWet ? 1 : 0;
-  if (gfx.shadowOn) {
+  // 畫質「手機」：陰影貼圖隔一幀才重畫（會動的東西的影子晚一幀跟上，看不出來；陰影是手機上最貴的一項）
+  if (gfx.shadowOn && (!gfx.lite || !even)) {
     placeSun(target);
     if (sun.shadow.map) { shared.uShadowMap.value = sun.shadow.map.depthTexture; shared.uShadowOn.value = 1; }
   }
