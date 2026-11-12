@@ -12,6 +12,7 @@ import { fishLabel, FishWorld } from './fish.js';
 import { money as cash } from './fishdata.js';
 import { Fishing } from './fishing.js';
 import { EmoteWheel } from './emotes.js';
+import { TOUCH, TouchUI, touchText } from './touch.js';
 import { REFL, addOutline, BULBS, softDisc } from './toon.js';   // 它會改掉內建材質的受光算法（改成手繪風）
 import { makeScenery } from './scenery.js';
 import { makeGroundDetail, makeGrassGeometry, WIND, SIGHT } from './foliage.js';
@@ -54,7 +55,8 @@ function fail(msg) {
 // ---- Renderer -------------------------------------------------------------
 const renderer = new THREE.WebGLRenderer({ antialias: false });   // 抗鋸齒改由後製的 FXAA 負責（內顯上比多重取樣省很多）
 // 解析度跟著螢幕的縮放比例走（筆電常見 1.25、1.5 倍），畫面才不會被放大而糊掉、出現鋸齒
-const ratioFor = () => Math.round(clamp(window.devicePixelRatio || 1, 1, 1.5) * 10) / 10;
+// 手機（TOUCH）的螢幕很密、顯示晶片弱：用螢幕的 1 倍去畫（設定裡可以自己調高），陰影、草、後製也都用比較省的那一套
+const ratioFor = () => (TOUCH ? 1 : Math.round(clamp(window.devicePixelRatio || 1, 1, 1.5) * 10) / 10);
 let BASE_RATIO = ratioFor();
 renderer.setPixelRatio(BASE_RATIO);
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -348,7 +350,7 @@ scene.add(sun, sun.target, hemi);
 // 樹、石頭、船、人、港口的建築、山坡都會投影；地形用自己的著色器取樣這張貼圖。
 // 每隔一幀更新一次，跟水面倒影輪流畫，省一半的成本
 // 貼圖 3072：在 Iris Xe 上比 2048 每幀多 0.6 毫秒左右，4096 則要多 4.5 毫秒（量過），所以取 3072、範圍收到 54 公尺
-const SHADOW_HALF = 54, SHADOW_SIZE = 3072;
+const SHADOW_HALF = 54, SHADOW_SIZE = TOUCH ? 1536 : 3072;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.autoUpdate = false;
 sun.castShadow = true;
@@ -398,7 +400,7 @@ terrain.castShadow = true;
 // 一塊 48 公尺見方的草皮跟著鏡頭走，上面一萬四千叢草；位置、高矮、顏色、隨風擺動都在顯示卡上算。
 // 只有鏡頭附近二十公尺左右有立體的草，更遠的地方靠地面的草葉紋理撐著
 const GRASS_T = 48;
-const grass = new THREE.Mesh(makeGrassGeometry(14000, GRASS_T), new THREE.ShaderMaterial({
+const grass = new THREE.Mesh(makeGrassGeometry(TOUCH ? 6000 : 14000, GRASS_T), new THREE.ShaderMaterial({
   vertexShader: grassVert, fragmentShader: grassFrag, side: THREE.DoubleSide,
   uniforms: { ...shared, uGrassT: { value: GRASS_T }, uGrassCam: { value: new THREE.Vector3() }, uWindT: WIND.t, uWindAmp: WIND.amp, uWindDir: WIND.dir },
 }));
@@ -533,7 +535,7 @@ let inGame = false;   // 已經進到房間裡（還在主選單、大廳時不�
 let landing = false;  // 剛把魚拉上來，等伺服器承認
 const toastState = { until: 0 };
 function toast(text) {
-  $('toast').textContent = text;
+  $('toast').textContent = touchText(text);
   $('toast').style.display = 'block';
   toastState.until = performance.now() + 3200;
 }
@@ -777,7 +779,7 @@ const aiming = () => mode !== 'sink' && view[mode].fp && !mapOpen;
 const crosshair = () => !mapOpen && (mode === 'walk' || (mode === 'helm' && view.helm.fp));
 const locked = () => document.pointerLockElement === canvas;
 function grabMouse() {
-  if (locked() || !canvas.requestPointerLock) return;
+  if (TOUCH || locked() || !canvas.requestPointerLock) return;
   try { const p = canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch { /* 瀏覽器不給鎖就算了，照舊按住拖曳 */ }
 }
 function syncAim() {
@@ -1442,9 +1444,14 @@ function updatePrompt() {
   if (!inGame) text = '';
   if (text !== promptText) {
     promptText = text;
-    $('prompt').textContent = text;
+    $('prompt').textContent = touchText(text);
     $('prompt').style.display = text ? 'block' : 'none';
   }
+  touch.update({
+    on: inGame && !mapOpen && !chat.isOpen && !wheel.isOpen, helm: mode === 'helm', sink: mode === 'sink',
+    target: !!a || mode === 'helm' || !!fish.held || !!player.seat,
+    act: mode === 'helm' ? '放手' : fish.held ? (kind === 'tank' || kind === 'basket' || kind === 'box' ? '放進去' : '放下') : player.seat && !a ? '站起來' : '互動',
+  });
 }
 
 // ---- 介面 -----------------------------------------------------------------
@@ -1528,6 +1535,38 @@ function closeWheel(play) {
   if (pick.kind === 'face') player.setMood(pick.id);
   else if (!player.playAction(pick.id)) toast('現在不能做這個動作（游泳、坐著、手上拿著東西時不行）');
 }
+// 手機的觸控操作：搖桿、滑動轉視角、右下角的按鈕、右上角的小按鈕（電腦上這個物件是空的，搖桿永遠是 0）
+const touch = new TouchUI({
+  canvas,
+  look(dx, dy) {
+    const v = view[mode], k = 0.0052;
+    v.yaw += dx * k;
+    if (mode === 'helm' && v.fp) v.yaw = clamp(v.yaw, -2.7, 2.7);
+    v.pitch = clamp(v.pitch - dy * k, v.fp ? -1.1 : -1.4, v.fp ? 1.1 : 0.5);
+  },
+  zoom(k) { const v = view[mode]; v.dist = clamp(v.dist * k, ...DIST[mode]); },
+  interact: () => { if (inGame) interact(); },
+  fishDown() { if (!inGame) return; keys.f = true; fishing.press(); },
+  fishUp() { keys.f = false; fishing.release(); },
+  jump(on) { keys.space = on && inGame; },
+  map: () => { if (inGame) toggleMap(); },
+  chat: () => chat.open(),
+  emote() { if (wheel.isOpen) closeWheel(false); else if (inGame && mode === 'walk' && !mapOpen) wheel.open(); },
+  view: () => { if (inGame) toggleFp(); },
+});
+if (TOUCH) {
+  // 表情輪盤：直接點那一格就播放，點在外面是取消
+  wheel.root.style.pointerEvents = 'auto';
+  wheel.root.style.touchAction = 'none';
+  wheel.hint = '點一格';
+  $('chatInput').placeholder = '說點什麼…（點畫面其他地方關閉）';
+  const at = (e) => { e.preventDefault(); wheel.point(e.clientX, e.clientY); };
+  wheel.root.addEventListener('pointerdown', at);
+  wheel.root.addEventListener('pointermove', at);
+  wheel.root.addEventListener('pointerup', (e) => { at(e); closeWheel(mode === 'walk'); });
+  $('map').addEventListener('click', () => { if (mapOpen) toggleMap(); });
+  $('mapNote').textContent = '紅色箭頭是你，黃色是你的船，白色是其他人　點一下地圖關閉';
+}
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement || !inGame) return;
   if (e.code === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); chat.open(); return; }
@@ -1553,6 +1592,7 @@ window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; c
 
 // 按住滑鼠拖曳轉視角；滾輪調整第三人稱的距離
 canvas.addEventListener('pointerdown', (e) => {
+  if (TOUCH) { if (chat.isOpen) chat.close(); return; }   // 手機：畫面上的手指由觸控操作那邊接手（見 touch.js）；點一下畫面順便把聊天收起來
   if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); // 免得空白鍵按到面板上的按鈕
   if (aiming() && !locked()) { grabMouse(); return; }   // 第一人稱：點一下畫面就把滑鼠收回去
   if (e.button === 0) { if (!locked()) canvas.setPointerCapture(e.pointerId); keys.mouse = true; }
@@ -1577,6 +1617,7 @@ function lookJump(e) {
   return false;
 }
 canvas.addEventListener('pointermove', (e) => {
+  if (TOUCH) return;
   if (wheel.isOpen) { if (!lookJump(e)) wheel.move(e.movementX, e.movementY); return; }   // 輪盤開著：滑鼠拿來選，不轉視角
   const free = locked();   // 滑鼠鎖在畫面裡：不用按著也能轉
   if (!free && !(e.buttons & 1)) return;
@@ -1881,7 +1922,7 @@ function updateSwim(dt) {
   } else if (mode === 'walk' && player.swim) {
     // 用力游、捧著東西、浪大都比較累；停著踩水比較省力
     const rough = clamp(ocean.scale * stormK(player.x, player.z) - 1.3, 0, 2);
-    const k = (player.moving ? (keys.shift ? 1.45 : 1) : 0.6) * (player.carry ? 1.35 : 1) * (1 + 0.4 * rough);
+    const k = (player.moving ? (keys.shift || touch.run ? 1.45 : 1) : 0.6) * (player.carry ? 1.35 : 1) * (1 + 0.4 * rough);
     stamina -= dt * k / SWIM_SECONDS;
     // 巨浪沖上岸：人浮在湧進來的水裡，被水帶著往浪前進的方向沖
     const sg = surgeAt(player.x, player.z);
@@ -2030,7 +2071,7 @@ function updateFishUi() {
     $('barFill').style.width = `${fishing.power * 100}%`;
     $('barFill').style.background = '#e2b21c';
     $('fishLabel').textContent = '拋竿力道';
-    $('fishHint').textContent = '放開 F 拋出去';
+    $('fishHint').textContent = touchText('放開 F 拋出去');
     return;
   }
   $('barFill').style.width = '0';
@@ -2040,7 +2081,7 @@ function updateFishUi() {
   $('barMark').style.background = fishing.inZone ? '#fff' : '#ff8a70';
   $('progFill').style.width = `${clamp(fishing.progress, 0, 1) * 100}%`;
   $('fishLabel').textContent = `把白色指標維持在綠色區間內　還有 ${Math.max(fishing.dist, 0).toFixed(0)} 公尺`;
-  $('fishHint').textContent = strain > 0.5 ? '釣竿快斷了！放開 F！' : fishing.inZone ? '很好，保持住' : fishing.force < fishing.zone ? '力道不夠：按住 F' : '太用力了：放開 F';
+  $('fishHint').textContent = touchText(strain > 0.5 ? '釣竿快斷了！放開 F！' : fishing.inZone ? '很好，保持住' : fishing.force < fishing.zone ? '力道不夠：按住 F' : '太用力了：放開 F');
 }
 
 // ---- 多人：跟伺服器對時、送出自己的狀態、照伺服器說的更新 -----------------------
@@ -2300,7 +2341,7 @@ function enterRoom(j) {
   lastHold = lastLine = '?';
   chat.clear();
   chat.show(true);
-  chat.sys(back ? `回到${room.name}了` : `歡迎來到${room.name}。按 Enter 可以聊天`, 'info');
+  chat.sys(back ? `回到${room.name}了` : touchText(`歡迎來到${room.name}。按 Enter 可以聊天`), 'info');
   $('net').style.display = 'none';
   inGame = true;
   fadeIn = 1.2;
@@ -2317,8 +2358,8 @@ function advance(dt) {
   if (mode === 'walk' && player.boat && player.boat !== boat) { boat = player.boat; camHeading = boat.heading; }
   else if (mode === 'walk' && !player.boat && boat.remote) { boat = myBoat; camHeading = boat.heading; }
   const mb = myBoat;   // 自己的船：只有它的物理、損傷在這裡算（別人的船由船主那邊算好傳過來）
-  mb.keys.w = helm && keys.w; mb.keys.s = helm && keys.s;
-  mb.keys.a = helm && keys.a; mb.keys.d = helm && keys.d;
+  mb.keys.w = helm && (keys.w || touch.my > 0.38); mb.keys.s = helm && (keys.s || touch.my < -0.38);
+  mb.keys.a = helm && (keys.a || touch.mx < -0.38); mb.keys.d = helm && (keys.d || touch.mx > 0.38);
   ocean.cacheBlock(boat.x, boat.z);
   mb.update(dt, mb === boat ? boatEnv : calmEnv);
   others.update(dt);
@@ -2373,13 +2414,13 @@ function advance(dt) {
 
   if (mode === 'walk') {
     const v = view.walk;
-    if (player.seat && (keys.w || keys.a || keys.s || keys.d || keys.space)) standUp();
-    const f = drown ? 0 : (keys.w ? 1 : 0) - (keys.s ? 1 : 0), r = drown ? 0 : (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
+    if (player.seat && (keys.w || keys.a || keys.s || keys.d || keys.space || touch.mx || touch.my)) standUp();
+    const f = drown ? 0 : (keys.w ? 1 : 0) - (keys.s ? 1 : 0) + touch.my, r = drown ? 0 : (keys.d ? 1 : 0) - (keys.a ? 1 : 0) + touch.mx;
     const cy = Math.cos(v.yaw), sy = Math.sin(v.yaw);
     // 人在水邊或水裡才需要知道浪高
     swimWave = !player.boat && bedAt(player.x, player.z) < -0.4 ? ocean.sampleHeight(player.x, player.z) : 0;
     player.look(v.yaw, v.pitch);
-    player.update(dt, cy * f - sy * r, sy * f + cy * r, keys.shift, keys.space && !drown, walkWorld);
+    player.update(dt, cy * f - sy * r, sy * f + cy * r, keys.shift || touch.run, keys.space && !drown, walkWorld);
     if (v.fp) { player.yaw = v.yaw; player.mesh.rotation.y = -v.yaw; } // 第一人稱時身體跟著視線
     // 腳步聲：腳每落地一次（走路動作每半圈）播一聲，木板和草地沙地各一組
     const stepN = Math.floor(player.phase / Math.PI);
@@ -2543,7 +2584,7 @@ function drawFrame(dt) {
   // 偶數幀重畫倒影，奇數幀重畫陰影
   const even = (drawCount++ & 1) === 0;
   // 地面是濕的、鏡頭在港口附近時，還要畫積水的倒影：跟海面倒影輪流，各自每四幀更新一次
-  const deckWet = !under && WET.wet.value > 0.04 && cp.y > DECK_Y + 0.3 && Math.hypot(cp.x + 4, cp.z - 128) < 120;
+  const deckWet = !TOUCH && !under && WET.wet.value > 0.04 && cp.y > DECK_Y + 0.3 && Math.hypot(cp.x + 4, cp.z - 128) < 120;
   const deckTurn = deckWet && even && (drawCount & 2) !== 0;
   renderReflection(under, even && !deckTurn);
   if (deckTurn || (deckWet && !deckReady)) { renderDeckReflection(); deckReady = true; }
@@ -2560,7 +2601,7 @@ function drawFrame(dt) {
   const onFloor = !!player.boat || onDeck(player.x, player.z) || pontoonY(player.x, player.z) !== null, lift = clamp(1 - (player.h || 0) / 1.2, 0, 1);
   blob.visible = onFloor && !player.swim;
   shared.uBlob.value.set(player.x, player.z, onFloor || player.swim ? 0 : lift);
-  aoPass.enabled = !under;   // 水裡一片混濁，不需要
+  aoPass.enabled = !under && !TOUCH;   // 水裡一片混濁，不需要；手機上省掉
   // 擋在鏡頭和人之間的枝葉散開（只有走路時）。第三人稱：從鏡頭到人身上這條線周圍；第一人稱：只有貼著鏡頭的那一圈
   if (mode === 'walk' && inGame && !debugCam) {
     camera.updateMatrixWorld();
@@ -2579,6 +2620,12 @@ boat.update(0.016, boatEnv);
 player.place(walkWorld, PLAYER_SPAWN.x, PLAYER_SPAWN.z);
 
 let frame = 0, last = performance.now();
+const fpsEl = new URLSearchParams(window.location.search).has('fps') ? document.body.appendChild(Object.assign(document.createElement('div'), { id: 'fps' })) : null;
+let fpsN = 0, fpsT = performance.now(), gpuName = '';
+if (fpsEl) {
+  const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
+  gpuName = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)).replace(/ANGLE \(|\)$/g, '').slice(0, 60);
+}
 renderer.setAnimationLoop((ms) => {
   const rawMs = ms - last;
   const dt = Math.min(rawMs / 1000, 0.05);
@@ -2587,6 +2634,10 @@ renderer.setAnimationLoop((ms) => {
   if (dt > 0) advance(dt);
   drawFrame(dt);
   if (frame++ % 6 === 0) { updatePrompt(); if (mapOpen) drawMap(); }
+  if (fpsEl && ++fpsN && ms - fpsT >= 1000) {
+    fpsEl.textContent = `${Math.round(fpsN * 1000 / (ms - fpsT))} fps　${pixelRatio.toFixed(1)}×　${canvas.width}×${canvas.height}　${TOUCH ? '手機' : '電腦'}　${gpuName}`;
+    fpsN = 0; fpsT = ms;
+  }
 });
 
 // 供除錯與測試使用
@@ -2596,7 +2647,7 @@ window.__sim = {
   aimTarget, wheel, closeWheel, sitDown, standUp, offAt, audio, player, ocean, keys, view, bedAt, walkGround, walkWorld, shelterAt, nearHelm, interact, toggleFp,
   fish, fishing, isWater, SELL, get money() { return money; },
   // 多人
-  net, others, chat, boards, garage, enterRoom, applyWorld, myFishUids, takeHelm, releaseHelm,
+  net, others, chat, boards, garage, enterRoom, applyWorld, myFishUids, takeHelm, releaseHelm, touch,
   get kit() { return kit; }, get myBoat() { return myBoat; }, get berth() { return berth; }, get room() { return room; }, get inGame() { return inGame; }, get time() { return time; },
   dev: (cmd, o = {}) => net.send({ t: 'dev', cmd, ...o }),   // 測試指令（伺服器開了開發模式才收）：event / calm / skip / money / fish
   sea, dangerAt, tsuAt, stormK, waterY, nearTank, nearCrack, get wrench() { return wrench; },
