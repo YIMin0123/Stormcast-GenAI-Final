@@ -616,6 +616,7 @@ export class Boat {
     h.userData.fpHide.forEach((m) => { m.visible = !fp; });
     h.userData.torso.forEach((m) => { m.visible = !fp; });
     h.userData.legs.forEach((m) => { m.visible = !fp; });
+    h.userData.fpShow?.forEach((m) => { m.visible = fp; });
     // 有方向盤的船：第三人稱時舵手貼近方向盤、握下半圈（看起來手長正常）；
     // 第一人稱時站回舵位、握上半圈，從眼睛往下看才看得到雙手握在輪子上（伸長的手臂在畫面外）
     this.fpHelm = fp;

@@ -31,7 +31,9 @@ export function addOutline(root) {
     if (m.isMesh && !m.userData.hull && !m.material.transparent && !m.material.isMeshBasicMaterial && m.geometry.attributes.normal) list.push(m);
   });
   for (const m of list) {
-    const h = new THREE.Mesh(m.geometry, hullMat);
+    // 有骨架的（人物）：描邊也要跟著同一副骨架動
+    const h = m.isSkinnedMesh ? new THREE.SkinnedMesh(m.geometry, hullMat) : new THREE.Mesh(m.geometry, hullMat);
+    if (m.isSkinnedMesh) h.bind(m.skeleton, m.bindMatrix);
     h.userData.hull = true;
     m.add(h);
   }

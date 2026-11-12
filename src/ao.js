@@ -22,6 +22,7 @@ uniform vec3 uTint;       // 完全被遮住的地方，顏色乘上這個
 uniform float uStrength;
 uniform vec2 uFade;       // 離鏡頭多遠開始淡、多遠完全沒有
 uniform float uGrass;      // 草地上遮蔽剩幾成
+uniform float uFigure;     // 人物身上遮蔽剩幾成
 uniform float uDebug;
 uniform float uSplit;      // 測試用：畫面左邊這個比例不套遮蔽，方便左右對照
 varying vec2 vUv;
@@ -52,7 +53,8 @@ void main() {
   ao /= ws;
 
   float k = clamp((1.0 - ao) * uStrength, 0.0, 1.0) * (1.0 - smoothstep(uFade.x, uFade.y, z));
-  k *= mix(1.0, uGrass, clamp(c.a - 1.0, 0.0, 1.0));   // 草和長草的地面把 alpha 寫成大於 1（見 renderShaders.js）
+  float fig = step(2.25, c.a) * step(c.a, 2.5);           // 人物把 alpha 寫成 2.4（見 figure.js）
+  k *= mix(mix(1.0, uGrass, clamp(c.a - 1.0, 0.0, 1.0)), uFigure, fig);   // 草和長草的地面把 alpha 寫成大於 1（見 renderShaders.js）
   if (c.a > 2.5) k = 0.0;   // 海面把 alpha 寫成 3（見 main.js 的 waterFlag）：海面不套遮蔽
   if (vUv.x < uSplit) k = 0.0;
   if (uDebug > 0.5) { gl_FragColor = vec4(vec3(1.0 - k), 1.0); return; }
@@ -75,7 +77,7 @@ export class ShadePass extends GTAOPass {
         tDiffuse: { value: null }, tAO: { value: this.pdRenderTarget.texture }, tDepth: { value: null },
         uAoSize: { value: new THREE.Vector2(4, 4) }, uNearFar: { value: new THREE.Vector2(1, 1000) },
         uTint: { value: new THREE.Vector3(0.30, 0.33, 0.46) }, uStrength: { value: 1.5 },   // 顏色跟影子差不多的灰藍；太藍會像染色
-        uFade: { value: new THREE.Vector2(90, 260) }, uGrass: { value: 0.3 }, uDebug: { value: 0 }, uSplit: { value: 0 },
+        uFade: { value: new THREE.Vector2(90, 260) }, uGrass: { value: 0.3 }, uFigure: { value: 0.15 }, uDebug: { value: 0 }, uSplit: { value: 0 },
       },
     });
   }
