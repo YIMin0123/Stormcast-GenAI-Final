@@ -54,7 +54,7 @@ function box(w, h, d, mat, x, y, z) {
   return m;
 }
 
-// ---- 人物：低多邊形的紙片風少女漁夫（早期 3D 主機的那種味道），約兩頭身。草帽、馬尾、白上衣配吊帶褲、黃雨靴。
+// ---- 人物：低多邊形的紙片風少女漁夫（早期 3D 主機的那種味道），約兩頭身。紅色大蝴蝶結、白色水手服配深藍裙子、咖啡色短靴。
 // 全身用稜角分明的平面拼成、每個面一個顏色；頭髮是幾片有厚度的尖角板子；眼睛、腮紅、嘴是畫在平平的臉上的一張小圖。
 // 四肢各自掛在關節上，走路或握舵時轉動關節即可（關節的位置和四肢的長度跟以前一樣，動作、手上拿的東西都不用改）
 const flat = (color) => new THREE.MeshLambertMaterial({ color, flatShading: true });
@@ -76,20 +76,22 @@ function prism(mat, rTop, rBot, len, sides) {
   if (sides === 4) geo.rotateY(Math.PI / 4);
   return new THREE.Mesh(geo, mat);
 }
-// 臉：一張 32×18 的小圖，放大時不做平滑（一格一格的）
+// 臉：一張 64×36 的小圖，放大時不做平滑（一格一格的）。五官都擠在臉的下半部：
+// 兩顆分得很開的深色長方眼睛（沒有亮點）、細細的眉毛、眼睛外下方的腮紅、一點點嘴
 let faceTex = null;
 function faceTexture() {
   if (faceTex) return faceTex;
   const cv = document.createElement('canvas');
-  cv.width = 32; cv.height = 18;
+  cv.width = 64; cv.height = 36;
   const g = cv.getContext('2d');
-  for (const x of [6, 20]) {
-    g.fillStyle = '#2c1f18'; g.fillRect(x, 3, 6, 11);           // 眼睛：又大又高的深色方塊
-    g.fillStyle = '#6a4632'; g.fillRect(x + 1, 10, 4, 3);       // 下半淡一點
-    g.fillStyle = '#ffffff'; g.fillRect(x + 1, 4, 2, 3);        // 亮點
+  for (const x of [13, 44]) {
+    g.fillStyle = '#3a2620';
+    g.fillRect(x + 1, 11, 5, 14); g.fillRect(x, 12, 7, 12);     // 眼睛：圓角的長方塊
+    g.fillStyle = '#4e342a'; g.fillRect(x + 1, 21, 5, 3);       // 底下淡一點點
+    g.fillStyle = '#8a5a3c'; g.fillRect(x, 6, 7, 1);            // 眉毛
   }
-  g.fillStyle = '#f5a3a0'; g.fillRect(4, 14, 3, 2); g.fillRect(25, 14, 3, 2);   // 腮紅
-  g.fillStyle = '#c9584f'; g.fillRect(15, 15, 2, 1);                             // 嘴
+  g.fillStyle = '#f3a79c'; g.fillRect(6, 25, 7, 3); g.fillRect(51, 25, 7, 3);   // 腮紅
+  g.fillStyle = '#b5534a'; g.fillRect(31, 29, 2, 2);                             // 嘴
   faceTex = new THREE.CanvasTexture(cv);
   faceTex.magFilter = faceTex.minFilter = THREE.NearestFilter;
   faceTex.generateMipmaps = false;
@@ -98,8 +100,8 @@ function faceTexture() {
 }
 export function buildFigure() {
   const g = new THREE.Group();
-  const skin = flat(0xf7d2b2), hair = flat(0x74442a), denim = flat(0x4474ba), shirt = flat(0xfbf7ec);
-  const boot = flat(0xf4c520), straw = flat(0xecd28a), ribbon = flat(0xdc463c);
+  const skin = flat(0xf6cfa8), hair = flat(0x7a4a2e), navy = flat(0x3d4290), shirt = flat(0xf6eeee);
+  const boot = flat(0x6e4028), trim = flat(0xe9e4f2), ribbon = flat(0xd2302c);
   const face = new THREE.MeshLambertMaterial({ map: faceTexture(), alphaTest: 0.5, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
   // 一段稜柱狀的肢體：上端在關節上，往下垂
   const limb = (mat, rTop, rBot, len, x, y, z) => {
@@ -112,21 +114,20 @@ export function buildFigure() {
     return joint;
   };
   const legs = [-1, 1].map((side) => {
-    const joint = limb(denim, 0.075, 0.066, 0.27, 0, 0.44, side * 0.094);
-    // 雨靴：短短的靴筒加上一塊楔形的鞋頭
-    const shaft = prism(boot, 0.088, 0.082, 0.17, 5);
-    shaft.position.y = -0.30;
-    const toe = solid([[-0.085, -0.44, 0.085], [-0.085, -0.44, -0.085], [0.165, -0.44, 0.072], [0.165, -0.44, -0.072], [0.165, -0.40, 0.066], [0.165, -0.40, -0.066],
-      [0.06, -0.345, 0.075], [0.06, -0.345, -0.075], [-0.085, -0.345, 0.085], [-0.085, -0.345, -0.085]], boot);
+    const joint = limb(skin, 0.07, 0.064, 0.27, 0, 0.44, side * 0.094);
+    // 短靴：粗粗的靴筒加上一塊厚厚的鞋頭
+    const shaft = prism(boot, 0.118, 0.112, 0.2, 4);
+    shaft.position.y = -0.31;
+    const toe = solid([[-0.09, -0.44, 0.092], [-0.09, -0.44, -0.092], [0.18, -0.44, 0.088], [0.18, -0.44, -0.088], [0.18, -0.385, 0.082], [0.18, -0.385, -0.082],
+      [0.09, -0.33, 0.084], [0.09, -0.33, -0.084], [-0.09, -0.33, 0.092], [-0.09, -0.33, -0.092]], boot);
     joint.add(shaft, toe);
     return joint;
   });
   const arms = [-1, 1].map((side) => {
-    const joint = limb(skin, 0.05, 0.042, ARM_LEN - 0.03, 0, 0.845, side * 0.2);
-    const sleeve = prism(shirt, 0.06, 0.088, 0.1, 5);   // 短袖
-    sleeve.position.y = -0.03;
-    const hand = solid(ring(-ARM_LEN - 0.05, -0.05, 0.05, 0.05, 0.02).concat(ring(-ARM_LEN + 0.05, -0.045, 0.045, 0.045, 0.015)), skin);
-    joint.add(sleeve, hand);
+    const joint = limb(skin, 0.05, 0.078, ARM_LEN + 0.05, 0, 0.845, side * 0.2);   // 越往手越粗，手就是末端那一塊（沒有另外做手掌）
+    const sleeve = prism(shirt, 0.075, 0.105, 0.12, 4);   // 短袖
+    sleeve.position.y = -0.04;
+    joint.add(sleeve);
     joint.userData.side = side;
     return joint;
   });
@@ -138,49 +139,58 @@ export function buildFigure() {
     body.push(m);
     return m;
   };
-  // ---- 身體：白上衣、吊帶褲 ----
-  put(solid(ring(0.60, -0.125, 0.125, 0.17, 0.05).concat(ring(0.86, -0.085, 0.085, 0.115, 0.035)), shirt), 0, 0, 0);
-  put(solid(ring(0.40, -0.14, 0.14, 0.185, 0.05).concat(ring(0.62, -0.135, 0.135, 0.18, 0.05)), denim), 0, 0, 0);   // 褲子
-  put(new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.19, 0.2), denim), 0.118, 0.70, 0).rotation.z = 0.15;            // 胸前的布片
-  for (const side of [-1, 1]) {
-    put(new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.12, 0.04), denim), 0.098, 0.825, side * 0.08).rotation.z = 0.5;   // 吊帶（貼著肩膀往後斜）
-    put(new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.035, 0.035), boot), 0.142, 0.775, side * 0.08);                  // 扣子
-  }
+  // ---- 身體：白色水手服、深藍裙子、紅領巾 ----
+  put(solid(ring(0.57, -0.135, 0.135, 0.19, 0.05).concat(ring(0.86, -0.095, 0.095, 0.135, 0.04)), shirt), 0, 0, 0);
+  put(solid(ring(0.35, -0.215, 0.215, 0.275, 0.09).concat(ring(0.61, -0.115, 0.115, 0.16, 0.045)), navy), 0, 0, 0);   // 裙子
+  put(solid(ring(0.835, -0.125, 0.12, 0.175, 0.05).concat(ring(0.875, -0.1, 0.1, 0.145, 0.045)), navy), 0, 0, 0);     // 水手領（搭在肩膀上的一圈）
+  put(new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.15, 0.27), navy), -0.115, 0.775, 0);                                // 背後垂下來的方領
+  put(new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.02, 0.23), trim), -0.128, 0.725, 0);                               // 領子上的白線
+  put(solid([[0.115, 0.855, 0.04], [0.115, 0.855, -0.04], [0.15, 0.80, 0.055], [0.15, 0.80, -0.055], [0.115, 0.79, 0.055], [0.115, 0.79, -0.055],
+    [0.15, 0.655, 0], [0.125, 0.665, 0]], ribbon), 0, 0, 0);                                                           // 領巾
   const torso = body.splice(0);   // 到這裡為止是軀幹：第一人稱走路時留著（低頭看得到自己的身體），掌舵時才藏
-  put(prism(skin, 0.05, 0.056, 0.08, 6), 0, 0.925, 0);                                                              // 脖子
-  // ---- 頭：很大的一顆，正面是平的。整顆頭（連頭髮和草帽）掛在脖子的關節上，可以轉頭、抬頭、低頭 ----
+  put(prism(skin, 0.05, 0.056, 0.08, 6), 0, 0.915, 0);                                                                 // 脖子（幾乎被頭蓋住）
+  // ---- 頭：很大的一顆（差不多跟身體一樣高），正面是平的。整顆頭（連頭髮和蝴蝶結）掛在脖子的關節上，可以轉頭、抬頭、低頭 ----
   const head = new THREE.Group();
   head.position.y = 0.95;
   g.add(head);
   parent = head; oy = 0.95;
-  const HY = 1.17;   // 頭的中心高度
+  const HY = 1.2;   // 頭的中心高度
   const at = (pts) => pts.map(([x, y, z]) => [x, y + HY, z]);
-  put(solid(at([...ring(-0.215, -0.1, 0.13, 0.1, 0.04), ...ring(-0.15, -0.2, 0.25, 0.2, 0.07), ...ring(-0.03, -0.245, 0.25, 0.262, 0.08), ...ring(0.085, -0.25, 0.25, 0.285, 0.07),
-    ...ring(0.2, -0.22, 0.22, 0.25, 0.09), ...ring(0.255, -0.13, 0.13, 0.15, 0.06)]), skin), 0, 0, 0);
-  const faceMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.236), face);
+  put(solid(at([...ring(-0.27, -0.14, 0.17, 0.19, 0.08), ...ring(-0.2, -0.23, 0.26, 0.265, 0.1), ...ring(0.0, -0.26, 0.26, 0.315, 0.08),
+    ...ring(0.18, -0.24, 0.25, 0.29, 0.1), ...ring(0.27, -0.14, 0.14, 0.17, 0.07)]), skin), 0, 0, 0);
+  const faceMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.48, 0.27), face);
   faceMesh.rotation.y = Math.PI / 2;
-  put(faceMesh, 0.2515, HY - 0.033, 0);
-  // ---- 頭髮：蓋住頭頂和後腦的一大塊、額前幾片尖尖的瀏海、臉頰旁的兩片、後面一束馬尾 ----
-  put(solid(at([...ring(-0.19, -0.3, -0.09, 0.25, 0.08), ...ring(-0.05, -0.31, -0.02, 0.305, 0.08), ...ring(0.115, -0.3, 0.275, 0.305, 0.09),
-    ...ring(0.225, -0.25, 0.245, 0.275, 0.1), ...ring(0.29, -0.15, 0.14, 0.16, 0.06)]), hair), 0, 0, 0);
-  for (const [zc, w, tip, lean] of [[-0.205, 0.12, -0.03, -0.03], [-0.095, 0.13, 0.045, 0.02], [0.015, 0.1, -0.04, -0.015], [0.125, 0.13, 0.05, 0.03], [0.215, 0.11, -0.035, 0.03]]) {
-    put(solid(at([[0.268, 0.13, zc - w / 2], [0.268, 0.13, zc + w / 2], [0.24, 0.13, zc - w / 2], [0.24, 0.13, zc + w / 2], [0.268, tip, zc + lean], [0.25, tip, zc + lean]]), hair), 0, 0, 0);   // 瀏海
+  put(faceMesh, 0.2615, HY - 0.065, 0);
+  for (const side of [-1, 1]) put(new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.09, 0.04), skin), -0.03, HY - 0.12, side * 0.3);   // 耳朵
+  // ---- 頭髮：比頭大一圈、有稜有角的一大塊；額前一片大尖瀏海垂到兩眼中間，兩旁的瀏海往外撇；
+  //      兩側各一大束尖尖的頭髮垂到肩膀，後面兩束往外翹；後腦勺的頭髮蓋到脖子 ----
+  put(solid(at([...ring(-0.1, -0.33, -0.05, 0.33, 0.1), ...ring(0.06, -0.335, 0.2, 0.36, 0.1), ...ring(0.2, -0.3, 0.3, 0.33, 0.11),
+    ...ring(0.31, -0.2, 0.2, 0.22, 0.09), [-0.02, 0.37, 0]]), hair), 0, 0, 0);
+  // 瀏海：[左右位置, 寬, 尖端的高度, 尖端的左右位置]
+  for (const [zc, w, tipY, tipZ] of [[0, 0.19, -0.07, 0.01], [-0.16, 0.15, -0.005, -0.2], [0.16, 0.15, -0.005, 0.2], [-0.275, 0.13, -0.15, -0.3], [0.275, 0.13, -0.15, 0.3]]) {
+    put(solid(at([[0.305, 0.19, zc - w / 2], [0.305, 0.19, zc + w / 2], [0.262, 0.19, zc - w / 2], [0.262, 0.19, zc + w / 2], [0.295, tipY, tipZ], [0.268, tipY, tipZ]]), hair), 0, 0, 0);
   }
   for (const side of [-1, 1]) {
-    put(solid(at([[0.07, 0.12, side * 0.3], [0.23, 0.12, side * 0.3], [0.07, 0.12, side * 0.27], [0.23, 0.12, side * 0.27],
-      [0.2, -0.08, side * 0.29], [0.2, -0.08, side * 0.262], [0.16, -0.24, side * 0.235], [0.16, -0.24, side * 0.215]]), hair), 0, 0, 0);   // 臉頰旁的髮片
+    put(solid(at([[0.17, 0.06, side * 0.3], [-0.05, 0.06, side * 0.3], [0.17, 0.06, side * 0.37], [-0.05, 0.06, side * 0.37],
+      [0.18, -0.2, side * 0.31], [-0.04, -0.2, side * 0.33], [0.15, -0.2, side * 0.41], [-0.04, -0.22, side * 0.42], [0.08, -0.47, side * 0.37]]), hair), 0, 0, 0);   // 臉旁垂下來的一束
+    put(solid(at([[-0.02, 0.0, side * 0.3], [-0.25, 0.0, side * 0.25], [-0.02, 0, side * 0.36], [-0.25, 0, side * 0.3],
+      [-0.06, -0.25, side * 0.34], [-0.27, -0.22, side * 0.27], [-0.1, -0.25, side * 0.45], [-0.3, -0.24, side * 0.37], [-0.2, -0.52, side * 0.44]]), hair), 0, 0, 0);   // 後面往外翹的一束
   }
-  put(solid(at([[-0.3, 0.11, 0.05], [-0.3, 0.11, -0.05], [-0.29, 0.02, 0.04], [-0.29, 0.02, -0.04], [-0.48, -0.03, 0.085], [-0.48, -0.03, -0.085],
-    [-0.38, -0.12, 0.08], [-0.38, -0.12, -0.08], [-0.45, -0.37, 0]]), hair), 0, 0, 0);                                                    // 馬尾
-  put(solid(at([[-0.31, 0.075, 0.07], [-0.31, 0.075, -0.07], [-0.37, 0.11, 0], [-0.33, 0.03, 0], [-0.27, 0.07, 0], [-0.35, 0.07, 0]]), ribbon), 0, 0, 0);   // 綁馬尾的紅緞帶
-  // ---- 草帽：八角形的寬帽簷、六角形的帽頂、一圈紅緞帶 ----
-  const tip = 0.1;
-  put(prism(straw, 0.43, 0.43, 0.028, 8), -0.02, HY + 0.235, 0).rotation.z = tip;
-  put(prism(straw, 0.16, 0.245, 0.17, 6), -0.03, HY + 0.33, 0).rotation.z = tip;
-  put(prism(ribbon, 0.236, 0.252, 0.05, 6), -0.024, HY + 0.272, 0).rotation.z = tip;
+  put(solid(at([...ring(-0.08, -0.335, -0.1, 0.3, 0.1), [-0.33, -0.3, 0.13], [-0.33, -0.3, -0.13], [-0.3, -0.37, 0], [-0.2, -0.27, 0.2], [-0.2, -0.27, -0.2]]), hair), 0, 0, 0);   // 後腦勺
+  // ---- 紅色大蝴蝶結：綁在後腦勺上方，兩片大翅膀往上往外張，底下垂著兩條帶子 ----
+  const bow = new THREE.Group();   // 整個蝴蝶結歪向一邊（從正面只看得到一側露出來）
+  bow.rotation.x = 0.3; bow.position.z = 0.03;
+  head.add(bow); parent = bow;
+  put(solid(at([[-0.3, 0.27, 0.05], [-0.3, 0.27, -0.05], [-0.3, 0.17, 0.05], [-0.3, 0.17, -0.05], [-0.37, 0.25, 0.04], [-0.37, 0.25, -0.04], [-0.37, 0.19, 0.04], [-0.37, 0.19, -0.04]]), ribbon), 0, 0, 0);
+  for (const side of [-1, 1]) {
+    put(solid(at([[-0.31, 0.25, side * 0.04], [-0.31, 0.19, side * 0.04], [-0.36, 0.22, side * 0.04], [-0.27, 0.5, side * 0.36], [-0.36, 0.48, side * 0.36],
+      [-0.31, 0.1, side * 0.42], [-0.38, 0.12, side * 0.4]]), ribbon), 0, 0, 0);
+    put(solid(at([[-0.32, 0.19, side * 0.02], [-0.36, 0.19, side * 0.02], [-0.32, 0.19, side * 0.06], [-0.37, -0.1, side * 0.24], [-0.42, -0.08, side * 0.17], [-0.4, -0.15, side * 0.14]]), ribbon), 0, 0, 0);
+  }
+  parent = head;
   // fpHide：掌舵的第一人稱要藏起來的部分（脖子以上）；mats：這個人用到的所有材質
   g.traverse((m) => { if (m.isMesh) m.userData.figure = true; });
-  g.userData = { legs, arms, head, fpHide: body, torso, mats: [skin, hair, denim, shirt, boot, straw, ribbon, face] };
+  g.userData = { legs, arms, head, fpHide: body, torso, mats: [skin, hair, navy, shirt, boot, trim, ribbon, face] };
   return g;
 }
 
