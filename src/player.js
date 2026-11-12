@@ -7,6 +7,7 @@ import { ACTION_BY_ID, MOOD_TIME } from './emotes.js';
 const WALK = 3.2, RUN = 6.0;
 const SWIM = 1.6, SWIM_FAST = 2.3;
 const GRAVITY = 18, JUMP = 6.0;   // 跳起來約 1 公尺高
+const JUMP_SWIM = 7.2;            // 從水裡跳：要先把泡在水裡的身體拔出來，所以要更用力
 const STEP = 0.6;                 // 走路能直接踏上去的高度
 const CLIMB = 1.5;                // 從岸邊攀上船舷的高度
 const CLIMB_SWIM = 2.7;           // 從水裡攀上船
@@ -33,6 +34,7 @@ export class Player {
     this.onWater = false;                  // 腳下是水（踩不到底）
     this.swim = false;                     // 正在游泳（在水裡、不是掉下去的途中）
     this.tilt = 0;                         // 游泳時身體往前趴的角度
+    this.wPitch = 0; this.wRoll = 0;       // 跟著浪面傾斜的角度
     this.clock = 0; this.bob = 0; this.lean = 0; this.roll = 0;   // 動作用：時間、上下起伏、前傾、左右晃
     this.lookYaw = 0; this.lookPitch = 0;  // 鏡頭看的方向（頭會跟著轉）
     this.eyeH = 1.25;                      // 眼睛離腳多高（游泳時只剩頭露出水面）
@@ -212,8 +214,8 @@ export class Player {
       this.phase += dt * (swim ? 6 : run ? 13 : 8.5);
     }
 
-    // 跳躍與重力（游泳時不能跳）
-    if (jump && this.h <= 0 && !swim) { this.vy = JUMP; this.h = 1e-3; }
+    // 跳躍與重力。游泳時也能跳：用力一蹬，整個人竄出水面（腳離水面約半公尺）
+    if (jump && this.h <= 0) { this.vy = swim ? JUMP_SWIM : JUMP; this.h = 1e-3; }
     if (this.h > 0) {
       this.vy -= GRAVITY * dt;
       this.h += this.vy * dt;
@@ -311,8 +313,16 @@ export class Player {
     this.pos.set(this.x + this.off.x, this.y + this.off.y, this.z + this.off.z);
     // 身體往前趴的時候整個人浮高一點，頭才不會埋進水裡
     this.mesh.position.set(this.pos.x, this.pos.y + 0.36 * this.tilt + this.bob + (pose?.lift ?? 0) * w, this.pos.z);
-    this.mesh.rotation.set(this.roll + (pose?.roll ?? 0) * w, -this.yaw, -this.tilt - this.lean, 'YZX');
+    // 浮在水裡時身體順著浪面：前面高就仰一點、側面高就往那邊歪（離開水就慢慢回正）
+    const onW = this.onWater && !this.boat, fx = Math.cos(this.yaw), fz = Math.sin(this.yaw);
+    const sF = onW ? (this.wsX || 0) * fx + (this.wsZ || 0) * fz : 0, sR = onW ? -(this.wsX || 0) * fz + (this.wsZ || 0) * fx : 0;
+    this.wPitch += (Math.atan(sF) * 0.8 - this.wPitch) * slow;
+    this.wRoll += (Math.atan(sR) * 0.8 - this.wRoll) * slow;
+    this.mesh.rotation.set(this.roll + (pose?.roll ?? 0) * w - this.wRoll, -this.yaw, -this.tilt - this.lean + this.wPitch, 'YZX');
   }
+
+  // 水面的坡度（世界座標，游泳時身體跟著浪面傾斜）
+  waveSlope(gx, gz) { this.wsX = gx; this.wsZ = gz; }
 
   // 告訴角色鏡頭正在看哪裡，頭會跟著轉過去
   look(yaw, pitch) { this.lookYaw = yaw; this.lookPitch = pitch; }

@@ -6,8 +6,9 @@ import { Boat, BOAT_TYPES, BOX_CAP } from './boat.js';
 import { BOAT_ORDER, CAN, newKit, shopItem } from './boatdata.js';
 import { Player } from './player.js';
 import { ShallowWater, SWE } from './shallow.js';
+import { makeSwimFx } from './swimfx.js';
 import { makeHarbor, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SHOP, LIGHTHOUSE, SELL, setBoard, BOLLARDS, MoorLine, SHELF, SHELF_X, SHELF_Z, setTag, PLAYER_SPAWN, onDeck, LAMPS, UNLIT, WET } from './harbor.js';
-import { BERTHS, berthPose, pontoonY, inHarbor, BOARDS, BOARD_Z } from './layout.js';
+import { BERTHS, berthPose, pontoonY, PONTOON_Y, inHarbor, BOARDS, BOARD_Z } from './layout.js';
 import { fishLabel, FishWorld } from './fish.js';
 import { money as cash } from './fishdata.js';
 import { Fishing } from './fishing.js';
@@ -186,8 +187,9 @@ function walkGround(x, z, under = false) {
   if (Math.hypot(x - LIGHTHOUSE.x, z - LIGHTHOUSE.z) < LIGHTHOUSE.r) return 99;
   if (!under) for (const c of SOLIDS) if ((x - c.x) ** 2 + (z - c.z) ** 2 < c.r * c.r) return 99;   // 棧板上的樁、燈柱、木桶…（在棧板底下游泳時不算）
   if (onDeck(x, z)) return under ? 99 : DECK_Y;   // 岸壁和防波堤是實心的：游泳的人鑽不到底下
-  const py = pontoonY(x, z);                      // 浮橋和跳板：一樣鑽不過去
-  if (py !== null) return under ? 99 : py;
+  const py = pontoonY(x, z);
+  // 浮在水上的浮橋鑽不過去；從岸壁斜下來的跳板底下是空的，離水面還有一點高度的地方游得過去
+  if (py !== null) return !under ? py : py > PONTOON_Y + 0.05 && py > playerWater(x, z) + 0.6 ? bedAt(x, z) : 99;
   return bedAt(x, z);
 }
 // 船眼中的地面：棧橋也算障礙物
@@ -301,7 +303,7 @@ const shared = {
   uBed: { value: bedTex }, uShelter: { value: shelterTex }, uShore: { value: shoreTex }, uN: { value: NF }, uL: { value: L },
   uSunDir: { value: sunDir }, uTime: TIME_U, uSwellT: TIME_U,
   uCenter: { value: new THREE.Vector2() }, uWaveScale: { value: 1 },
-  uPixelAngle: { value: 0.001 }, uWake: { value: wake },
+  uPixelAngle: { value: 0.001 }, uWake: { value: wake }, uRip: { value: null }, uSwimmer: { value: null },
   uDisp0: { value: null }, uDisp1: { value: null },
   uSlope0: { value: ocean.cascades[0].slope.texture },
   uSlope1: { value: ocean.cascades[1].slope.texture },
@@ -544,6 +546,10 @@ blob.position.y = 0.03;
 player.mesh.add(blob);
 
 const spray = new Spray(3000);
+// 游泳的水花、波紋、身邊的白沫、近岸推出的水波（swimfx.js）
+const swimFx = makeSwimFx({ spray, waterY: (x, z) => waterY(x, z), shallow });
+shared.uRip.value = swimFx.rip;
+shared.uSwimmer.value = swimFx.swimmers;
 scene.add(spray.points);
 
 // 晚上的燈：碼頭四盞加上目前這艘船的油燈；還有雨、閃電、水龍捲的水柱
@@ -2014,6 +2020,22 @@ function beginDrown(text) {
   drown = { t: 0, text };
   fishing.cancel();
 }
+// 浪推著游泳的人：浪峰經過時把人往浪前進的方向推、浪谷時拉回來（跟浪高同相，所以人在原地前後晃），
+// 暴風雨裡另外有一股順著風浪的漂流，人會被慢慢沖走；身體也跟著浪面前後左右傾斜
+const _ws = { f: 0, r: 0 };
+function waveRide(dt) {
+  const x = player.x, z = player.z, d = -bedAt(x, z);
+  const k = clamp((d - 0.3) / 7.7, 0, 1) * waveK(x, z);
+  if (k <= 0) { player.waveSlope(0, 0); return; }
+  const eta = swimWave * k;
+  const storm = clamp(sea.storm, 0, 1) * clamp(stormK(x, z) - 1, 0, 1);
+  const u = 0.6 * eta + 0.5 * storm + 0.12 * clamp(shared.uWaveScale.value - 1, 0, 2);
+  player.drift(WDX * u * dt, WDZ * u * dt, walkWorld);
+  const e = 0.9, gx = (ocean.sampleHeight(x + e, z) - ocean.sampleHeight(x - e, z)) / (2 * e) * k;
+  const gz = (ocean.sampleHeight(x, z + e) - ocean.sampleHeight(x, z - e)) / (2 * e) * k;
+  player.waveSlope(gx, gz);
+}
+
 function updateSwim(dt) {
   if (drown) {
     drown.t += dt;
@@ -2049,7 +2071,8 @@ function updateSwim(dt) {
       if (core) beginDrown(core === 'whirl' ? '你被漩渦捲了下去，被救回港口' : '你被水龍捲捲了進去，被救回港口');
     }
     if (stamina <= 0 && !drown) { stamina = 0; beginDrown('你游到沒力，被救回港口'); }
-  } else if (!player.swim) stamina = Math.min(1, stamina + dt / 12);
+  } else if (!player.onWater) stamina = Math.min(1, stamina + dt / 12);   // 從水裡跳起來、還在半空中時不回體力
+  if (wasSwim && !player.swim && player.onWater && player.h > 0) stamina = Math.max(0, stamina - 0.04);   // 在水裡跳一下要花一點力氣
 
   if (player.swim && !wasSwim) { splash(player.x, playerWater(player.x, player.z) + 0.1, player.z, 18); audio.play('dive'); }
   wasSwim = player.swim;
@@ -2532,6 +2555,7 @@ function advance(dt) {
     player.look(v.yaw, v.pitch);
     player.update(dt, cy * f - sy * r, sy * f + cy * r, keys.shift || touch.run, keys.space && !drown, walkWorld);
     if (v.fp) { player.yaw = v.yaw; player.mesh.rotation.y = -v.yaw; } // 第一人稱時身體跟著視線
+    if (player.onWater && !drown) waveRide(dt);
     // 腳步聲：腳每落地一次（走路動作每半圈）播一聲，木板和草地沙地各一組
     const stepN = Math.floor(player.phase / Math.PI);
     if (stepN !== lastStep) {
@@ -2566,6 +2590,7 @@ function advance(dt) {
         0.6 + Math.random() * 0.7, (0.5 + Math.random() * 0.9) * sc);
     }
   }
+  swimFx.update(dt, [player, ...[...others.map.values()].map((o) => o.fig)], time, camera.position);
   spray.update(Math.min(dt, 0.1));
 
   // 航跡：船在動就定時在船尾留下一點泡沫

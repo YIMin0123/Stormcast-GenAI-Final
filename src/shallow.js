@@ -89,6 +89,9 @@ void main() {
 // 第一個 pass：流速
 const velFrag = /* glsl */ `
 ${common}
+uniform vec2 uOrigin;
+uniform vec4 uPoke[4];   // 游泳的人：(x, z, 速度 x, 速度 z)
+uniform int uPokeN;
 
 void main() {
   ivec2 p = ivec2(gl_FragCoord.xy);
@@ -107,6 +110,15 @@ void main() {
   float uAtW = 0.25 * (s.g + sz.g + S(p + ivec2(-1, 0)).g + S(p + ivec2(-1, 1)).g);
   vec2 xw = pc + vec2(0.5, 1.0) - k * vec2(uAtW, s.b);
   float w = bil(2, xw - vec2(0.5, 1.0));
+
+  // ---- 游泳的人推著水走：身體附近的水被帶著往人前進的方向流（前面推起一道水、後面拉出一個凹）----
+  for (int i = 0; i < 4; i++) {
+    if (i >= uPokeN) break;
+    vec4 pk = uPoke[i];
+    vec2 du = uOrigin + (pc + vec2(1.0, 0.5)) * uDx - pk.xy, dw = uOrigin + (pc + vec2(0.5, 1.0)) * uDx - pk.xy;
+    u += (pk.z - u) * 0.12 * exp(-dot(du, du) / 0.2);
+    w += (pk.w - w) * 0.12 * exp(-dot(dw, dw) / 0.2);
+  }
 
   // ---- 水面坡度推著水走 ----
   u -= 9.81 * k * (etax - eta);
@@ -152,6 +164,8 @@ uniform float uStorm;
 uniform float uSurge;
 uniform sampler2D uShore;    // 離岸距離
 uniform float uTime;
+uniform vec4 uPoke[4];
+uniform int uPokeN;
 ${shoreWaves}
 
 void main() {
@@ -178,6 +192,13 @@ void main() {
   float target = max(textureLod(uDisp0, xz / uPatch0, 0.0).y * K * 0.85 + swl - b, 0.0);
   float wf = smoothstep(${SWE.force[0].toFixed(1)}, ${SWE.force[1].toFixed(1)}, bd.g);
   h += (target - h) * (1.0 - exp(-uDt * 3.5 * wf));
+
+  // 游泳的人身體一上一下（踩水、划水），把水一下壓下去一下讓開，推出一圈一圈往外傳的波
+  for (int i = 0; i < 4; i++) {
+    if (i >= uPokeN) break;
+    vec2 dp = xz - uPoke[i].xy;
+    if (h > 0.05) h += uDt * 0.22 * cos(uTime * 4.6 + float(i)) * exp(-dot(dp, dp) / 0.18);
+  }
 
   // 沙灘會吸水：留在岸上的薄水慢慢滲掉，不會積成永遠不乾的水窪
   if (b > 0.03) h = max(h - uDt * 0.004, 0.0);
@@ -286,12 +307,15 @@ export class ShallowWater {
       uObst: { value: Array.from({ length: SWE.maxObst }, () => new THREE.Vector4()) }, uObstN: { value: 0 },
     });
     this.mShift = mat(shiftFrag, { ...base(), uShift: { value: new THREE.Vector2() }, uWet: { value: 0 } });
-    this.mVel = mat(velFrag, base());
+    this.pokes = [];                   // 游泳的人 { x, z, vx, vz }（swimfx.js 每幀填）
+    const pokeU = { value: Array.from({ length: 4 }, () => new THREE.Vector4()) }, pokeN = { value: 0 };
+    this.pokeU = pokeU; this.pokeN = pokeN;
+    this.mVel = mat(velFrag, { ...base(), uOrigin: { value: new THREE.Vector2() }, uPoke: pokeU, uPokeN: pokeN });
     this.mHeight = mat(heightFrag, {
       ...base(), uPrev: { value: null }, uDisp0: { value: null }, uShelter: { value: null }, uDanger: { value: null },
       uOrigin: { value: new THREE.Vector2() }, uL: { value: 1 }, uPatch0: { value: 1 },
       uWaveScale: { value: 1 }, uStorm: { value: 0 }, uSurge: { value: 0 },
-      uShore: { value: null }, uTime: { value: 0 },
+      uShore: { value: null }, uTime: { value: 0 }, uPoke: pokeU, uPokeN: pokeN,
     });
     this.mOut = mat(outFrag, base());
     this.mWet = mat(wetFrag, { ...base(), uWetPrev: { value: null }, uFrameDt: { value: 0 } });
@@ -352,6 +376,9 @@ export class ShallowWater {
     if (fresh || ox !== this.origin.x || oz !== this.origin.y) this._moveTo(ox, oz, env, fresh);
     this.on = true;
 
+    this.pokeN.value = Math.min(4, this.pokes.length);
+    this.pokes.slice(0, 4).forEach((p, i) => this.pokeU.value[i].set(p.x, p.z, p.vx, p.vz));
+    this.mVel.uniforms.uOrigin.value.copy(this.origin);
     const hu = this.mHeight.uniforms;
     hu.uDisp0.value = env.disp0; hu.uShelter.value = env.shelterTex; hu.uDanger.value = env.dangerTex;
     hu.uOrigin.value.copy(this.origin); hu.uL.value = env.L; hu.uPatch0.value = env.patch0;
