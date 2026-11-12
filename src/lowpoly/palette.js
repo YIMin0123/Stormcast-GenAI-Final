@@ -28,6 +28,15 @@ const RAW = {
   },
 };
 
+// 港口用的顏色（三組色板共用，之後再各自調）
+const HARBOR = {
+  concrete: '#cbc4b5', concreteSide: '#a9a395', stone: '#9a9488', parapet: '#bdb6a8', tetra: '#b3ad9f',
+  wood: '#a5794f', woodDark: '#6e5440', woodLight: '#c49a6c', roofRed: '#b5503a', roofSlate: '#525d68', roofTin: '#7d93a6', metal: '#6f7a80',
+  white: '#f1ede4', hullRed: '#a9443a', hullBlue: '#3f6f9a', hullGreen: '#4f8a5a', hullOrange: '#d9823e', cabinRoof: '#3f6f9a',
+  board: '#2f5d86', flagRed: '#d64b3f', flagWhite: '#f4efe4', flagBlue: '#3b6fb0', crate: '#b08a5e', fishbox: '#4f8fc0',
+  float: '#e8843c', net: '#4f7a5a', lampPole: '#454545', bulb: '#ffe2a0', pontoon: '#9c7a54', window: '#3c4f5c', yellow: '#e2b93b',
+};
+for (const k of Object.keys(RAW)) RAW[k] = { ...HARBOR, ...RAW[k] };
 export const PALETTE_KEYS = Object.keys(RAW);
 export function palette(key) {
   const p = {};

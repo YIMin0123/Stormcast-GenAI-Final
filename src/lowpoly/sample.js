@@ -12,6 +12,8 @@ import { ShadePass } from '../ao.js';
 import { SunRaysPass } from '../glow.js';
 import { rng, mirrored, makeMaterial, lpUniforms, FaceBuilder } from './kit.js';
 import { palette, PALETTE_KEYS, jitter } from './palette.js';
+import { buildHarbor } from './harbor3d.js';
+import * as HP from './harborPlan.js';
 import { rockGeo, broadleafGeo, tuftGeo, terrainGeo, waterGeo, heightAt, groundKind } from './shapes.js';
 
 const $ = (id) => document.getElementById(id);
@@ -66,7 +68,7 @@ scene.add(sky);
 
 // ---- 場景內容（換色板、換擺法時整個重建）----
 let group = null, templates = [];   // templates：{ mesh, tint }，「顯示複用」用
-const state = { pal: 'warm', seed: 1, reuse: false, wire: false };
+const state = { pal: 'warm', seed: 1, reuse: false, wire: false, scene: new URLSearchParams(location.search).get('scene') || 'harbor' };
 
 function place(mesh, list, cast, recv) {
   const m = new THREE.InstancedMesh(mesh, mat, Math.max(1, list.length));
@@ -94,11 +96,22 @@ function build() {
   const P = palette(state.pal);
   const r = rng(state.seed * 7919);
 
-  const terrain = new THREE.Mesh(terrainGeo(P, 170, 2.8, 5), mat);
-  terrain.castShadow = terrain.receiveShadow = true;
   const water = new THREE.Mesh(waterGeo(P), mat);
   water.receiveShadow = true;
-  group.add(terrain, water);
+  group.add(water);
+  if (state.scene === 'harbor') buildHarbor({ P, r, place, mat, group, templates });
+  else buildIsland(P, r);
+  addFigure(P);
+  scene.add(group);
+  applyReuse();
+  mat.wireframe = state.wire;
+}
+
+// 樣品島：不規則三角形地形、岩塊、樹、草
+function buildIsland(P, r) {
+  const terrain = new THREE.Mesh(terrainGeo(P, 170, 2.8, 5), mat);
+  terrain.castShadow = terrain.receiveShadow = true;
+  group.add(terrain);
 
   // ---- 岩塊：3 種形狀 × 原版／鏡像 = 6 份樣板 ----
   const rockGeos = [];
@@ -170,20 +183,20 @@ function build() {
   }
   tGeos.forEach((g, i) => templates.push({ mesh: place(g, tLists[i], false, true), hue: 0.5 + i * 0.05 }));
 
-  // ---- 人物大小的參考（1.6 公尺）----
+}
+
+// 人物大小的參考（1.6 公尺）
+function addFigure(P) {
   const fb = new FaceBuilder();
   const body = new THREE.CapsuleGeometry(0.28, 1.04, 3, 7);
   body.translate(0, 0.8, 0);
   fb.addGeometry(body, (m, n, i) => jitter(P.fig, rng(i), 0.04));
   fig = new THREE.Mesh(fb.build(), mat);
   fig.castShadow = fig.receiveShadow = true;
-  fig.position.copy(figPos);
+  fig.position.copy(figAt());
   group.add(fig);
-
-  scene.add(group);
-  applyReuse();
-  mat.wireframe = state.wire;
 }
+const figAt = () => (state.scene === 'harbor' ? new THREE.Vector3(HP.SPAWN.x, HP.DECK_Y, HP.SPAWN.z) : figPos);
 
 // 人物站的地方：島的南岸，高度約 1.3 公尺的沙灘
 let fig = null;
@@ -268,13 +281,26 @@ function buildComposer() {
 }
 
 // ---- 鏡頭 ----
-const CAMS = {
+const HARBOR_CAMS = {
+  出生點: () => { const f = figAt(); camera.position.set(f.x + 1.8, f.y + 2.0, f.z - 0.6); controls.target.set(f.x - 1, f.y + 0.6, f.z + 14); },   // 在雨棚外面（雨棚到 z -3.6）
+  鳥瞰: () => { camera.position.set(0, 70, 105); controls.target.set(0, 0, 6); },
+  浮橋: () => { camera.position.set(0, 2.6, 30); controls.target.set(-10, 1, 8); },
+  大船: () => { camera.position.set(-18, 3, 40); controls.target.set(-38, 2, 18); },
+  後山: () => { camera.position.set(12, 6.5, -17); controls.target.set(0, 8, -34); },
+  岸壁: () => { camera.position.set(30, 4, -2); controls.target.set(0, 2, -8); },
+};
+const ISLAND_CAMS = {
   人物視角: () => { const f = figPos; camera.position.set(f.x + 4.5, f.y + 2.1, f.z + 1.5); controls.target.set(f.x - 10, f.y + 0.6, f.z - 3); },
   近看樹: () => { const f = figPos; camera.position.set(f.x - 6, f.y + 4, f.z - 6); controls.target.set(f.x - 14, f.y + 5, f.z - 20); },
   岩岸: () => { camera.position.set(-48, 6, 46); controls.target.set(-30, 0, 30); },
   斷崖: () => { camera.position.set(14, 12, 10); controls.target.set(0, 9, -14); },
   俯瞰: () => { camera.position.set(70, 95, 110); controls.target.set(0, 0, 0); },
 };
+const CAMS = () => (state.scene === 'harbor' ? HARBOR_CAMS : ISLAND_CAMS);
+function makeCamButtons() {
+  $('cams').innerHTML = '';
+  segment('cams', Object.keys(CAMS()).map((k) => [k, k]), () => null, (k) => CAMS()[k]());
+}
 
 // ---- 介面 ----
 function segment(id, items, get, set) {
@@ -290,13 +316,14 @@ function segment(id, items, get, set) {
   sync();
   return sync;
 }
+segment('scene', [['harbor', '港口島'], ['island', '樣品島']], () => state.scene, (v) => { state.scene = v; build(); makeCamButtons(); Object.values(CAMS())[0](); });
 segment('pal', PALETTE_KEYS.map((k) => [k, palette(k).name]), () => state.pal, (v) => { state.pal = v; build(); });
 const hourSync = segment('hours', [[6.4, '清晨'], [12, '正午'], [17.4, '黃昏'], [21.5, '夜晚']], () => state.hour, (v) => { setHour(v); $('hour').value = v; });
 $('hour').oninput = (e) => { setHour(+e.target.value); hourSync(); };
 segment('shadow', [[true, '開'], [false, '關']], () => state.shadow, (v) => { state.shadow = v; applyShadow(); });
 segment('hi', [[true, '開'], [false, '關']], () => state.hi, (v) => { state.hi = v; applyHi(); });
 segment('aa', [['fxaa', 'FXAA'], ['smaa', 'SMAA'], ['msaa', 'MSAA 4x'], ['off', '關（比較用）']], () => state.aa, (v) => { state.aa = v; buildComposer(); });
-segment('cams', Object.keys(CAMS).map((k) => [k, k]), () => null, (k) => CAMS[k]());
+makeCamButtons();
 const dbgSync = segment('dbg', [['reuse', '顯示複用'], ['wire', '看三角形'], ['seed', '換一組擺法']], () => null, (v) => {
   if (v === 'reuse') { state.reuse = !state.reuse; applyReuse(); }
   if (v === 'wire') { state.wire = !state.wire; mat.wireframe = state.wire; }
@@ -339,7 +366,7 @@ segment; // （按鈕狀態在 segment 建立時已同步）
 [...$('aa').children].forEach((b) => b.classList.toggle('on', b.textContent.toLowerCase().startsWith(state.aa === 'msaa' ? 'msaa' : state.aa)));
 applyHi();
 [...$('hi').children].forEach((b, i) => b.classList.toggle('on', (i === 0) === state.hi));
-CAMS['人物視角']();
+Object.values(CAMS())[0]();
 if (isPhone) $('fold').click();
 
 addEventListener('resize', () => {
@@ -374,3 +401,15 @@ function frame() {
 }
 frame();
 window.__lp = { scene, camera, controls, renderer, state, setHour, build };
+// 測試用：從指定位置畫一張、直接拿圖（不受滑鼠操作影響）
+window.__lp.snap = (pos, tgt) => {
+  const p0 = camera.position.clone(), t0 = controls.target.clone();
+  camera.position.set(...pos); camera.lookAt(...tgt); camera.updateMatrixWorld();
+  sky.position.copy(camera.position);
+  scene.background = skyU.uHorizon.value;   // 截圖時天空的 alpha 是 0，直接讀畫布會變黑：先墊一層地平線的顏色
+  composer.render();
+  scene.background = null;
+  const url = renderer.domElement.toDataURL('image/jpeg', 0.85);
+  camera.position.copy(p0); controls.target.copy(t0); camera.lookAt(t0);
+  return url;
+};

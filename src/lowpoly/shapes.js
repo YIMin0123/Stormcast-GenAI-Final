@@ -126,15 +126,17 @@ export function heightAt(x, z) {
   h += (fbm(x * 0.08 + 11, z * 0.08) - 0.5) * 2.2;
   return h;
 }
-export function terrainGeo(P, size = 170, step = 2.8, seed = 5) {
+// hf：高度函式（預設是樣品島）；cx、cz：這塊地形的中心
+// paint(x, z, y, 法線)：要特別上色的面（小路等）回傳顏色，其他回傳 null
+export function terrainGeo(P, size = 170, step = 2.8, seed = 5, hf = heightAt, cx = 0, cz = 0, paint = null) {
   const r = rng(seed);
   const N = Math.round(size / step), half = size / 2;
   const pts = [];
   for (let j = 0; j <= N; j++) for (let i = 0; i <= N; i++) {
     const edge = i === 0 || j === 0 || i === N || j === N;
-    const x = -half + i * step + (edge ? 0 : (r() - 0.5) * step * 0.7);
-    const z = -half + j * step + (edge ? 0 : (r() - 0.5) * step * 0.7);
-    pts.push(new THREE.Vector3(x, heightAt(x, z), z));
+    const x = cx - half + i * step + (edge ? 0 : (r() - 0.5) * step * 0.7);
+    const z = cz - half + j * step + (edge ? 0 : (r() - 0.5) * step * 0.7);
+    pts.push(new THREE.Vector3(x, hf(x, z), z));
   }
   const at = (i, j) => pts[j * (N + 1) + i];
   const fb = new FaceBuilder();
@@ -148,6 +150,7 @@ export function terrainGeo(P, size = 170, step = 2.8, seed = 5) {
     else if (cy < 1.5 && nrm.y > 0.8) col = P.sand;
     else if (nrm.y < 0.74) col = nrm.y < 0.55 ? P.cliff : P.rock2;
     else col = patch < 0.42 ? P.grassDark : patch < 0.55 ? P.grass2 : P.grass;
+    if (paint) { const c2 = paint(cx, cz, cy, nrm); if (c2) col = c2; }
     fb.tri(a, b, c, jitter(col, r, 0.05), [0, 0, 0], 0.25);   // 0.25：地形的記號（不打邊緣光）
   };
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
@@ -158,9 +161,9 @@ export function terrainGeo(P, size = 170, step = 2.8, seed = 5) {
 }
 
 // 地面的種類（擺放物件用；跟上色同一套規則）
-export function groundKind(x, z) {
-  const h = heightAt(x, z), e = 0.6;
-  const nx = heightAt(x - e, z) - heightAt(x + e, z), nz = heightAt(x, z - e) - heightAt(x, z + e);
+export function groundKind(x, z, hf = heightAt) {
+  const h = hf(x, z), e = 0.6;
+  const nx = hf(x - e, z) - hf(x + e, z), nz = hf(x, z - e) - hf(x, z + e);
   const ny = (2 * e) / Math.hypot(nx, 2 * e, nz);
   if (h < 0.35) return 'shore';
   if (h < 1.5 && ny > 0.8) return 'sand';
