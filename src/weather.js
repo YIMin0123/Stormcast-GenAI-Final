@@ -40,7 +40,10 @@ export const EBB = { depth: 0.075, far: 1000, full: 350, n0: 40, n1: 110, g0: 24
 // 三道波長、方向略有出入的浪疊在一起，所以是一組一組地來：有時連著幾道特別高，有時小一點。
 // amp：三道同時到頂時的高度（公尺）；waves：[波長, 佔幾成, 跟風向差幾弧度]。速度照深水波算（越長的浪跑越快）
 export const SWELL = { amp: 6.5, waves: [[310, 0.5, 0], [215, 0.32, 0.22], [150, 0.18, -0.31]] };
-export const SWELL_K = SWELL.waves.map(([lam, a, ang]) => ({ a, k: 2 * Math.PI / lam, w: Math.sqrt(9.8 * 2 * Math.PI / lam), c: Math.cos(ang), s: Math.sin(ang) }));
+// 海浪的時間每 WAVE_LOOP 秒繞一圈：每道浪的角速度都湊成「一圈剛好轉整數次」，繞回來時接得起來。
+// 多人模式下大家的時鐘對到同一間房的時鐘（差幾圈沒關係），看到的浪就一模一樣，別人的船才會剛好浮在你看到的水面上
+export const WAVE_LOOP = 2048, WAVE_W0 = 2 * Math.PI / WAVE_LOOP;
+export const SWELL_K = SWELL.waves.map(([lam, a, ang]) => ({ a, k: 2 * Math.PI / lam, w: Math.round(Math.sqrt(9.8 * 2 * Math.PI / lam) / WAVE_W0) * WAVE_W0, c: Math.cos(ang), s: Math.sin(ang) }));
 // 長浪在 (x, z) 的高度（-1 到 1，還沒乘上 amp 和當下的強度）。dx, dz：風（浪）往哪邊走
 export function swellAt(x, z, t, dx, dz) {
   let h = 0;
@@ -272,10 +275,14 @@ export class Sea {
   update(dt, env) {
     this.t += dt;
     const p = this.phase;
+    // remote：不自己引發新的事件。多人模式的瀏覽器一律如此（事件由伺服器決定，這裡只把已經在進行的順順地演下去，伺服器每半秒校正一次）；
+    // 伺服器在房間準備合併時也會暫時打開
     if (p === 'calm') {
-      this.typhoonIn -= dt;
-      if (this.typhoonIn <= 0) this.trigger('typhoon', env);
-      else if (this.t > this.next) { if (!this.trigger(undefined, env)) this.t = this.next - 30; }
+      if (!this.remote) {
+        this.typhoonIn -= dt;
+        if (this.typhoonIn <= 0) this.trigger('typhoon', env);
+        else if (this.t > this.next) { if (!this.trigger(undefined, env)) this.t = this.next - 30; }
+      }
     } else if (p === 'storm' || p === 'thunder' || p === 'typhoon') {
       if (this.t > this.dur) {
         // 時間到了：還有水龍捲的話先讓它消散，等它縮回雲裡天才放晴
@@ -300,7 +307,7 @@ export class Sea {
     }
 
     // 風暴夠強了，外海才可能冒出水龍捲
-    if (this.spoutLeft > 0 && this.storm > 0.4 && (this.spoutIn -= dt) <= 0) {
+    if (!this.remote && this.spoutLeft > 0 && this.storm > 0.4 && (this.spoutIn -= dt) <= 0) {
       if (this._spawn('spout', env)) this.spoutLeft--;
       this.spoutIn = rand(40, 80);
     }
@@ -513,7 +520,7 @@ export class Climate {
   update(dt) {
     const before = this.hour;
     this.hour += dt / HOUR;
-    if (before < 6 && this.hour >= 6) this.roll();
+    if (before < 6 && this.hour >= 6 && !this.remote) this.roll();   // 多人模式：新的一天的天氣由伺服器擲
     if (this.hour >= 24) { this.hour -= 24; this.day++; }
     const h = this.hour, h2 = h + 24;
     const raining = (h >= this.rainFrom && h < this.rainTo) || (h2 >= this.rainFrom && h2 < this.rainTo);

@@ -16,7 +16,7 @@ uniform float uSwell;        // 颱風的長浪：最高的高度（公尺），
 // 長浪在這裡的 (高度, 斜率 x, 斜率 z)，還沒乘上 uSwell。跟 weather.js 的 swellAt() 一致
 vec3 longSwell(vec2 xz) {
   vec3 o = vec3(0.0);
-${SWELL_K.map((w) => `  { vec2 dr = vec2(${w.c.toFixed(5)} * uWindDir.x - ${w.s.toFixed(5)} * uWindDir.y, ${w.s.toFixed(5)} * uWindDir.x + ${w.c.toFixed(5)} * uWindDir.y); float p = dot(xz, dr) * ${w.k.toFixed(6)} - uSwellT * ${w.w.toFixed(5)}; o += ${w.a.toFixed(3)} * vec3(sin(p), cos(p) * ${w.k.toFixed(6)} * dr); }`).join('\n')}
+${SWELL_K.map((w) => `  { vec2 dr = vec2(${w.c.toFixed(5)} * uWindDir.x - ${w.s.toFixed(5)} * uWindDir.y, ${w.s.toFixed(5)} * uWindDir.x + ${w.c.toFixed(5)} * uWindDir.y); float p = dot(xz, dr) * ${w.k.toFixed(6)} - uSwellT * ${w.w.toFixed(8)}; o += ${w.a.toFixed(3)} * vec3(sin(p), cos(p) * ${w.k.toFixed(6)} * dr); }`).join('\n')}
   return o;
 }
 `;

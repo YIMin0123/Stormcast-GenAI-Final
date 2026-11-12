@@ -20,7 +20,8 @@ void main() {
   vec2 k = 6.2831853 * mn / uPatch;
   float kl = length(k);
   vec4 h0 = texelFetch(uH0, p, 0);
-  float w = sqrt(9.81 * kl) * uTime;
+  // 每道浪的角速度湊成 2π/2048 的整數倍：時間每 2048 秒繞一圈時接得起來（多人模式下大家的浪才對得上，見 weather.js 的 WAVE_LOOP）
+  float w = floor(sqrt(9.81 * kl) / 0.0030679616 + 0.5) * 0.0030679616 * uTime;
   float c = cos(w), s = sin(w);
   vec2 h = vec2(h0.x * c + h0.y * s, h0.y * c - h0.x * s) + vec2(h0.z * c - h0.w * s, h0.w * c + h0.z * s);
   vec2 ih = vec2(-h.y, h.x);
@@ -218,7 +219,7 @@ export class FftOcean {
     const N = this.N;
     this.cascades.forEach((c, ci) => {
       const su = this.mSpec.uniforms;
-      su.uH0.value = c.h0; su.uPatch.value = c.patch; su.uTime.value = t;
+      su.uH0.value = c.h0; su.uPatch.value = c.patch; su.uTime.value = t % 2048;
       this.pass(this.mSpec, this.fft[0]);
 
       let src = 0;

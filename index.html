@@ -87,6 +87,54 @@
     #map { left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 10px; display: none; }
     #mapCv { display: block; width: min(560px, 74vh); height: min(560px, 74vh); border-radius: 6px; }
     #mapNote { margin-top: 8px; text-align: center; font-size: 12px; color: #dccba6; }
+    /* 進遊戲前：填名字、挑房間。背景是半透明的，看得到後面的港口 */
+    #menu, #net { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+      background: rgba(8, 18, 30, 0.42); z-index: 40; }
+    #menu .card, #net .card { position: static; padding: 26px 30px 22px; width: min(380px, calc(100vw - 32px)); box-sizing: border-box; text-align: center; user-select: auto; }
+    #menu h1 { margin: 0 0 4px; font-size: 32px; letter-spacing: 3px; color: #ffe9a8; }
+    #menu h2 { margin: 0 0 4px; font-size: 20px; letter-spacing: 2px; color: #ffe9a8; }
+    #menu p { margin: 0 0 16px; color: #dccba6; font-size: 13px; }
+    #nameInput { width: 100%; box-sizing: border-box; padding: 9px 12px; border-radius: 6px; font: inherit; font-size: 16px;
+      border: 1px solid rgba(240, 214, 160, 0.4); background: rgba(0, 0, 0, 0.3); color: #fff; text-align: center; }
+    #nameGo { width: 100%; margin-top: 10px; padding: 9px; font-size: 15px; font-weight: 600;
+      background: #e2b21c; border-color: #e2b21c; color: #2e1e10; }
+    #nameGo:disabled { opacity: 0.6; cursor: default; }
+    #nameMsg, #lobbyMsg { min-height: 18px; margin-top: 10px; font-size: 13px; color: #ffb9a6; }
+    #roomList { display: flex; flex-direction: column; gap: 7px; max-height: min(46vh, 380px); overflow-y: auto; scrollbar-width: thin; }
+    button.room { display: flex; align-items: baseline; gap: 12px; padding: 10px 14px; font-size: 15px; text-align: left; }
+    button.room b { font-size: 17px; color: #ffe9a8; }
+    button.room .w { color: #dccba6; font-size: 13px; }
+    button.room .n { margin-left: auto; font-variant-numeric: tabular-nums; }
+    button.room:disabled { opacity: 0.4; cursor: default; background: rgba(255,255,255,0.04); }
+    #lobbyBack { margin-top: 12px; padding: 4px 10px; font-size: 12px; color: #dccba6; background: none; border-color: transparent; text-decoration: underline; }
+    #net { z-index: 50; }
+    #netMsg { margin: 0; color: #ffe9a8; font-size: 15px; line-height: 1.7; }
+    #netRetry { display: none; margin-top: 14px; }
+    /* 聊天室：左下角。平常只有最近幾則，按 Enter 打開輸入框 */
+    #chat { position: fixed; left: 12px; bottom: 12px; width: min(380px, calc(100vw - 24px)); font-size: 13px; z-index: 20; pointer-events: none; }
+    #chatLog { max-height: 170px; overflow: hidden; display: flex; flex-direction: column; gap: 3px; }
+    #chat.open #chatLog { max-height: 260px; overflow-y: auto; scrollbar-width: thin; pointer-events: auto;
+      background: rgba(46, 30, 16, 0.55); border-radius: 8px; padding: 6px; }
+    #chat .msg { align-self: flex-start; max-width: 100%; box-sizing: border-box; padding: 3px 9px; border-radius: 7px; background: rgba(46, 30, 16, 0.72);
+      color: #f3ead6; line-height: 1.45; word-break: break-word; transition: opacity 0.6s; }
+    #chat .msg b { color: #ffe9a8; font-weight: 600; }
+    #chat .msg.mine b { color: #9fe0b0; }
+    #chat .msg.sys { color: #bcd7f0; }
+    #chat .msg.sys.join { color: #b9c7b0; }
+    #chat .msg.sys.merge { color: #ffd28a; }
+    #chat .msg.sys.record { color: #ffe066; font-weight: 600; }
+    #chat .msg.sys.warn { color: #ffb9a6; }
+    #chat .msg.old { opacity: 0; }
+    #chat.open .msg.old { opacity: 1; }
+    #chatBox { display: none; margin-top: 6px; pointer-events: auto; }
+    #chat.open #chatBox { display: block; }
+    #chatPresets { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+    #chatPresets button { padding: 3px 9px; font-size: 12px; background: rgba(46, 30, 16, 0.85); }
+    #chatInput { width: 100%; box-sizing: border-box; padding: 7px 10px; border-radius: 6px; font: inherit;
+      border: 1px solid rgba(240, 214, 160, 0.4); background: rgba(20, 13, 7, 0.88); color: #fff; }
+    #chatHint { margin-top: 5px; font-size: 11px; color: rgba(243, 234, 214, 0.55); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); }
+    #chat.open #chatHint { display: none; }
+    #hRoom { margin-right: 18px; color: #ffe9a8; }
     #err { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
       background: #0b1622; padding: 30px; text-align: center; font-size: 16px; line-height: 1.8; }
   </style>
@@ -102,14 +150,6 @@
     <div class="sec"><h4>聲音</h4>
       <div class="line"><span>遊戲音效</span><button id="sound">關</button></div>
     </div>
-    <div class="sec"><h4>時間與天氣</h4>
-      <div class="line"><span>時間</span><button id="skipHour">快轉 3 小時</button></div>
-      <div class="line"><span>海上事件</span><span class="two"><select id="evKind">
-        <option value="storm">風暴</option><option value="thunder">雷暴雨</option><option value="tsunami">巨浪</option>
-        <option value="spout">水龍捲</option><option value="whirl">漩渦</option><option value="typhoon">颱風</option>
-      </select><button id="evGo">引發</button></span></div>
-      <p class="note">海上事件平常也會隨機發生</p>
-    </div>
     <details id="keys" class="sec">
       <summary>操作說明</summary>
       <h5>走路</h5>
@@ -120,6 +160,7 @@
         <dt><kbd>E</kbd></dt><dd>把畫面中央的準心對準東西再按：拿起／放下、掌舵、加油、修船、開關船燈、坐下、綁纜繩、按按鈕、買東西</dd>
         <dt><kbd>F</kbd></dt><dd>釣魚：按住蓄力、放開拋竿；魚咬了按一下；收線時按住／放開控制力道。大魚別硬拉，釣竿負荷滿了會斷（要回商店修）</dd>
         <dt><kbd>G</kbd></dt><dd>動作與表情：按住叫出輪盤，移動滑鼠選（內圈表情、外圈動作），放開播放。表情維持 10 秒；走動就停下動作</dd>
+        <dt><kbd>Enter</kbd></dt><dd>聊天：打字後按 Enter 送出，也可以點預設短句；Esc 關閉</dd>
       </dl>
       <h5>開船</h5>
       <dl>
@@ -136,15 +177,32 @@
         <dt><kbd>M</kbd></dt><dd>地圖</dd>
       </dl>
     </details>
-    <div class="sec"><button id="reset">重新開始（清除存檔）</button></div>
+    <div class="sec"><button id="reset">離開房間（回到大廳）</button><p class="note">離開後進度會清空，下次進房從頭開始</p></div>
   </details>
-  <div id="hud" class="card"><span id="hClock"></span>金錢<b id="hMoney">$0</b><span id="hShip">耐久<b id="hHp">100%</b>　燃油<b id="hFuel">0</b></span><span id="hSpeed">船速<b id="hBoat">0.0 節</b></span></div>
+  <div id="hud" class="card"><span id="hRoom"></span><span id="hClock"></span>金錢<b id="hMoney">$0</b><span id="hShip">耐久<b id="hHp">100%</b>　燃油<b id="hFuel">0</b></span><span id="hSpeed">船速<b id="hBoat">0.0 節</b></span></div>
   <div id="fishui" class="card"><div id="fishLabel"></div><div id="bar"><div id="barSafe"></div><div id="barFill"></div><div id="barMark"></div></div><div id="prog"><div id="progFill"></div></div><div id="strain">釣竿負荷<div id="strainBar"><div id="strainFill"></div></div></div><div id="fishHint"></div></div>
   <div id="toast" class="card"></div>
   <div id="aim"></div>
   <div id="prompt" class="card"></div>
   <div id="stam" class="card">體力<div id="stamBar"><div id="stamFill"></div></div></div>
-  <div id="map" class="card"><canvas id="mapCv" width="560" height="560"></canvas><div id="mapNote">紅色箭頭是你，黃色是你的船　按 M 或 Esc 關閉</div></div>
+  <div id="map" class="card"><canvas id="mapCv" width="560" height="560"></canvas><div id="mapNote">紅色箭頭是你，黃色是你的船，白色是其他人　按 M 或 Esc 關閉</div></div>
+  <div id="menu">
+    <div id="menuName" class="card">
+      <h1>Stormcast</h1>
+      <p>填好你的名字，跟大家一起出海釣魚</p>
+      <input id="nameInput" maxlength="12" placeholder="你的名字" autocomplete="nickname" />
+      <button id="nameGo">進入大廳</button>
+      <div id="nameMsg"></div>
+    </div>
+    <div id="menuLobby" class="card" style="display: none">
+      <h2>選一間房間</h2>
+      <p><span id="lobbyWho"></span>，點一間就進去。想跟朋友一起玩，就挑同一間</p>
+      <div id="roomList"></div>
+      <div id="lobbyMsg"></div>
+      <button id="lobbyBack">換個名字</button>
+    </div>
+  </div>
+  <div id="net"><div class="card"><p id="netMsg"></p><button id="netRetry">回到大廳</button></div></div>
   <div id="err"></div>
   <script type="module" src="/src/main.js"></script>
 </body>

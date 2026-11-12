@@ -7,30 +7,11 @@ import { buildBoatMesh, BOAT_TYPES } from './boat.js';
 import { makeCanMesh } from './fish.js';
 import { HOME } from './terrain.js';
 import { bulb, softDisc, softSquare } from './toon.js';
+import { DECK_Y, DECKS, WALLS, SHOP, LIGHTHOUSE, SELL, SHELF, SHELF_X, SHELF_Z, PLAYER_SPAWN, onDeck, PONTOONS, PONTOON_Y, PONTOON_W, BERTHS } from './layout.js';
+// 港口的配置（哪裡是岸壁、商店、攤位、停船格）在 layout.js，伺服器也用同一份；這裡照著它蓋模型
+export { DECK_Y, DECKS, WALLS, SHOP, LIGHTHOUSE, SELL, SHELF, SHELF_X, SHELF_Z, PLAYER_SPAWN, onDeck };
 
-export const DECK_Y = 1.3; // 棧板高度（海平面以上，公尺）；比船的甲板略高，一步就能跨上船
-
-// 可行走的平台（軸對齊矩形，公尺）：岸壁與防波堤。都是實心的水泥，游泳的人鑽不到底下
-export const DECKS = [
-  { x0: -30, x1: 22, z0: 104, z1: 118 },     // 岸壁
-  { x0: 18, x1: 22, z0: 118, z1: 160 },      // 防波堤：往南伸出去
-  { x0: -10, x1: 18, z0: 156, z1: 160 },     // 防波堤：轉向西，圍住港內
-];
-// 平台上走不過去的範圍：防波堤靠外海那一側的胸牆、魚市場裡的魚箱堆、自動販賣機、晒網架
-export const WALLS = [
-  { x0: 21.2, x1: 22, z0: 118, z1: 160 }, { x0: -10, x1: 22, z0: 159.2, z1: 160 },
-  { x0: 2.6, x1: 4.9, z0: 105.0, z1: 106.9 }, { x0: 7.6, x1: 10.2, z0: 105.2, z1: 106.3 }, { x0: 11.6, x1: 13.7, z0: 105.1, z1: 106.6 },
-  { x0: -15.25, x1: -12.85, z0: 104.9, z1: 105.75 },
-  { x0: 16.35, x1: 19.65, z0: 112.45, z1: 113.95 },
-  { x0: -33.2, x1: 25.2, z0: 99.5, z1: 101.0 },   // 靠山的擋土牆
-];
 export const HARBOR_ROCKS = [];   // 消波塊（船和人都過不去）：{ x, z, r, top }
-
-// 唯一的一間店：賣魚、買釣具、升級船都在這附近
-export const SHOP = { name: '商店', x: -20, z: 107.5, w: 9, d: 6, roof: 0xb5503a, hint: '賣魚請到東邊魚市場前的籃子；油、扳手、釣具和船在店旁的攤位' };
-export const LIGHTHOUSE = { x: 30, z: 108, r: 2.5 };
-// 賣魚的地方：魚市場前的籃子、顯示價格的電子板、按下去就賣出的按鈕
-export const SELL = { basket: { x: 7, z: 112.2, y: DECK_Y }, board: { x: 7, z: 111.2 }, button: { x: 8.4, z: 112.2 } };
 
 // 電子板的畫面：黑底綠字
 const boardCanvas = document.createElement('canvas');
@@ -50,20 +31,6 @@ export function setBoard(lines) {
   boardTex.needsUpdate = true;
 }
 
-// 三種船各自的泊位：一字排開靠在岸壁邊
-export const MOORING = {
-  skiff: { x: -24, z: 119.5, heading: 0 },
-  fisher: { x: -12, z: 120.7, heading: 0 },
-  trawler: { x: 7, z: 121.5, heading: Math.PI },
-};
-
-// 商品架：商店旁的攤位，一張長桌，每樣商品後面立著一塊價格牌。玩家站在桌前按 E 購買
-export const SHELF = [
-  { id: 'fuel', x: -11.6 }, { id: 'wrench', x: -9.95 }, { id: 'rod', x: -8.3 }, { id: 'box', x: -6.65 },
-  { id: 'engine', x: -5.0 }, { id: 'fisher', x: -3.35 }, { id: 'trawler', x: -1.7 },
-];
-export const SHELF_X = [-12.5, -0.8];   // 長桌的兩端
-export const SHELF_Z = 106.4;
 const tags = SHELF.map(() => {
   const c = document.createElement('canvas');
   c.width = 256; c.height = 160;
@@ -84,7 +51,6 @@ export function setTag(i, lines) {
   g.fillStyle = '#a3261a'; g.font = font(40); g.fillText(lines[2], 128, 124);
   t.needsUpdate = true;
 }
-export const PLAYER_SPAWN = { x: -6, z: 114, yaw: Math.PI / 2 };
 // 碼頭的四盞燈（晚上會亮）；UNLIT：招牌、價格牌這些不吃光照的材質，晚上要跟著變暗
 export const LAMPS = [[-27, 117.2], [-3, 117.2], [19.3, 138], [4, 156.8]].map(([x, z]) => ({ x: x + 0.5, y: DECK_Y + 2.5, z }));
 export const UNLIT = [];
@@ -1015,6 +981,65 @@ export function makeHarbor(bedAt) {
     group.add(l);
   });
 
+  // ---- 浮動碼頭：兩條貼著水面的木棧道，從岸壁的跳板走下來；兩側是小舢舨的停船格 ----
+  {
+    const floatMat = plain(0x2c3a4a);
+    for (const p of PONTOONS) {
+      const d = p.deck, g = p.gang, len = d.z1 - d.z0, cz = (d.z0 + d.z1) / 2;
+      box(PONTOON_W, 0.14, len, planks(deckTex, PONTOON_W, len, true), p.x, PONTOON_Y - 0.07, cz);   // 橋面
+      box(PONTOON_W + 0.1, 0.1, len + 0.1, darkWood, p.x, PONTOON_Y - 0.19, cz);                      // 邊框
+      for (let z = d.z0 + 1.2; z < d.z1; z += 2.4) box(PONTOON_W - 0.3, 0.55, 1.6, floatMat, p.x, PONTOON_Y - 0.5, z);   // 浮筒
+      // 跳板：從岸壁斜下來，兩側有扶手
+      const gw = g.x1 - g.x0, gl = Math.hypot(g.z1 - g.z0, DECK_Y - PONTOON_Y), ga = Math.atan2(DECK_Y - PONTOON_Y, g.z1 - g.z0), gz = (g.z0 + g.z1) / 2, gy = (DECK_Y + PONTOON_Y) / 2;
+      box(gw, 0.1, gl + 0.3, planks(deckTex, gw, gl, true), p.x, gy - 0.05, gz).rotation.x = ga;
+      for (const side of [-1, 1]) {
+        const rx = p.x + side * (gw / 2 - 0.03);
+        box(0.05, 0.05, gl, darkWood, rx, gy + 0.88, gz).rotation.x = ga;
+        for (const t of [0.06, 0.5, 0.94]) box(0.05, 0.9, 0.05, darkWood, rx, DECK_Y + (PONTOON_Y - DECK_Y) * t + 0.44, g.z0 + (g.z1 - g.z0) * t);
+      }
+      // 定位樁：浮橋套在樁上，隨水位升降；尾端一盞燈
+      for (const side of [-1, 1]) post(p.x + side * (PONTOON_W / 2 + 0.16), d.z1 - 0.5, PONTOON_Y + 1.5, 0.11);
+      post(p.x, d.z1 + 0.12, PONTOON_Y + 2.25, 0.05);
+      const l = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 6), lampMat);
+      l.position.set(p.x, PONTOON_Y + 2.33, d.z1 + 0.12);
+      group.add(l);
+    }
+    // 停船格的編號：漆在橋面、堤面上的小牌子
+    const numTex = (text) => canvasTex(128, 64, (g) => {
+      g.fillStyle = '#f4efe2'; g.fillRect(0, 0, 128, 64);
+      g.strokeStyle = '#3a2412'; g.lineWidth = 6; g.strokeRect(3, 3, 122, 58);
+      g.fillStyle = '#3a2412'; g.font = 'bold 38px "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif';
+      g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, 64, 34);
+    }, false);
+    const tag = (text, x, y, z, w, turn) => {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, w / 2).rotateX(-Math.PI / 2), wetGround(new THREE.MeshLambertMaterial({ map: numTex(text), polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 })));
+      m.position.set(x, y, z);
+      m.rotation.y = turn;
+      group.add(m);
+    };
+    for (const b of BERTHS) {
+      if (b.kind === 'small') {
+        const side = b.heading === 0 ? 1 : -1, px = b.x - side * 3.77;
+        tag(b.label, px, PONTOON_Y + 0.006, b.z, 0.56, side > 0 ? -Math.PI / 2 : Math.PI / 2);
+        box(0.3, 0.09, 0.08, ink, px + side * 0.36, PONTOON_Y + 0.045, b.z + 0.95);   // 繫船的羊角
+      } else if (b.kind === 'big') {
+        const along = b.off ? 2.4 : 0;   // 外檔那一格的牌子排在裡面那格的旁邊
+        tag(b.label, b.ex - b.nx * 1.1 + (b.nz ? along - 1.2 : 0), DECK_Y + 0.012, b.ez - b.nz * 1.1, 1.0, b.nx ? -Math.PI / 2 : Math.PI);
+      }
+    }
+    // 港外錨地：每一格的船頭前面一顆浮標
+    const spots = BERTHS.filter((b) => b.kind === 'anchor');
+    const ball = new THREE.InstancedMesh(new THREE.SphereGeometry(0.34, 10, 8), plain(0xe8742a), spots.length);
+    const pole = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.035, 0.035, 1.5, 6), ink, spots.length);
+    const m4 = new THREE.Matrix4();
+    spots.forEach((b, i) => {
+      ball.setMatrixAt(i, m4.makeTranslation(b.x + 10.6, 0.08, b.z));
+      pole.setMatrixAt(i, m4.makeTranslation(b.x + 10.6, 0.8, b.z));
+    });
+    ball.computeBoundingSphere(); pole.computeBoundingSphere();
+    group.add(ball, pole);
+  }
+
   // ---- 魚市場棚子裡吊著的一顆燈泡 ----
   box(0.025, 0.55, 0.025, ink, 8.5, DECK_Y + 2.85, 107.5);
   {
@@ -1122,10 +1147,3 @@ uniform vec4 uDeckRect[ ${DECKS.length} ];`)
   return group;
 }
 
-// 某點是否在棧板上（留一點邊緣餘裕）
-export function onDeck(x, z, margin = 0) {
-  for (const r of DECKS) {
-    if (x >= r.x0 - margin && x <= r.x1 + margin && z >= r.z0 - margin && z <= r.z1 + margin) return true;
-  }
-  return false;
-}
