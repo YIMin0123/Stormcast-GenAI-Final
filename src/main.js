@@ -20,6 +20,7 @@ import { Spray } from './spray.js';
 import { OceanAudio } from './audio.js';
 import { Sea, Climate, computeDanger, computeOffshore, computeTsuK, TSU, SWELL, swellAt, WAVE_LOOP } from './weather.js';
 import { Rain, Bolt, Spindrift, Spout, WaveSpray } from './skyfx.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
@@ -57,7 +58,9 @@ const renderer = new THREE.WebGLRenderer({ antialias: false });   // 抗鋸齒�
 // 畫質由玩家自己在設定裡調，不會自動變，調過的記在瀏覽器裡（?test 分頁只記在那個分頁）：
 //   解析度：沒調過的話，電腦跟著螢幕的縮放比例走（筆電常見 1.25、1.5 倍，畫面才不會被放大而糊掉）；
 //           手機的螢幕很密、顯示晶片弱，用 1 倍
-//   畫質等級：低／中／高，管陰影的細緻度、草的數量、角落的暗影（AO）、濕地板的倒影。手機預設低，電腦預設高
+//   畫質等級：手機／低／中／高，管陰影的細緻度、草的數量、角落的暗影（AO）、濕地板的倒影、光暈和陽光光束。
+//           電腦預設高；手機預設低，第一次進遊戲時量幾秒幀率，太慢就自動換成「手機」（只有沒調過的人才會換，換完就記住）。
+//           「手機」這一檔不降解析度，省的是特效：沒有光暈、光束，陰影貼圖小一點、範圍收窄、取樣點減半，草少一半
 const prefStore = (() => { try { return TEST ? window.sessionStorage : window.localStorage; } catch { return null; } })();
 const getPref = (k) => { try { return prefStore ? prefStore.getItem(k) : null; } catch { return null; } };
 const setPref = (k, v) => { try { if (prefStore) prefStore.setItem(k, String(v)); } catch { /* 存不了就下次重調 */ } };
@@ -67,11 +70,15 @@ let BASE_RATIO = ratioFor();
 let ratioSaved = parseFloat(getPref('stormcast.res')) >= 0.5;
 let pixelRatio = ratioSaved ? clamp(parseFloat(getPref('stormcast.res')), 0.5, RATIO_MAX) : BASE_RATIO;
 const GFX = [
-  { name: '低', shadow: 1536, grass: 6000, ao: false, wet: false },
-  { name: '中', shadow: 2048, grass: 10000, ao: true, wet: false },
-  { name: '高', shadow: 3072, grass: 14000, ao: true, wet: true },
+  { name: '手機', shadow: 1024, shadowHalf: 40, grass: 3000, ao: false, wet: false, post: false, lite: true },
+  { name: '低', shadow: 1536, shadowHalf: 54, grass: 6000, ao: false, wet: false, post: true, lite: false },
+  { name: '中', shadow: 2048, shadowHalf: 54, grass: 10000, ao: true, wet: false, post: true, lite: false },
+  { name: '高', shadow: 3072, shadowHalf: 54, grass: 14000, ao: true, wet: true, post: true, lite: false },
 ];
-let gfxLv = /^[012]$/.test(getPref('stormcast.gfx') || '') ? +getPref('stormcast.gfx') : TOUCH ? 0 : 2;
+// 以前只有低中高三檔（0–2，存在 stormcast.gfx），現在前面多了「手機」，舊的設定往後挪一格
+const oldGfx = getPref('stormcast.gfx'), newGfx = getPref('stormcast.gfx2');
+let gfxSaved = /^[0-3]$/.test(newGfx || '') || /^[012]$/.test(oldGfx || '');
+let gfxLv = /^[0-3]$/.test(newGfx || '') ? +newGfx : /^[012]$/.test(oldGfx || '') ? +oldGfx + 1 : TOUCH ? 1 : 3;
 let gfx = GFX[gfxLv];
 renderer.setPixelRatio(pixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -80,8 +87,12 @@ renderer.toneMappingExposure = 1.0;
 document.body.appendChild(renderer.domElement);
 const canvas = renderer.domElement;
 
-if (!renderer.capabilities.isWebGL2 || !renderer.extensions.has('EXT_color_buffer_float')) {
-  fail('這個瀏覽器或顯示卡不支援浮點數渲染目標（WebGL2 + EXT_color_buffer_float），無法執行。');
+// 要能畫進浮點貼圖：32 位元的最好；不少手機只支援 16 位元的，海浪模擬會退回 16 位元（見 ocean.js），一樣能玩。
+// ?halffloat：在電腦上假裝不支援 32 位元，測試退路
+if (new URLSearchParams(window.location.search).has('halffloat')) renderer.extensions.get = ((get) => (n) => (n === 'EXT_color_buffer_float' || n === 'OES_texture_float_linear' ? null : get(n)))(renderer.extensions.get.bind(renderer.extensions));
+if (new URLSearchParams(window.location.search).has('halffloat')) renderer.extensions.has = ((has) => (n) => (n === 'EXT_color_buffer_float' || n === 'OES_texture_float_linear' ? false : has(n)))(renderer.extensions.has.bind(renderer.extensions));
+if (!renderer.capabilities.isWebGL2 || !(renderer.extensions.has('EXT_color_buffer_float') || renderer.extensions.has('EXT_color_buffer_half_float'))) {
+  fail('這個瀏覽器或顯示卡不支援浮點數渲染目標（WebGL2 + EXT_color_buffer_float／half_float），無法執行。');
 }
 
 const scene = new THREE.Scene();
@@ -349,10 +360,13 @@ DECKS.slice(0, 3).forEach((r, i) => shared.uQuay.value[i].set(r.x0, r.z0, r.x1, 
 
 const sky = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), new THREE.ShaderMaterial({
   vertexShader: skyVert, fragmentShader: skyFrag, uniforms: shared,
-  side: THREE.BackSide, depthWrite: false, depthTest: false,
+  side: THREE.BackSide, depthWrite: false,
 }));
 sky.frustumCulled = false;
-sky.renderOrder = -1;
+// 天空在所有不透明的東西（地形、港口、樹、船）畫完之後才畫，而且做深度測試：被山和房子擋住的地方就不用算天空。
+// 以前天空最先畫、不做深度測試，整個畫面每一點都算一次雲，佔了一幀三分之一左右的時間。
+// 它還是在海面（半透明，排在後面）之前畫，海面照樣疊在天空上
+sky.renderOrder = 1e6;
 scene.add(sky);
 
 // 船、人、港口、樹用 three.js 內建材質，補上對應的光源
@@ -365,8 +379,8 @@ scene.add(sun, sun.target, hemi);
 // 樹、石頭、船、人、港口的建築、山坡都會投影；地形用自己的著色器取樣這張貼圖。
 // 每隔一幀更新一次，跟水面倒影輪流畫，省一半的成本
 // 貼圖 3072：在 Iris Xe 上比 2048 每幀多 0.6 毫秒左右，4096 則要多 4.5 毫秒（量過），所以取 3072、範圍收到 54 公尺
-const SHADOW_HALF = 54;
-let SHADOW_SIZE = gfx.shadow;   // 畫質「高」是 3072，中 2048，低 1536
+let SHADOW_HALF = gfx.shadowHalf;   // 畫質「手機」收到 40 公尺（貼圖小，範圍也跟著收，影子才不會太粗）
+let SHADOW_SIZE = gfx.shadow;   // 畫質「高」是 3072，中 2048，低 1536，手機 1024
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.autoUpdate = false;
 sun.castShadow = true;
@@ -836,6 +850,38 @@ const camBlockers = [];
   back.updateMatrixWorld();
   camBlockers.push(back);
 }
+// ---- 港口合併成少數幾塊 ---------------------------------------------------------
+// 港口是六百多個小零件（木板、樁、箱子、屋頂、欄杆），一個一個送去畫，光是送指令每幀就要十幾毫秒的 CPU，
+// 陰影和倒影還各要再送一次；手機的 CPU 慢，這是最拖的地方。不會動的零件照材質（外觀一樣的算同一種）合併成一塊，
+// 剩兩百個左右。不合併的：半透明的、藏起來的（晚上才出現的光圈）、會改顏色或換字的材質（窗戶、招牌、價格牌）、
+// 鏡像擺放的、底下還掛著東西的。鏡頭的遮擋判斷（camBlockers）在上面已經用原本的零件建好，不受影響
+{
+  harbor.updateMatrixWorld(true);
+  const keep = new Set([...GLOW, ...UNLIT]);
+  const shown = (o) => { for (let p = o; p; p = p.parent) if (!p.visible) return false; return true; };
+  const look = (m) => (keep.has(m) || m.onBeforeCompile.toString().length > 30 ? m.uuid
+    : [m.type, m.color?.getHex(), m.emissive?.getHex(), m.map?.uuid, m.side, m.flatShading, m.vertexColors, m.alphaTest, m.opacity].join());
+  const sets = new Map();
+  harbor.traverse((o) => {
+    if (!o.isMesh || o.isInstancedMesh || o.isSkinnedMesh || Array.isArray(o.material) || o.material.transparent) return;
+    if (o.children.length || o.renderOrder || !o.frustumCulled || o.morphTargetInfluences || !shown(o) || o.matrixWorld.determinant() < 0) return;
+    const g = o.geometry, k = [look(o.material), o.castShadow, o.receiveShadow, !!g.index, Object.keys(g.attributes).sort().join()].join('|');
+    if (!sets.has(k)) sets.set(k, []);
+    sets.get(k).push(o);
+  });
+  const inv = harbor.matrixWorld.clone().invert();
+  for (const list of sets.values()) {
+    if (list.length < 2) continue;
+    const geo = mergeGeometries(list.map((o) => { const g = o.geometry.clone(); g.morphAttributes = {}; g.clearGroups(); return g.applyMatrix4(o.matrixWorld); }));
+    if (!geo) continue;
+    const m = new THREE.Mesh(geo, list[0].material);
+    m.castShadow = list[0].castShadow; m.receiveShadow = list[0].receiveShadow;
+    m.applyMatrix4(inv);
+    harbor.add(m);
+    for (const o of list) o.removeFromParent();
+  }
+}
+
 // 鏡頭要退到哪裡才不被擋，分兩步：
 // 一、從人的頭往鏡頭看出去，中間有東西就把鏡頭拉到它前面。不只看正中間那一條線，
 //     鏡頭的上下左右各多看一條：屋簷的邊角就算沒擋到正中間，也不會蓋住半個畫面。
@@ -1501,8 +1547,23 @@ $('quality').max = RATIO_MAX;
 $('quality').value = pixelRatio;
 $('vQuality').textContent = `${pixelRatio.toFixed(1)}×`;
 $('quality').addEventListener('input', () => { setPixelRatio(+$('quality').value); ratioSaved = true; setPref('stormcast.res', pixelRatio); });
+// 畫質「手機」：海面、地形、草的陰影取樣點減半（著色器裡的 LITE），要重新編譯這幾個材質
+function applyLite() {
+  scene.traverse((o) => {
+    const m = o.material;
+    if (!m || !m.isShaderMaterial || !m.fragmentShader.includes('sunShadow(')) return;
+    if (!!m.defines.LITE === gfx.lite) return;
+    if (gfx.lite) m.defines.LITE = 1; else delete m.defines.LITE;
+    m.needsUpdate = true;
+  });
+}
 function setGfx(lv) {
   gfxLv = lv; gfx = GFX[lv];
+  if (SHADOW_HALF !== gfx.shadowHalf) {
+    SHADOW_HALF = gfx.shadowHalf;
+    Object.assign(sun.shadow.camera, { left: -SHADOW_HALF, right: SHADOW_HALF, top: SHADOW_HALF, bottom: -SHADOW_HALF });
+    sun.shadow.camera.updateProjectionMatrix();
+  }
   if (SHADOW_SIZE !== gfx.shadow) {
     // 陰影貼圖換大小：舊的丟掉，下一幀會照新的大小重做一張
     SHADOW_SIZE = gfx.shadow;
@@ -1516,12 +1577,14 @@ function setGfx(lv) {
     grass.geometry.dispose();
     grass.geometry = makeGrassGeometry(grassN, GRASS_T);
   }
+  applyLite();
   for (const b of $('gfx').children) b.classList.toggle('on', +b.dataset.v === lv);
 }
 for (const b of $('gfx').children) {
   b.classList.toggle('on', +b.dataset.v === gfxLv);
-  b.addEventListener('click', () => { b.blur(); setGfx(+b.dataset.v); setPref('stormcast.gfx', gfxLv); });
+  b.addEventListener('click', () => { b.blur(); setGfx(+b.dataset.v); setPref('stormcast.gfx2', gfxLv); gfxSaved = true; });
 }
+applyLite();
 // 手機：設定裡的全螢幕開關（收掉瀏覽器上面那條網址列）；瀏覽器不給全螢幕的（iPhone）改成教人加到主畫面
 if (TOUCH && canFullscreen) {
   $('fullRow').style.display = 'flex';
@@ -2637,6 +2700,8 @@ function drawFrame(dt) {
   blob.visible = onFloor && !player.swim;
   shared.uBlob.value.set(player.x, player.z, onFloor || player.swim ? 0 : lift);
   aoPass.enabled = !under && gfx.ao;   // 水裡一片混濁，不需要；畫質「低」也省掉
+  waterFlag.visible = aoPass.enabled;    // 海面的記號只有角落暗影要用：沒開就不必再把整片海面的網格畫一次
+  rays.enabled = bloom.enabled = gfx.post;   // 畫質「手機」沒有光暈和陽光光束
   // 擋在鏡頭和人之間的枝葉散開（只有走路時）。第三人稱：從鏡頭到人身上這條線周圍；第一人稱：只有貼著鏡頭的那一圈
   if (mode === 'walk' && inGame && !debugCam) {
     camera.updateMatrixWorld();
@@ -2661,10 +2726,24 @@ if (fpsEl) {
   const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
   gpuName = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)).replace(/ANGLE \(|\)$/g, '').slice(0, 60);
 }
+// 手機第一次進遊戲（還沒自己調過畫質）：進房三秒後量五秒的幀率，平均低於每秒 25 幀就換成「手機」這一檔，量完就記住，之後不再量
+let probe = TOUCH && !gfxSaved ? { t0: 0, n: 0, sum: 0 } : null;
+function probeGfx(ms, rawMs) {
+  if (!inGame || document.hidden) { if (probe.t0) probe.t0 = ms; return; }
+  if (!probe.t0) { probe.t0 = ms; return; }
+  if (ms - probe.t0 < 3000 || rawMs > 250) return;
+  probe.n++; probe.sum += rawMs;
+  if (ms - probe.t0 < 8000) return;
+  const avg = probe.sum / probe.n;
+  if (avg > 40 && gfxLv > 0) { setGfx(0); toast('畫面有點卡，畫質自動換成「手機」（可在設定裡改回來）'); }
+  setPref('stormcast.gfx2', gfxLv); gfxSaved = true;
+  probe = null;
+}
 renderer.setAnimationLoop((ms) => {
   const rawMs = ms - last;
   const dt = Math.min(rawMs / 1000, 0.05);
   last = ms;
+  if (probe) probeGfx(ms, rawMs);
   if (dt > 0) advance(dt);
   drawFrame(dt);
   if (frame++ % 6 === 0) { updatePrompt(); if (mapOpen) drawMap(); }
@@ -2682,7 +2761,7 @@ window.__sim = {
   fish, fishing, isWater, SELL, get money() { return money; },
   // 多人
   net, others, chat, boards, garage, enterRoom, applyWorld, myFishUids, takeHelm, releaseHelm, touch, setGfx, setPixelRatio,
-  get gfxLv() { return gfxLv; }, get pixelRatio() { return pixelRatio; },
+  get gfxLv() { return gfxLv; }, get pixelRatio() { return pixelRatio; }, GFX, get gfx() { return gfx; },
   get kit() { return kit; }, get myBoat() { return myBoat; }, get berth() { return berth; }, get room() { return room; }, get inGame() { return inGame; }, get time() { return time; },
   dev: (cmd, o = {}) => net.send({ t: 'dev', cmd, ...o }),   // 測試指令（伺服器開了開發模式才收）：event / calm / skip / money / fish
   sea, dangerAt, tsuAt, stormK, waterY, nearTank, nearCrack, get wrench() { return wrench; },

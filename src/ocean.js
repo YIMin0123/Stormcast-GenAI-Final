@@ -109,9 +109,12 @@ export class FftOcean {
     this.chop = opts.chop ?? 0.85;
     const windAngle = opts.windAngle ?? Math.PI / 2 + 0.3;
     const U = opts.windSpeed ?? 14, fetch = opts.fetch ?? 2e5, hsTarget = opts.hs ?? 2.2;
-    // 浮點貼圖能做線性過濾時才用 32 位元（船的浮力需要讀回）；否則退回 16 位元
-    this.canRead = renderer.extensions.has('OES_texture_float_linear');
-    const mapType = this.canRead ? THREE.FloatType : THREE.HalfFloatType;
+    // floatRT：顯示晶片能不能畫進 32 位元浮點貼圖（不少手機只能畫 16 位元的）。不能的話 FFT 整個改用 16 位元算
+    this.floatRT = renderer.extensions.has('EXT_color_buffer_float');
+    const fftType = this.floatRT ? THREE.FloatType : THREE.HalfFloatType;
+    // 位移圖能做線性過濾時才用 32 位元；否則退回 16 位元。船的浮力照樣讀回（16 位元的另外換算，見 _read）
+    const mapType = this.floatRT && renderer.extensions.has('OES_texture_float_linear') ? THREE.FloatType : THREE.HalfFloatType;
+    this.canRead = true;
 
     // ---- 初始頻譜（CPU）----
     let seed = 20240611;
@@ -158,7 +161,7 @@ export class FftOcean {
       return t;
     };
 
-    this.fft = [target(THREE.FloatType, false), target(THREE.FloatType, false)];
+    this.fft = [target(fftType, false), target(fftType, false)];
     // JONSWAP 的能量集中在長浪，短浪偏弱，海面會太平滑；這裡把中、短波加強到接近實測的海面粗糙度
     const gain = opts.gain ?? [1, 1.7, 2.0];
     this.cascades = raw.map((h, ci) => {
@@ -204,6 +207,23 @@ export class FftOcean {
     this.stages = Math.round(Math.log2(N));
     this.readBuf = new Float32Array(16);
     this.scale = 1;
+  }
+
+  // 把位移圖的一塊讀回 CPU（Float32Array）。16 位元的圖：能用 32 位元讀就直接讀，不能的話讀 16 位元再換算。
+  // 真的讀不了（少數手機）時 out 維持原樣（全 0），船就只是不跟著浪起伏，遊戲照跑
+  _read(rt, x, y, w, h, out) {
+    if (rt.texture.type === THREE.FloatType) { this.renderer.readRenderTargetPixels(rt, x, y, w, h, out); return; }
+    const gl = this.renderer.getContext(), prev = this.renderer.getRenderTarget();
+    this.renderer.setRenderTarget(rt);
+    if (this.floatRT) gl.readPixels(x, y, w, h, gl.RGBA, gl.FLOAT, out);
+    else {
+      const n = w * h * 4;
+      if (!this._half || this._half.length < n) this._half = new Uint16Array(n);
+      const hb = this._half.subarray(0, n);
+      gl.readPixels(x, y, w, h, gl.RGBA, gl.HALF_FLOAT, hb);
+      for (let i = 0; i < n; i++) out[i] = THREE.DataUtils.fromHalfFloat(hb[i]);
+    }
+    this.renderer.setRenderTarget(prev);
   }
 
   pass(mat, target) {
@@ -260,7 +280,7 @@ export class FftOcean {
     this.blockX0 = x - (gx - bi) * c.patch / N;
     this.blockZ0 = z - (gz - bj) * c.patch / N;
     if (!this.blockBuf) this.blockBuf = new Float32Array(B * B * 4);
-    this.renderer.readRenderTargetPixels(c.disp[c.cur], bi, bj, B, B, this.blockBuf);
+    this._read(c.disp[c.cur], bi, bj, B, B, this.blockBuf);
     // 第二層（波長三到十幾公尺的中浪）也讀一塊：畫面上的海面是這兩層加起來的，船要跟著同一片水面浮沉，
     // 不然小一點的浪會直接穿過船身。這一層每 113 公尺重複一次，船常常跨在接縫上，所以要繞回另一頭去讀
     const c1 = this.cascades[1], B1 = this.B1 = 48, t1 = N / c1.patch;
@@ -270,7 +290,7 @@ export class FftOcean {
     if (!this.block1) { this.block1 = new Float32Array(B1 * B1 * 4); this._tmp1 = new Float32Array(B1 * B1 * 4); }
     const wi = ((i1 % N) + N) % N, wj = ((j1 % N) + N) % N, w0 = Math.min(B1, N - wi), h0 = Math.min(B1, N - wj);
     const part = (sx, sy, w, h, dx, dy) => {
-      this.renderer.readRenderTargetPixels(c1.disp[c1.cur], sx, sy, w, h, this._tmp1);
+      this._read(c1.disp[c1.cur], sx, sy, w, h, this._tmp1);
       for (let r = 0; r < h; r++) this.block1.set(this._tmp1.subarray(r * w * 4, (r + 1) * w * 4), ((dy + r) * B1 + dx) * 4);
     };
     part(wi, wj, w0, h0, 0, 0);
@@ -321,7 +341,7 @@ export class FftOcean {
     const gx = ((x / c.patch) % 1 + 1) % 1 * N - 0.5, gz = ((z / c.patch) % 1 + 1) % 1 * N - 0.5;
     const i = Math.min(N - 2, Math.max(0, Math.floor(gx))), j = Math.min(N - 2, Math.max(0, Math.floor(gz)));
     const fx = Math.min(1, Math.max(0, gx - i)), fz = Math.min(1, Math.max(0, gz - j));
-    this.renderer.readRenderTargetPixels(c.disp[c.cur], i, j, 2, 2, this.readBuf);
+    this._read(c.disp[c.cur], i, j, 2, 2, this.readBuf);
     const b = this.readBuf;
     return ((b[1] * (1 - fx) + b[5] * fx) * (1 - fz) + (b[9] * (1 - fx) + b[13] * fx) * fz) * this.scale;
   }

@@ -538,12 +538,18 @@ float sunShadow(vec3 wp, vec3 n) {
   // 繞著一圈取幾個點平均（每個位置轉一個不同的角度）：範圍只有一格左右，蓋掉貼圖的鋸齒就好，影子的邊緣是利落的
   float ang = fract(sin(dot(wp.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
   float sh = 0.0;
-  for (int i = 0; i < SH_TAPS; i++) {
-    float r = sqrt((float(i) + 0.5) / float(SH_TAPS)) * 1.1 * uShadowTexel;
+  // 畫質「手機」（LITE）：取樣點減半
+#ifdef LITE
+  const int SH_N = SH_TAPS / 2;
+#else
+  const int SH_N = SH_TAPS;
+#endif
+  for (int i = 0; i < SH_N; i++) {
+    float r = sqrt((float(i) + 0.5) / float(SH_N)) * 1.1 * uShadowTexel;
     float t = float(i) * 2.39996323 + ang;
     sh += texture(uShadowMap, vec3(p.xy + r * vec2(cos(t), sin(t)), p.z));
   }
-  sh = smoothstep(0.22, 0.78, sh / float(SH_TAPS));
+  sh = smoothstep(0.22, 0.78, sh / float(SH_N));
   vec2 e = min(p.xy, 1.0 - p.xy);
   return mix(1.0, sh, smoothstep(0.0, 0.07, min(e.x, e.y)));   // 陰影範圍的邊緣漸漸淡出
 }
@@ -1351,6 +1357,7 @@ void main() {
   vDir = position;
   vec4 mv = viewMatrix * vec4(position, 0.0);
   gl_Position = (projectionMatrix * vec4(mv.xyz, 1.0)).xyww;
+  gl_Position.z *= 0.999999;   // 貼著最遠的那一層，但不能剛好等於 1（會被清空時的深度擋掉）
 }
 `;
 
