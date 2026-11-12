@@ -30,6 +30,7 @@ uniform vec3 uAmbient;     // 環境光：白天 1、夜晚很暗、黃昏偏暖
 uniform float uDay;        // 0 夜晚、1 白天
 uniform float uDusk;       // 日出日落的那一段
 uniform float uFog;        // 霧
+uniform float uHazeK;      // 遠景薄霧的濃度倍數（畫質「手機」比較濃：看得比較近）
 uniform float uFlash;      // 閃電
 uniform vec3 uFlashDir;    // 閃電在哪個方向（從鏡頭看過去）：那一片天空和雲被照得最亮
 uniform float uRain;       // 雨勢
@@ -177,7 +178,7 @@ vec3 applyFog(vec3 col, vec3 world) {
   vec3 dv = world - cameraPosition;
   float dist = length(dv);
   vec3 dir = dv / dist;
-  float f = 1.0 - exp(-dist * dist * (${(HAZE * HAZE).toExponential(3)} + uRain * ${(RAIN_HAZE * RAIN_HAZE).toExponential(3)}) - dist * uFog / 170.0);   // 平常是遠景的薄霧；起霧時一兩百公尺外就看不清
+  float f = 1.0 - exp(-dist * dist * (${(HAZE * HAZE).toExponential(3)} * uHazeK * uHazeK + uRain * ${(RAIN_HAZE * RAIN_HAZE).toExponential(3)}) - dist * uFog / 170.0);   // 平常是遠景的薄霧；起霧時一兩百公尺外就看不清
   return mix(col, mix(skyGradient(normalize(vec3(dir.x, 0.02, dir.z))), vec3(0.70, 0.74, 0.78) * uAmbient, uFog), f);
 }
 `;
@@ -1392,5 +1393,34 @@ void main() {
   gl_FragColor = vec4(col, 0.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
+}
+`;
+
+// ---- 診斷（?diag）----
+// 在顯示晶片上照海面頂點著色器的算法，算一次某一點的輸入值，畫進一張 3×1 的浮點貼圖再讀回來顯示：
+// 手機上海面形狀不對時，拿來比對哪一項跟電腦算的不一樣
+export const diagVert = /* glsl */ `
+void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }
+`;
+export const diagFrag = /* glsl */ `
+${bed}
+${waveDecl}
+${shore}
+${swe}
+uniform float uTime;
+uniform vec2 uDiagP;
+void main() {
+  vec2 xz = uDiagP;
+  float bedH = bedAt(xz), shel = shelterAt(xz), dg = dangerAt(xz), sd = shoreDist(xz);
+  float ph = shorePhase(xz, uTime), expo = shoreExpo(shel, SHORE_SEA);
+  float lift = runup(ph, expo) * (1.0 - smoothstep(0.0, 2.5, -bedH));
+  float pre;
+  float sw = sd < 66.0 ? swell(sd, ph, xz, expo, pre).x : 0.0;
+  float depthFade = smoothstep(0.3, 8.0, -bedH) * waveScale(dg) * shel;
+  vec3 d = (textureLod(uDisp0, xz / uPatch.x, 0.0).xyz + textureLod(uDisp1, xz / uPatch.y, 0.0).xyz) * depthFade;
+  vec2 suv;
+  float win = sweWin(xz, suv);
+  int i = int(gl_FragCoord.x);
+  gl_FragColor = i == 0 ? vec4(bedH, shel, dg, sd) : i == 1 ? vec4(lift, sw, d.y, win) : vec4(expo, ph, uWaveScale, depthFade);
 }
 `;
