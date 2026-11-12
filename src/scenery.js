@@ -208,6 +208,10 @@ function paintRock(mat) {
 const TRUNK = { broadleaf: [0.085, 0.1], conifer: [0.045, 0.12], palm: [0.055, 0.1], bush: [0.3, 0] };   // Q 版的樹幹比較胖
 const CHUNK = 60;   // 島上每一塊的邊長（公尺）
 const FINE = 48;    // 離鏡頭多近才畫精細版
+const FAR_CHUNK = 100;   // 遠的島每一塊的邊長（公尺）
+const SMALL = { bush: 1, tuft: 1 };   // 小東西：倒影裡不畫，遠的島也不畫
+const BIG = (kind, o) => kind === 'broadleaf' || kind === 'conifer' || kind === 'palm' || (kind === 'rock' && o.s > 1.2);   // 遠的島只畫這些
+export const SHADOW_LAYER = 1;   // 只畫進陰影貼圖的東西放這一層（太陽的陰影相機要打開這一層）
 
 // 每種東西的精細版與簡化版
 const KINDS = {
@@ -239,6 +243,9 @@ export function makeScenery(env) {
       lo: make(1000 + v * 77 + name.length * 13, true),
     }));
   }
+  // 每種模型（原尺寸）的頂端有多高：判斷被山擋住時，用樹頂來看
+  const TOP = {};
+  for (const [name, list] of Object.entries(geos)) TOP[name] = list.map(({ hi }) => Math.max(...hi.map(({ geo }) => { geo.computeBoundingBox(); return geo.boundingBox.max.y; })));
   const slopeAt = (x, z) => Math.hypot(heightAt(x + 1.5, z) - heightAt(x - 1.5, z), heightAt(x, z + 1.5) - heightAt(x, z - 1.5)) / 3;
 
   const rocks = [];     // 擋路的東西：石頭、樹幹、灌木 { x, z, r, top }
@@ -299,8 +306,10 @@ export function makeScenery(env) {
     stone(F.landRock, (x, z, h) => h > 1.4 && (slopeAt(x, z) > 0.3 || rnd() < 0.3), () => 0.4 + 1.2 * rnd());
 
     // ---- 建立模型 ----
-    // 整座島一組簡化版（遠看用），另外把島切成一塊一塊，每塊各有精細版與簡化版（走近了才畫精細的）
-    const build = (list, kind, v, lod) => geos[kind][v][lod].map(({ geo, mat }) => {
+    // 鏡頭附近的島：切成一塊一塊（CHUNK），每塊各有精細版與簡化版，走近了才畫精細的。
+    // 遠的島：切成大一點的塊（FAR_CHUNK），只畫大樹和大石頭的簡化版（灌木、草叢、小石頭在那麼遠、又在霧裡，看不出來），不投影。
+    // 每一塊各自做視野外剔除，也各自判斷是不是被山擋住（cull）
+    const build = (list, kind, v, lod, cast = true) => geos[kind][v][lod].map(({ geo, mat }) => {
       const mesh = new THREE.InstancedMesh(geo, mat, list.length);
       list.forEach((o, i) => {
         eul.set(o.tiltX, o.yaw, o.tiltZ);
@@ -312,37 +321,75 @@ export function makeScenery(env) {
       });
       mesh.instanceMatrix.needsUpdate = true;
       mesh.instanceColor.needsUpdate = true;
-      mesh.computeBoundingSphere();   // 整組一起做視野外剔除
-      if (Object.values(fol).includes(mat)) mesh.customDepthMaterial = swayDepth(mat);   // 影子跟著樹一起搖
+      mesh.computeBoundingSphere();   // 這一塊一起做視野外剔除
+      if (Object.values(fol).includes(mat)) {
+        mesh.customDepthMaterial = swayDepth(mat);   // 影子跟著樹一起搖
+        if (lod === 'lo') mesh.userData.depths = [mesh.customDepthMaterial, swayDepth(mat, true)];   // [平常, 代替精細版投影時]
+      }
+      if (!cast) mesh.userData.noCast = true;   // 遠景不投影（影子只畫鏡頭附近幾十公尺，遠的投了也白投）
       return mesh;
     });
-    const far = new THREE.Group(), nearGrp = new THREE.Group(), chunks = new Map();
+    const cellsOf = (list, size) => {
+      const cells = new Map();
+      for (const o of list) {
+        const key = Math.floor((o.x - isle.x) / size) * 64 + Math.floor((o.z - isle.z) / size);
+        if (!cells.has(key)) cells.set(key, []);
+        cells.get(key).push(o);
+      }
+      return cells;
+    };
+    const tileOf = (map, key, groups) => {
+      if (!map.has(key)) {
+        const t = { x0: Infinity, x1: -Infinity, z0: Infinity, z1: -Infinity, y1: -Infinity, tops: [], hidden: false, seen: 0 };
+        for (const g of groups) t[g] = new THREE.Group();
+        map.set(key, t);
+      }
+      return map.get(key);
+    };
+    const grow = (t, part, kind, v) => {
+      for (const o of part) {
+        t.x0 = Math.min(t.x0, o.x); t.x1 = Math.max(t.x1, o.x); t.z0 = Math.min(t.z0, o.z); t.z1 = Math.max(t.z1, o.z);
+        const top = o.y + TOP[kind][v] * o.sy;
+        t.y1 = Math.max(t.y1, top);
+        t.tops.push({ x: o.x, y: top, z: o.z });
+      }
+    };
+    const near = new THREE.Group(), farGrp = new THREE.Group(), chunks = new Map(), farTiles = new Map();
     for (const [kind, byVariant] of Object.entries(items)) {
       byVariant.forEach((list, v) => {
         if (!list || !list.length) return;
-        far.add(...build(list, kind, v, 'lo'));
-        const cells = new Map();
-        for (const o of list) {
-          const key = Math.floor((o.x - isle.x) / CHUNK) * 64 + Math.floor((o.z - isle.z) / CHUNK);
-          if (!cells.has(key)) cells.set(key, []);
-          cells.get(key).push(o);
-        }
-        for (const [key, part] of cells) {
-          if (!chunks.has(key)) {
-            const c = { hi: new THREE.Group(), lo: new THREE.Group(), x0: Infinity, x1: -Infinity, z0: Infinity, z1: -Infinity };
-            nearGrp.add(c.hi, c.lo);
-            chunks.set(key, c);
-          }
-          const c = chunks.get(key);
-          for (const o of part) { c.x0 = Math.min(c.x0, o.x); c.x1 = Math.max(c.x1, o.x); c.z0 = Math.min(c.z0, o.z); c.z1 = Math.max(c.z1, o.z); }
+        for (const [key, part] of cellsOf(list, CHUNK)) {
+          const c = tileOf(chunks, key, ['hi', 'lo', 'loS']);
+          grow(c, part, kind, v);
           c.hi.add(...build(part, kind, v, 'hi'));
-          c.lo.add(...build(part, kind, v, 'lo'));
+          (SMALL[kind] ? c.loS : c.lo).add(...build(part, kind, v, 'lo'));
         }
       });
+      // 遠景：同一種東西不分樣式，全部用第一種的模型（那麼遠看不出差別），畫的次數少很多
+      const big = byVariant.flat().filter((o) => o && BIG(kind, o));
+      if (!big.length) continue;
+      for (const [key, part] of cellsOf(big, FAR_CHUNK)) {
+        const t = tileOf(farTiles, key, ['lo']);
+        grow(t, part, kind, 0);
+        t.lo.add(...build(part, kind, 0, 'lo', false));
+      }
     }
-    nearGrp.visible = false;
-    group.add(far, nearGrp);
-    isles.push({ x: isle.x, z: isle.z, R: isle.R, far, near: nearGrp, chunks: [...chunks.values()] });
+    // 判斷「被山擋住」用的點：每一小格（15 公尺）裡最高的那棵樹（或那塊大石頭）的頂端，再高一點點
+    const pick = (t) => {
+      const best = new Map();
+      for (const p of t.tops) {
+        const k = Math.floor(p.x / 15) * 4096 + Math.floor(p.z / 15);
+        if (!best.has(k) || best.get(k).y < p.y) best.set(k, p);
+      }
+      t.tops = [...best.values()].map((p) => ({ x: p.x, y: p.y + 1.5, z: p.z }));
+      t.cx = (t.x0 + t.x1) / 2; t.cz = (t.z0 + t.z1) / 2;
+      t.sphere = new THREE.Sphere(new THREE.Vector3(t.cx, t.y1 / 2, t.cz), Math.hypot(t.x1 - t.x0, t.z1 - t.z0, t.y1 + 30) / 2 + 12);
+    };
+    for (const c of chunks.values()) { pick(c); near.add(c.hi, c.lo, c.loS); }
+    for (const t of farTiles.values()) { pick(t); farGrp.add(t.lo); }
+    near.visible = false;
+    group.add(farGrp, near);
+    isles.push({ x: isle.x, z: isle.z, R: isle.R, far: farGrp, near, chunks: [...chunks.values()], farTiles: [...farTiles.values()] });
   });
 
   // ---- 燈塔：小小一座，立在母港旁的岸上 ----
@@ -502,25 +549,103 @@ export function makeScenery(env) {
   beam.visible = false;
   group.add(beam);
 
-  // 依鏡頭位置決定畫什麼：
-  //   已經在霧裡的島（約 800 公尺外）不畫；遠的島整座畫簡化版；
-  //   所在的島分區處理，鏡頭附近幾十公尺畫精細版，其餘畫簡化版。
-  // simple = true（畫水面倒影時）一律用簡化版
+  // ---- 被山擋住的不畫 ----
+  // 從鏡頭往每一塊裡最高的幾棵樹的樹頂看過去，沿路用地形高度檢查：每一條視線都被山（或別的島）擋住，這一塊就不畫。
+  // 只沿著視線穿過島的那幾段檢查（海面上不可能擋住），所以很便宜。
+  // 鏡頭附近的塊一律畫（它們的影子會落在看得到的地上）
+  const occl = ISLANDS.map((o) => {
+    let top = 0;
+    for (let x = -o.R - 20; x <= o.R + 20; x += 6) for (let z = -o.R - 20; z <= o.R + 20; z += 6) top = Math.max(top, heightAt(o.x + x, o.z + z));
+    return { x: o.x, z: o.z, r2: (o.R + 25) ** 2, top: top + 0.5 };
+  });
+  function blocked(cx, cy, cz, p) {
+    const dx = p.x - cx, dy = p.y - cy, dz = p.z - cz, len = Math.hypot(dx, dz);
+    if (len < 8) return false;
+    const end = 1 - 4 / len, step = 2.5 / len, A = dx * dx + dz * dz;
+    for (const o of occl) {
+      const fx = cx - o.x, fz = cz - o.z, B = 2 * (fx * dx + fz * dz), D = B * B - 4 * A * (fx * fx + fz * fz - o.r2);
+      if (D <= 0) continue;
+      const sq = Math.sqrt(D), t0 = Math.max((-B - sq) / (2 * A), 0), t1 = Math.min((-B + sq) / (2 * A), end);
+      if (t1 <= t0 || Math.min(cy + dy * t0, cy + dy * t1) > o.top) continue;
+      for (let t = t0; t <= t1; t += step) if (heightAt(cx + dx * t, cz + dz * t) > cy + dy * t + 0.6) return true;
+    }
+    return false;
+  }
+  const open = (t, c) => t.tops.some((p) => !blocked(c.x, c.y, c.z, p));
+  const KEEP = 80;   // 離鏡頭（到這一塊最近的邊）這個距離內的塊一律畫：影子範圍只有注視點附近五十幾公尺
+  const _fr = new THREE.Frustum(), _pm = new THREE.Matrix4();
+  let rr = 0, occlOn = true;
+  // 每一幀叫一次（在畫畫面之前）：
+  //   目前被判定擋住的塊，只要在視野裡，每一幀重新檢查（轉過山頭時馬上冒出來，不會慢半拍）；
+  //   看得到的塊輪流檢查，每幀十幾塊（晚一點才藏起來沒關係）
+  function cull(camera) {
+    const c = camera.position;
+    _pm.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    _fr.setFromProjectionMatrix(_pm);
+    const live = [];
+    for (const o of isles) {
+      const d = Math.hypot(c.x - o.x, c.z - o.z) - o.R;
+      const list = d < 230 ? o.chunks : o.farTiles;
+      for (const t of list) {
+        const ex = Math.max(t.x0 - c.x, 0, c.x - t.x1), ez = Math.max(t.z0 - c.z, 0, c.z - t.z1);
+        if (!occlOn || ex * ex + ez * ez < KEEP * KEEP) { t.hidden = false; continue; }
+        if (t.hidden) { if (_fr.intersectsSphere(t.sphere)) t.hidden = !open(t, c); } else live.push(t);
+      }
+    }
+    for (let k = 0, n = Math.min(14, live.length); k < n; k++) { const t = live[(rr + k) % live.length]; t.hidden = !open(t, c); }
+    rr += 14;
+  }
+
+  // 精細版不投影，影子由同一塊的簡化版代替：那一塊的簡化版放到 SHADOW_LAYER（只畫進陰影貼圖，畫面上看不到）。
+  // 影子本來就是一片色塊，看不出差別，算影子的三角形少很多
+  let proxy = true;
+  const layer = (c, shadowOnly) => {
+    if (c.lay === shadowOnly) return;
+    c.lay = shadowOnly;
+    for (const m of c.lo.children) {
+      m.layers.set(shadowOnly ? SHADOW_LAYER : 0);
+      if (m.userData.depths) m.customDepthMaterial = m.userData.depths[shadowOnly ? 1 : 0];
+    }
+  };
+
+  // 依鏡頭位置決定畫什麼（畫畫面、畫倒影之前各叫一次）：
+  //   已經在霧裡的島（約 800 公尺外）不畫；遠的島畫大樹大石的簡化版；
+  //   所在的島分區處理，鏡頭附近幾十公尺畫精細版，其餘畫簡化版；
+  //   被山擋住的塊（cull 算的）不畫。
+  // simple = true（畫水面倒影時）：每座島都只畫大樹大石的簡化版
   function update(cam, simple = false, far = 820) {
     for (const o of isles) {
       const d = Math.hypot(cam.x - o.x, cam.z - o.z) - o.R;
       const close = d < 230 && !simple;
       o.far.visible = !close && d < far;
       o.near.visible = close;
+      if (o.far.visible) { const fresh = d >= 230; for (const t of o.farTiles) t.lo.visible = !fresh || !t.hidden; }
       if (!close) continue;
       for (const c of o.chunks) {
         const dx = Math.max(c.x0 - cam.x, 0, cam.x - c.x1), dz = Math.max(c.z0 - cam.z, 0, cam.z - c.z1);
-        const fine = dx * dx + dz * dz < FINE * FINE;
-        c.hi.visible = fine;
-        c.lo.visible = !fine;
+        const fine = dx * dx + dz * dz < FINE * FINE, show = !c.hidden;
+        c.hi.visible = show && fine;
+        c.lo.visible = show && (!fine || proxy);
+        c.loS.visible = show && !fine;
+        layer(c, fine && proxy);
       }
     }
   }
+  const allChunks = () => isles.flatMap((o) => o.chunks);
+  function setProxy(on) {
+    proxy = on;
+    for (const c of allChunks()) for (const m of c.hi.children) m.castShadow = !on;   // 在 main.js 的 shade() 之後叫
+  }
+  // 測試用：各種塊目前的狀態
+  function stats() {
+    const n = { chunks: 0, chunkHidden: 0, farTiles: 0, farHidden: 0 };
+    for (const o of isles) {
+      n.chunks += o.chunks.length; n.chunkHidden += o.chunks.filter((t) => t.hidden).length;
+      n.farTiles += o.farTiles.length; n.farHidden += o.farTiles.filter((t) => t.hidden).length;
+    }
+    return n;
+  }
+  const setOccl = (on) => { occlOn = on; if (!on) for (const o of isles) for (const t of [...o.chunks, ...o.farTiles]) t.hidden = false; };
 
-  return { group, lighthouse: lh.position.clone(), lighthouseMesh: lh, beam, beamMat, rocks, obstacles, update, isles };
+  return { group, lighthouse: lh.position.clone(), lighthouseMesh: lh, beam, beamMat, rocks, obstacles, update, cull, setProxy, setOccl, stats, isles };
 }

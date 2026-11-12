@@ -490,6 +490,7 @@ function sightCut(sh) {
 // 畫影子時用的材質：位移要跟畫面上的一樣
 // 葉叢和樹冠的影子上開一些洞，陽光從洞裡漏下來，樹下就有一塊一塊會晃動的光斑。
 // 洞的位置用「垂直於陽光方向」的座標決定，同一道光線穿過的每一層葉子洞都對得上
+const PROXY_DAPPLE = 0.25;   // 簡化版代替精細版投影時，影子上的洞開多大（精細版是 0.40；見 swayDepth）
 function dapple(sh) {
   sh.vertexShader = sh.vertexShader
     .replace('#include <common>', '#include <common>\nvarying vec2 vDapple;')
@@ -501,14 +502,26 @@ function dapple(sh) {
 	dpW = modelMatrix * dpW;
 	vDapple = vec2( dot( dpW.xyz, vec3( viewMatrix[ 0 ][ 0 ], viewMatrix[ 1 ][ 0 ], viewMatrix[ 2 ][ 0 ] ) ), dot( dpW.xyz, vec3( viewMatrix[ 0 ][ 1 ], viewMatrix[ 1 ][ 1 ], viewMatrix[ 2 ][ 1 ] ) ) );`);
   sh.fragmentShader = sh.fragmentShader
-    .replace('#include <common>', '#include <common>\nvarying vec2 vDapple;\nuniform float uWindT;')
+    .replace('#include <common>', '#include <common>\nvarying vec2 vDapple;\nuniform float uWindT;\n#ifndef DAPPLE_T\n#define DAPPLE_T 0.40\n#endif')
     .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
 	vec2 dq = vDapple * 3.0;
 	float dp = sin( dq.x + 1.3 * sin( dq.y * 0.83 + uWindT * 0.55 ) ) * sin( dq.y * 1.17 + 1.3 * sin( dq.x * 0.71 - uWindT * 0.4 ) );
-	if ( dp > 0.40 ) discard;`);
+	if ( dp > DAPPLE_T ) discard;`);
 }
-export function swayDepth(mat) {
+// proxy = true：簡化版的樹冠代替精細版投影時用。簡化版的樹冠是實心的一團，洞開得跟精細版一樣多的話影子會太深太實，
+// 所以洞開大一點（DAPPLE_T 小一點），樹下才跟精細版一樣是一片濃蔭帶光斑
+export function swayDepth(mat, proxy = false) {
   const d = mat.defines || {};
+  if (proxy) {
+    if (!mat.userData.dapple) return swayDepth(mat);
+    if (!mat.userData.depthProxy) {
+      const dm = swayDepth(mat).clone();
+      dm.onBeforeCompile = swayDepth(mat).onBeforeCompile;
+      dm.defines = { ...(dm.defines || {}), DAPPLE_T: PROXY_DAPPLE.toFixed(2) };
+      mat.userData.depthProxy = dm;
+    }
+    return mat.userData.depthProxy;
+  }
   if (!mat.userData.depth) {
     const dm = sway(new THREE.MeshDepthMaterial(mat.userData.cutout ? { map: mat.map, alphaTest: 0.5 } : {}), 'LEAF_FLUTTER' in d, mat.userData.dapple ? dapple : undefined);
     if (d.SWAY_GAIN) dm.defines = { ...(dm.defines || {}), SWAY_GAIN: d.SWAY_GAIN };

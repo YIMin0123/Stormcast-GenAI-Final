@@ -14,7 +14,7 @@ import { Fishing } from './fishing.js';
 import { EmoteWheel } from './emotes.js';
 import { TOUCH, TouchUI, touchText, touchSet, canFullscreen, isFullscreen, setFullscreen } from './touch.js';
 import { REFL, addOutline, BULBS, softDisc } from './toon.js';   // 它會改掉內建材質的受光算法（改成手繪風）
-import { makeScenery } from './scenery.js';
+import { makeScenery, SHADOW_LAYER } from './scenery.js';
 import { makeGroundDetail, makeGrassGeometry, WIND, SIGHT } from './foliage.js';
 import { Spray } from './spray.js';
 import { OceanAudio } from './audio.js';
@@ -462,6 +462,9 @@ const scenery = makeScenery({
 });
 addRocks(scenery.rocks);
 shade(scenery.group);
+scenery.setProxy(!/[?&]hishadow/.test(location.search));   // 精細的樹不投影，由簡化版代替（?hishadow：照舊，比較用）
+if (/[?&]noocc/.test(location.search)) scenery.setOccl(false);   // ?noocc：不做「被山擋住不畫」，比較用
+sun.shadow.camera.layers.enable(SHADOW_LAYER);   // 陰影貼圖也畫只投影用的那一層
 scene.add(scenery.group);
 
 const harbor = makeHarbor(bedAt);
@@ -2695,6 +2698,8 @@ function drawFrame(dt) {
   WIND.amp.value = clamp(0.38 * wind + 1.5 * clamp(sea.storm, 0, 1) * (stormK(cp.x, cp.z) - 1), 0.15, 2.6);
   WIND.t.value += dt * (0.75 + 0.45 * WIND.amp.value);
   shared.uCenter.value.set(target.x, target.z);
+  camera.updateMatrixWorld();
+  scenery.cull(camera);   // 被山擋住的那幾塊樹不畫
   scenery.update(cp, false, gfx.far);   // 近的島畫精細的樹和石頭，遠的畫簡化版，霧裡的不畫（畫質「手機」霧比較濃，520 公尺外就不畫）
   // 草皮的中心放在鏡頭前方十幾公尺：畫面裡看得到的近處都有草
   camera.getWorldDirection(_gd);
