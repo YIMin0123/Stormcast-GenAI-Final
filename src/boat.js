@@ -42,6 +42,7 @@ const GALE_HEEL = 0.07;   // 每秒 40 公尺的風（颱風）橫著吹過來�
 const SPOUT_HEEL = 0.3;  // 水龍捲最強的風橫著吹過來時，船被壓歪的斜率（加上浪的搖晃就可能翻）
 
 const WHEEL_R = 0.33;
+const HELM_GAP = 0.34;   // 第三人稱時舵手站在方向盤後面多遠（瀏海離輪子剩幾公分，手才搆得到）
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const DOWN = new THREE.Vector3(0, -1, 0);
 const X_AXIS = new THREE.Vector3(1, 0, 0), Y_AXIS = new THREE.Vector3(0, 1, 0);
@@ -339,8 +340,9 @@ function buildCabinBoat(S, g, blocks) {
   pilot.position.set(sw.x - 0.04, sw.y + 0.065, sw.z);
   g.add(lever, pilot);
 
+  // 舵手：第三人稱站在方向盤正後方（setManned 會依視角挪位置），第一人稱站在舵位（眼睛 eye 的正下方）
   const helmsman = buildFigure();
-  helmsman.position.set(S.helmX, D, 0);
+  helmsman.position.set(wheelPos.x - HELM_GAP, D, 0);
   g.add(helmsman);
   return {
     wheel, wheelPos, throttle, helmsman, lantern, lever, pilot,
@@ -614,6 +616,10 @@ export class Boat {
     h.userData.fpHide.forEach((m) => { m.visible = !fp; });
     h.userData.torso.forEach((m) => { m.visible = !fp; });
     h.userData.legs.forEach((m) => { m.visible = !fp; });
+    // 有方向盤的船：第三人稱時舵手貼近方向盤、握下半圈（看起來手長正常）；
+    // 第一人稱時站回舵位、握上半圈，從眼睛往下看才看得到雙手握在輪子上（伸長的手臂在畫面外）
+    this.fpHelm = fp;
+    if (this.parts.wheel) h.position.x = fp ? this.spec.helmX : this.parts.wheelPos.x - HELM_GAP;
     if (!on) for (const k in this.keys) this.keys[k] = false;
   }
 
@@ -748,11 +754,12 @@ export class Boat {
     if (this.manned) {
       const arms = P.helmsman.userData.arms;
       if (P.wheel) {
-        // 舵手雙手握在方向盤兩側，跟著轉一小段
-        const turnA = clamp(this.rudder * 2.6, -0.8, 0.8);
+        // 舵手雙手握在方向盤兩側，跟著轉一小段。第三人稱握偏下（四點和八點鐘：方向盤在她下巴的高度，握上半圈手要伸很長）；
+        // 第一人稱握偏上（兩點和十點鐘），從眼睛看得到
+        const fp = this.fpHelm, turnA = clamp(this.rudder * 2.6, fp ? -0.8 : -0.35, fp ? 0.8 : 0.35);
         for (const arm of arms) {
-          const ang = arm.userData.side * 1.05 + turnA;
-          this._d.set(P.wheelPos.x - S.helmX - 0.03, P.wheelPos.y - S.deck + Math.cos(ang) * WHEEL_R, Math.sin(ang) * WHEEL_R).sub(arm.position);
+          const ang = arm.userData.side * (fp ? 1.05 : 2.4) + turnA;
+          this._d.set(P.wheelPos.x - P.helmsman.position.x - 0.03, P.wheelPos.y - S.deck + Math.cos(ang) * WHEEL_R, Math.sin(ang) * WHEEL_R).sub(arm.position);
           const len = this._d.length();
           arm.quaternion.setFromUnitVectors(DOWN, this._d.divideScalar(len));
           arm.userData.stretch(len / ARM_LEN);
