@@ -13,14 +13,14 @@ const LOOPS = {
   shore: ['small-waves.mp3', 0, 52.5, 2],
   gulls: ['gulls-harbor.mp3', 0, 57.5, 2],
   rain: ['rain-puddle.mp3', 0, 75, 2],
-  engine: ['engine.mp3', 0.03, 6.97, 'n'],
+  engine: ['engine.wav', 0, 600, 'n'],       // wav、ogg 的頭尾是準的，原地循環不會有接縫（mp3 頭尾會多出一小段空白）
   reel: ['reel.mp3', 0.1, 14.9, 'n'],
   // 風：平常的風聲、強風的呼嘯（音高跟著風速變）；水龍捲用同一段強風錄音放慢，從它所在的方向傳過來
-  wind: ['wind.mp3', 0.05, 600, 'n'],
-  gale: ['gale.mp3', 0.05, 600, 'n'],
-  spout: ['gale.mp3', 0.05, 600, 'n'],
+  wind: ['wind.ogg', 0, 600, 'n'],
+  gale: ['gale.ogg', 0, 600, 'n'],
+  spout: ['gale.ogg', 0, 600, 'n'],
   // 海嘯、漩渦逼近時的轟鳴：大水的錄音放慢、只留低頻
-  roar: ['roar.mp3', 0.05, 600, 'n'],
+  roar: ['roar.ogg', 0, 600, 'n'],
   // 島上的環境音：白天的鳥、夜裡的蟲、樹林裡的風
   birds: ['birds.mp3', 0, 600, 2],
   night: ['night.mp3', 0, 600, 2],
@@ -137,7 +137,7 @@ export class OceanAudio {
     this._rate('engine', o.pitch * (0.85 + 0.5 * o.throttle));
     this._vol('reel', 0.5 * o.reel, 0.06);
     this._vol('birds', 0.5 * o.birds * dry, 1.2);
-    this._vol('night', 0.45 * o.night * dry, 1.2);
+    this._vol('night', 0.3 * o.night * dry, 1.2);
     this._vol('trees', 0.5 * o.trees * dry, 0.6);
     this.engineReal = !!this.loops.engine;
     this.engineOn = o.engine;
@@ -325,11 +325,11 @@ export class OceanAudio {
     this.windHowl.gain.setTargetAtTime(L.gale ? 0 : 0.5 * wind * wind, t, 0.3);
     this.windHowlF.frequency.setTargetAtTime(380 + 420 * wind, t, 0.4);
     this._vol('wind', Math.min(0.75 * wind, 0.6) * dry, 0.4);
-    this._vol('gale', Math.min(0.85 * wind * wind, 1.1) * dry, 0.3); this._rate('gale', 0.85 + 0.3 * Math.min(wind, 1.4));
+    this._vol('gale', Math.min(1.1 * wind * wind, 1.4) * dry, 0.3); this._rate('gale', 0.85 + 0.3 * Math.min(wind, 1.4));
     this.wash.gain.setTargetAtTime((0.10 + 0.14 * wave) * synSea + 0.25 * roar * synRoar, t, k);
     this.hiss.gain.setTargetAtTime(0.012 * wave * wave * synSea + 0.10 * roar * synRoar, t, k);
     this.rumble.gain.setTargetAtTime(1.6 * roar * synRoar, t, k);
-    this._vol('roar', 2.2 * roar); this._rate('roar', 0.55);
+    this._vol('roar', 1.6 * roar); this._rate('roar', 0.55);
     this.muffle.frequency.setTargetAtTime(under ? 320 : 18000, t, 0.08);
     // 引擎：有人掌舵才有聲音（以前不管人在哪都有一點怠速聲）；有引擎的錄音就用錄音，合成的關掉
     this.engine.gain.setTargetAtTime(this.engineReal ? 0 : (this.engineOn ?? 1) * (0.035 + 0.07 * throttle), t, 0.3);
