@@ -86,14 +86,13 @@ function faceTexture() {
   const cv = document.createElement('canvas');
   cv.width = 64; cv.height = 36;
   const g = cv.getContext('2d');
-  for (const x of [13, 44]) {
-    g.fillStyle = '#3a2620';
-    g.fillRect(x + 1, 11, 5, 14); g.fillRect(x, 12, 7, 12);     // 眼睛：圓角的長方塊
-    g.fillStyle = '#4e342a'; g.fillRect(x + 1, 21, 5, 3);       // 底下淡一點點
-    g.fillStyle = '#8a5a3c'; g.fillRect(x, 6, 7, 1);            // 眉毛
+  for (const x of [11, 44]) {
+    g.fillStyle = '#33211c';
+    g.fillRect(x + 1, 8, 7, 18); g.fillRect(x, 9, 9, 16);       // 眼睛：又大又高的圓角長方塊
+    g.fillStyle = '#6a4636'; g.fillRect(x + 1, 20, 7, 5);       // 下半是淡一點的咖啡色
   }
-  g.fillStyle = '#f3a79c'; g.fillRect(6, 25, 7, 3); g.fillRect(51, 25, 7, 3);   // 腮紅
-  g.fillStyle = '#b5534a'; g.fillRect(31, 29, 2, 2);                             // 嘴
+  g.fillStyle = '#f0a093'; g.fillRect(5, 27, 7, 3); g.fillRect(52, 27, 7, 3);   // 腮紅
+  g.fillStyle = '#a84a42'; g.fillRect(31, 30, 2, 2);                             // 嘴
   faceTex = new THREE.CanvasTexture(cv);
   faceTex.magFilter = faceTex.minFilter = THREE.NearestFilter;
   faceTex.generateMipmaps = false;
@@ -102,8 +101,8 @@ function faceTexture() {
 }
 export function buildFigure() {
   const g = new THREE.Group();
-  const skin = flat(0xf6cfa8), hair = flat(0x7a4a2e), navy = flat(0x3d4290), shirt = flat(0xf6eeee);
-  const boot = flat(0x6e4028), trim = flat(0xe9e4f2), ribbon = flat(0xd2302c), bootHi = flat(0x8a563c), soleM = flat(0x482a1c);
+  const skin = flat(0xf3c9a0), hair = flat(0x65402f), navy = flat(0x34376a), shirt = flat(0xf4e9dc);
+  const boot = flat(0x6e4028), trim = flat(0xe9e4f2), ribbon = flat(0xc62f2b), bootHi = flat(0x8a563c), soleM = flat(0x482a1c);
   const face = new THREE.MeshLambertMaterial({ map: faceTexture(), alphaTest: 0.5, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
   // 一段稜柱狀的肢體：上端在關節上，往下垂
   const limb = (mat, rTop, rBot, len, x, y, z) => {
@@ -165,6 +164,7 @@ export function buildFigure() {
   // ---- 頭：很大的一顆（差不多跟身體一樣高），正面是平的。整顆頭（連頭髮和蝴蝶結）掛在脖子的關節上，可以轉頭、抬頭、低頭 ----
   const head = new THREE.Group();
   head.position.y = 0.95;
+  head.scale.setScalar(1.22);   // 頭放大到差不多佔全身的一半（身體的關節位置不能動，所以放大的是頭）
   g.add(head);
   parent = head; oy = 0.95;
   const HY = 1.2;   // 頭的中心高度
@@ -185,22 +185,21 @@ export function buildFigure() {
   }
   for (const side of [-1, 1]) {
     put(solid(at([[0.17, 0.06, side * 0.265], [-0.05, 0.06, side * 0.265], [0.17, 0.06, side * 0.37], [-0.05, 0.06, side * 0.37],
-      [0.18, -0.2, side * 0.275], [-0.04, -0.2, side * 0.295], [0.15, -0.2, side * 0.41], [-0.04, -0.22, side * 0.42], [0.08, -0.47, side * 0.37]]), hair), 0, 0, 0);   // 臉旁垂下來的一束
+      [0.18, -0.2, side * 0.275], [-0.04, -0.2, side * 0.295], [0.15, -0.2, side * 0.41], [-0.04, -0.22, side * 0.42], [0.08, -0.37, side * 0.37]]), hair), 0, 0, 0);   // 臉旁垂下來的一束
     put(solid(at([[-0.02, 0.0, side * 0.3], [-0.25, 0.0, side * 0.25], [-0.02, 0, side * 0.36], [-0.25, 0, side * 0.3],
-      [-0.06, -0.25, side * 0.34], [-0.27, -0.22, side * 0.27], [-0.1, -0.25, side * 0.45], [-0.3, -0.24, side * 0.37], [-0.2, -0.52, side * 0.44]]), hair), 0, 0, 0);   // 後面往外翹的一束
+      [-0.06, -0.25, side * 0.34], [-0.27, -0.22, side * 0.27], [-0.1, -0.25, side * 0.45], [-0.3, -0.24, side * 0.37], [-0.2, -0.41, side * 0.44]]), hair), 0, 0, 0);   // 後面往外翹的一束
   }
   put(solid(at([...ring(-0.08, -0.335, -0.1, 0.3, 0.1), [-0.33, -0.3, 0.13], [-0.33, -0.3, -0.13], [-0.3, -0.37, 0], [-0.2, -0.27, 0.2], [-0.2, -0.27, -0.2]]), hair), 0, 0, 0);   // 後腦勺
-  for (const [z0, tipY] of [[-0.2, -0.4], [-0.07, -0.46], [0.07, -0.44], [0.2, -0.4]]) {
+  for (const [z0, tipY] of [[-0.2, -0.34], [-0.07, -0.38], [0.07, -0.37], [0.2, -0.34]]) {
     put(solid(at([[-0.31, -0.2, z0 - 0.07], [-0.31, -0.2, z0 + 0.07], [-0.2, -0.2, z0 - 0.07], [-0.2, -0.2, z0 + 0.07], [-0.34, tipY, z0 * 1.15], [-0.3, tipY, z0 * 1.15]]), hair), 0, 0, 0);   // 後腦勺下緣的幾撮髮尖
   }
   // ---- 紅色大蝴蝶結：綁在後腦勺上方，兩片大翅膀往上往外張，底下垂著兩條帶子 ----
-  const bow = new THREE.Group();   // 整個蝴蝶結歪向一邊（從正面只看得到一側露出來）
-  bow.rotation.x = 0.3; bow.position.z = 0.03;
+  const bow = new THREE.Group();   // 蝴蝶結在後腦勺正中間，兩片翅膀寬到從正面也看得到
   head.add(bow); parent = bow;
   put(solid(at([[-0.3, 0.27, 0.05], [-0.3, 0.27, -0.05], [-0.3, 0.17, 0.05], [-0.3, 0.17, -0.05], [-0.37, 0.25, 0.04], [-0.37, 0.25, -0.04], [-0.37, 0.19, 0.04], [-0.37, 0.19, -0.04]]), ribbon), 0, 0, 0);
   for (const side of [-1, 1]) {
-    put(solid(at([[-0.31, 0.25, side * 0.04], [-0.31, 0.19, side * 0.04], [-0.36, 0.22, side * 0.04], [-0.27, 0.5, side * 0.36], [-0.36, 0.48, side * 0.36],
-      [-0.31, 0.1, side * 0.42], [-0.38, 0.12, side * 0.4]]), ribbon), 0, 0, 0);
+    put(solid(at([[-0.31, 0.25, side * 0.04], [-0.31, 0.19, side * 0.04], [-0.36, 0.22, side * 0.04], [-0.26, 0.47, side * 0.4], [-0.36, 0.45, side * 0.4],
+      [-0.29, 0.3, side * 0.54], [-0.37, 0.3, side * 0.52], [-0.3, 0.02, side * 0.5], [-0.38, 0.04, side * 0.48]]), ribbon), 0, 0, 0);
     put(solid(at([[-0.32, 0.19, side * 0.02], [-0.36, 0.19, side * 0.02], [-0.32, 0.19, side * 0.06], [-0.37, -0.1, side * 0.24], [-0.42, -0.08, side * 0.17], [-0.4, -0.15, side * 0.14]]), ribbon), 0, 0, 0);
   }
   parent = head;
