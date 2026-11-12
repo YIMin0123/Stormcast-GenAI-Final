@@ -84,6 +84,7 @@ export class EmoteWheel {
     svg.setAttribute('viewBox', '0 0 600 600');
     svg.style.cssText = 'width:min(600px,92vmin);height:min(600px,92vmin);overflow:visible;font-family:inherit;user-select:none';
     root.appendChild(svg);
+    this.svg = svg;
     this.items = [];
     const ring = (list, r0, r1, kind, size) => {
       const n = list.length, step = (Math.PI * 2) / n;
@@ -132,6 +133,16 @@ export class EmoteWheel {
     return h && { kind: h.kind, id: h.id };
   }
 
+  // 手指（或滑鼠）指著畫面上的這一點：選到那一格（指在輪盤外面就是沒選）
+  point(cx, cy) {
+    if (!this.isOpen) return null;
+    const r = this.svg.getBoundingClientRect(), k = 600 / (r.width || 600);
+    this.vx = (cx - (r.left + r.width / 2)) * k; this.vy = (cy - (r.top + r.height / 2)) * k;
+    if (Math.hypot(this.vx, this.vy) > R_OUT1 + 24) this.vx = this.vy = 0;
+    this._pick();
+    return this.hover;
+  }
+
   move(dx, dy) {
     if (!this.isOpen) return;
     this.vx += dx; this.vy += dy;
@@ -161,7 +172,7 @@ export class EmoteWheel {
       it.text.setAttribute('fill', on ? '#2e1e10' : '#f3ead6');
       it.text.setAttribute('font-weight', on ? 700 : 400);
     }
-    this.label.textContent = this.hover ? this.hover.name : '移動滑鼠選擇';
+    this.label.textContent = this.hover ? this.hover.name : this.hint ?? '移動滑鼠選擇';
     this.dot.setAttribute('cx', (C + this.vx).toFixed(1));
     this.dot.setAttribute('cy', (C + this.vy).toFixed(1));
   }

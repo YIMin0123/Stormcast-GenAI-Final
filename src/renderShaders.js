@@ -16,7 +16,7 @@ uniform float uSwell;        // 颱風的長浪：最高的高度（公尺），
 // 長浪在這裡的 (高度, 斜率 x, 斜率 z)，還沒乘上 uSwell。跟 weather.js 的 swellAt() 一致
 vec3 longSwell(vec2 xz) {
   vec3 o = vec3(0.0);
-${SWELL_K.map((w) => `  { vec2 dr = vec2(${w.c.toFixed(5)} * uWindDir.x - ${w.s.toFixed(5)} * uWindDir.y, ${w.s.toFixed(5)} * uWindDir.x + ${w.c.toFixed(5)} * uWindDir.y); float p = dot(xz, dr) * ${w.k.toFixed(6)} - uSwellT * ${w.w.toFixed(5)}; o += ${w.a.toFixed(3)} * vec3(sin(p), cos(p) * ${w.k.toFixed(6)} * dr); }`).join('\n')}
+${SWELL_K.map((w) => `  { vec2 dr = vec2(${w.c.toFixed(5)} * uWindDir.x - ${w.s.toFixed(5)} * uWindDir.y, ${w.s.toFixed(5)} * uWindDir.x + ${w.c.toFixed(5)} * uWindDir.y); float p = dot(xz, dr) * ${w.k.toFixed(6)} - uSwellT * ${w.w.toFixed(8)}; o += ${w.a.toFixed(3)} * vec3(sin(p), cos(p) * ${w.k.toFixed(6)} * dr); }`).join('\n')}
   return o;
 }
 `;
@@ -538,12 +538,18 @@ float sunShadow(vec3 wp, vec3 n) {
   // 繞著一圈取幾個點平均（每個位置轉一個不同的角度）：範圍只有一格左右，蓋掉貼圖的鋸齒就好，影子的邊緣是利落的
   float ang = fract(sin(dot(wp.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
   float sh = 0.0;
-  for (int i = 0; i < SH_TAPS; i++) {
-    float r = sqrt((float(i) + 0.5) / float(SH_TAPS)) * 1.1 * uShadowTexel;
+  // 畫質「手機」（LITE）：取樣點減半
+#ifdef LITE
+  const int SH_N = SH_TAPS / 2;
+#else
+  const int SH_N = SH_TAPS;
+#endif
+  for (int i = 0; i < SH_N; i++) {
+    float r = sqrt((float(i) + 0.5) / float(SH_N)) * 1.1 * uShadowTexel;
     float t = float(i) * 2.39996323 + ang;
     sh += texture(uShadowMap, vec3(p.xy + r * vec2(cos(t), sin(t)), p.z));
   }
-  sh = smoothstep(0.22, 0.78, sh / float(SH_TAPS));
+  sh = smoothstep(0.22, 0.78, sh / float(SH_N));
   vec2 e = min(p.xy, 1.0 - p.xy);
   return mix(1.0, sh, smoothstep(0.0, 0.07, min(e.x, e.y)));   // 陰影範圍的邊緣漸漸淡出
 }
@@ -1351,6 +1357,7 @@ void main() {
   vDir = position;
   vec4 mv = viewMatrix * vec4(position, 0.0);
   gl_Position = (projectionMatrix * vec4(mv.xyz, 1.0)).xyww;
+  gl_Position.z *= 0.999999;   // 貼著最遠的那一層，但不能剛好等於 1（會被清空時的深度擋掉）
 }
 `;
 

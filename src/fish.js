@@ -2,76 +2,12 @@
 // 釣上來拿在手上，可以放下、再拿起；放在甲板或碼頭上會跳，船歪了會滑出船外，船猛地一晃會被拋起來（可能飛出船外）。浪不會把魚捲走。
 import * as THREE from 'three';
 
-// kg：重量範圍；price：每公斤價錢；strength：上鉤後掙扎的力道；h / w：身高與厚度（相對於身長）；lenK：身長係數
-export const SPECIES = {
-  sardine: { name: '沙丁魚', kg: [0.15, 0.4], price: 30, strength: 0.3, color: 0x4f7fb0, h: 0.22, w: 0.11 },
-  mackerel: { name: '鯖魚', kg: [0.4, 1.2], price: 30, strength: 0.5, color: 0x1f6f78, h: 0.22, w: 0.12 },
-  bream: { name: '黑鯛', kg: [0.6, 1.5], price: 40, strength: 0.6, color: 0x4a4f58, h: 0.42, w: 0.12 },
-  flounder: { name: '比目魚', kg: [1.0, 2.5], price: 45, strength: 0.6, color: 0x8a6a3c, h: 0.55, w: 0.06 },
-  grouper: { name: '石斑', kg: [1.5, 4.0], price: 50, strength: 0.9, color: 0x9a5a2e, h: 0.36, w: 0.17 },
-  eel: { name: '海鰻', kg: [1.3, 3.2], price: 45, strength: 0.8, color: 0x5c5a2a, h: 0.09, w: 0.07, lenK: 0.78 },
-  mullet: { name: '烏魚', kg: [1.0, 2.6], price: 35, strength: 0.7, color: 0x7d8790, h: 0.24, w: 0.14 },
-  snapper: { name: '紅鯛', kg: [1.1, 2.8], price: 55, strength: 0.8, color: 0xd2493a, h: 0.40, w: 0.13 },
-  bonito: { name: '鰹魚', kg: [2.0, 5.0], price: 38, strength: 1.0, color: 0x2a4f8f, h: 0.28, w: 0.17 },
-  tuna: { name: '鮪魚', kg: [8, 25], price: 18, strength: 1.2, color: 0x1c2f5e, h: 0.30, w: 0.20 },
-  // 只在晚上出現的魚
-  squid: { name: '小卷', kg: [0.1, 0.4], price: 75, strength: 0.3, color: 0xd99a94, h: 0.26, w: 0.2 },
-  hairtail: { name: '白帶魚', kg: [0.5, 1.8], price: 62, strength: 0.7, color: 0xc4ccd6, h: 0.07, w: 0.03, lenK: 0.95 },
-  swordfish: { name: '旗魚', kg: [15, 40], price: 22, strength: 1.12, color: 0x27386e, h: 0.22, w: 0.15, lenK: 0.5 },
-};
-
-// 每座島附近的特產
-export const SPECIALTY = { home: 'bream', west: 'flounder', twin: 'grouper', rocks: 'eel', sand: 'mullet', east: 'snapper' };
-
-// 依水深、最近的島、離岸多遠決定釣到什麼：岸邊是小魚，島的周圍有特產，離陸地越遠魚越大越貴
-// off：離最近的陸地幾公尺。四個海域——淺灘、近海（一百多公尺內）、離岸（兩百多公尺）、外海、遠洋（四百公尺以上）；
-// 海域的交界不是一刀切，前後幾十公尺兩邊的魚都釣得到
-// 晚上多了夜裡才出來的魚：岸邊的小卷、島周圍的白帶魚、外海的旗魚
-export function pickSpecies(depth, islandId, off, night = false) {
-  const local = SPECIALTY[islandId] ?? 'mackerel';
-  const d = off + (Math.random() - 0.5) * 70;
-  const table = night
-    ? (depth < 7 ? [['squid', 55], ['sardine', 30], [local, 15]]
-      : d < 120 ? [['hairtail', 40], [local, 30], ['mackerel', 20], ['squid', 10]]
-        : d < 250 ? [['hairtail', 35], ['mackerel', 30], ['bonito', 25], ['swordfish', 10]]
-          : d < 400 ? [['bonito', 35], ['swordfish', 30], ['tuna', 20], ['hairtail', 15]]
-            : [['swordfish', 45], ['tuna', 35], ['bonito', 20]])
-    : depth < 7 ? [['sardine', 70], [local, 30]]
-      : d < 120 ? [[local, 45], ['mackerel', 40], ['sardine', 15]]
-        : d < 250 ? [['mackerel', 50], ['bonito', 35], [local, 15]]
-          : d < 400 ? [['bonito', 45], ['tuna', 25], ['mackerel', 30]]
-            : [['tuna', 50], ['bonito', 40], ['mackerel', 10]];
-  let r = Math.random() * table.reduce((s, t) => s + t[1], 0);
-  for (const [id, w] of table) { r -= w; if (r <= 0) return id; }
-  return table[0][0];
-}
-
-const typicalLength = (id, kg) => (SPECIES[id].lenK ?? 0.42) * Math.cbrt(kg);
-
-// 擲出一條魚的重量與身長：小的多、大的少；同樣重量的魚有的修長、有的短胖
-// big：0–1，離岸越遠、浪越大的日子，魚的個頭越大（大的變多）；
-// giant：0–1，遠洋才有的超大個體——重量的上限最多再高六成（比圖鑑上最大的還大）
-export function rollFish(id, big = 0, giant = 0) {
-  const [a, b] = SPECIES[id].kg, r = Math.random();
-  const top = b * (1 + 0.6 * giant);
-  const kg = +(a + (top - a) * Math.pow(r, 2 - 1.2 * big)).toFixed(2);
-  const len = +(typicalLength(id, kg) * (0.92 + Math.random() * 0.16)).toFixed(2);
-  return { kg, len };
-}
-
-// 價錢看重量和身長：同一種魚，越重單價越高（最小的打八折、最大的一點四倍），比同重量的魚修長再加價
-export function fishValue(id, kg, len) {
-  const sp = SPECIES[id], [a, b] = sp.kg;
-  const q = Math.min(1, Math.max(0, (kg - a) / (b - a)));
-  const shape = Math.pow(len / typicalLength(id, kg), 1.5);
-  return Math.max(1, Math.round(sp.price * kg * (0.8 + 0.6 * q) * shape));
-}
-
-// 畫面上顯示用：「鯖魚　38 公分　0.82 公斤」
-export const fishLabel = (it) => `${it.sp.name}　${Math.round(it.len * 100)} 公分　${it.kg.toFixed(2)} 公斤`;
+import { SPECIES, typicalLength, fishValue } from './fishdata.js';
+// 魚種資料、「釣到什麼、多大、值多少」的規則在 fishdata.js（伺服器也用同一份）
+export { SPECIES, SPECIALTY, pickSpecies, rollFish, fishValue, fishLabel } from './fishdata.js';
 
 // 魚的模型：+X 是頭，Y 是背。背上是魚種的顏色、肚子是白的
-function makeFishMesh(sp, len) {
+export function makeFishMesh(sp, len) {
   const g = new THREE.Group();
   const geo = new THREE.SphereGeometry(0.5, 12, 8);
   const pos = geo.attributes.position, col = new Float32Array(pos.count * 3);
@@ -129,6 +65,7 @@ export function makeCanMesh() {
 //   waveAt(x, z)：該處的浪高
 //   splash(x, y, z)：濺水花；toast(text)：畫面提示
 //   basket：{ x, z, y }　商店的籃子
+//   onLost(uids)：這幾條魚沒了（掉回海裡、跟著船沉了），多人模式要告訴伺服器
 export class FishWorld {
   constructor(env) {
     this.env = env;
@@ -137,11 +74,11 @@ export class FishWorld {
     this.held = null;   // 拿在手上的那一條
   }
 
-  // 剛釣上來：直接拿在手上
-  spawnHeld(id, kg, len = typicalLength(id, kg)) {
+  // 剛釣上來：直接拿在手上。uid：伺服器給這條魚的編號（賣的時候靠它認）
+  spawnHeld(id, kg, len = typicalLength(id, kg), uid = 0, value = fishValue(id, kg)) {
     const sp = SPECIES[id];
     const it = {
-      id, sp, kg, value: fishValue(id, kg, len), len, thick: len * sp.w,
+      uid, id, sp, kg, value, len, thick: len * sp.w,
       mesh: makeFishMesh(sp, len), state: 'held', boat: null,
       x: 0, z: 0, y: 0, lx: 0, lz: 0, yaw: 0, vx: 0, vz: 0,
       lively: 80,                 // 還會活蹦亂跳多久（秒）
@@ -164,10 +101,10 @@ export class FishWorld {
   }
 
   // 讀檔用：直接把一條魚放進船的魚箱、把一桶油放在甲板上
-  stowFish(boat, id, kg, len) {
+  stowFish(boat, id, kg, len, uid = 0, value = undefined) {
     const keep = this.held;
     this.held = null;
-    this.spawnHeld(id, kg, len).lively = 0;
+    this.spawnHeld(id, kg, len, uid, value).lively = 0;
     this.toBox(boat);
     this.held = keep;
     this.env.player.carry = !!keep;
@@ -181,6 +118,15 @@ export class FishWorld {
     this.env.player.carry = !!keep;
   }
 
+  // 全部清掉（進到一間新的房間時）：地上、甲板上、魚箱裡、籃子裡、手上的都不留
+  clearAll() {
+    for (const it of [...this.items, ...this.basket]) it.mesh.removeFromParent();
+    for (const b of this.env.boats) { for (const it of b.boxFish) it.mesh.removeFromParent(); b.boxFish.length = 0; }
+    this.items.length = 0;
+    this.basket.length = 0;
+    this.discardHeld();
+  }
+
   // 手上的東西用掉了（油倒完了）
   discardHeld() {
     const it = this.held;
@@ -192,13 +138,32 @@ export class FishWorld {
 
   // 船沉了：甲板上和魚箱裡的東西都沒了；人也在船上的話，手上的也沒了
   wreck(boat, aboard) {
+    const gone = [];
     for (const it of this.items.filter((o) => o.boat === boat)) {
       it.mesh.removeFromParent();
       this.items.splice(this.items.indexOf(it), 1);
+      gone.push(it);
     }
-    for (const it of boat.boxFish) it.mesh.removeFromParent();
+    for (const it of boat.boxFish) { it.mesh.removeFromParent(); gone.push(it); }
     boat.boxFish.length = 0;
-    if (aboard) this.discardHeld();
+    if (aboard && this.held) { gone.push(this.held); this.discardHeld(); }
+    this._gone(gone);
+  }
+
+  _gone(list) {
+    const uids = list.filter((it) => it.uid).map((it) => it.uid);
+    if (uids.length && this.env.onLost) this.env.onLost(uids);
+  }
+
+  // 把一條魚放在船的甲板上（斷線重連時把魚還回來用）
+  stowDeck(boat, lx, lz, id, kg, len, uid, value) {
+    const keep = this.held;
+    this.held = null;
+    const it = this.spawnHeld(id, kg, len, uid, value);
+    it.lively = 0;
+    this._toBoat(it, boat, lx, lz);
+    this.held = keep;
+    this.env.player.carry = !!keep;
   }
 
   _hold(it) {
@@ -239,6 +204,7 @@ export class FishWorld {
   // 某個位置能不能放魚：回傳 { boat, lx, lz } / { x, z } / null（牆）/ 'water'
   _spot(x, z) {
     for (const b of this.env.boats) {
+      if (b.sinking) continue;
       const l = b.toLocal(x, z);
       if (b.deckContains(l.x, l.z)) return b.blockedLocal(l.x, l.z) ? null : { boat: b, lx: l.x, lz: l.z };
     }
@@ -321,11 +287,15 @@ export class FishWorld {
 
   get basketTotal() { return this.basket.reduce((s, it) => s + it.value, 0); }
 
-  // 賣掉籃子裡所有的魚，回傳金額
-  sell() {
-    const total = this.basketTotal;
-    for (const it of this.basket) it.mesh.removeFromParent();
-    this.basket.length = 0;
+  // 賣掉籃子裡的魚（uids：伺服器說賣掉了哪幾條；沒給就是全部），回傳金額
+  sell(uids = null) {
+    let total = 0;
+    this.basket = this.basket.filter((it) => {
+      if (uids && !uids.includes(it.uid)) return true;
+      total += it.value;
+      it.mesh.removeFromParent();
+      return false;
+    });
     return total;
   }
 
@@ -336,6 +306,7 @@ export class FishWorld {
     const i = this.items.indexOf(it);
     if (i >= 0) this.items.splice(i, 1);
     this.env.toast(`${it.sp.name}${text}`);
+    this._gone([it]);
   }
 
   // 側躺在甲板或地上；hop = 跳起來的高度
@@ -355,6 +326,7 @@ export class FishWorld {
     }
 
     for (const it of [...this.items]) {
+      if (it.boat && it.boat.stored) continue;   // 收在倉庫裡的船：上面的東西原封不動
       it.t += dt; it.lively -= dt;
       const boat = it.boat, onBoat = it.state === 'boat';
 

@@ -15,8 +15,8 @@ const HOPS = [0.5, 1.0, 1.5];     // 碼頭與船之間的空隙，一步能跨�
 const SUBMERGE = 0.95;             // 浮在水裡時，腳在水面下多深（只露出頭和肩膀）
 
 export class Player {
-  constructor(x, z, yaw) {
-    this.mesh = buildFigure();
+  constructor(x, z, yaw, look) {
+    this.mesh = buildFigure(look);
     this.x = x; this.z = z; this.y = 0;   // 世界座標
     this.yaw = yaw;                        // 面向：(cos yaw, sin yaw)
     this.boat = null;                      // 腳下踩的船；不在船上時為 null
@@ -27,6 +27,7 @@ export class Player {
     this.pos = new THREE.Vector3();        // 畫面上的位置（鏡頭跟這個）
     this.phase = 0;
     this.moving = false;
+    this.run = false;
     this.carry = false;                    // 雙手捧著東西
     this.rod = false;                      // 右手拿著釣竿
     this.onWater = false;                  // 腳下是水（踩不到底）
@@ -219,7 +220,22 @@ export class Player {
       if (this.h <= 0) { this.h = 0; this.vy = 0; }
     }
     this.y = this.base + this.h;
+    this.run = run;
+    this.animate(dt);
+  }
 
+  // 別人的人偶（多人）：沒有物理，位置和狀態都是網路傳來的，填好之後呼叫這個擺動作
+  // st：{ moving, run, swim, carry, rod, seated, h }
+  puppet(dt, st) {
+    this.moving = st.moving; this.run = st.run; this.swim = st.swim; this.carry = st.carry; this.rod = st.rod; this.h = st.h;
+    this.seat = st.seated ? (this.seat || {}) : null;
+    if (this.moving) this.phase += dt * (this.swim ? 6 : this.run ? 13 : 8.5);
+    this.animate(dt);
+  }
+
+  // 依照目前的狀態（moving、run、h、swim、carry、rod、seat、act、phase…）擺出動作、放到畫面上的位置
+  animate(dt) {
+    const run = this.run, swim = this.swim, seat = this.seat;
     // ---- 動作 ----
     // 走路：手腳大幅擺動、身體一上一下、左右微晃；跑步擺得更大、身體往前傾；
     // 跳起來：雙手往兩旁張開、腿前後分開；游泳：身體往前趴、雙手輪流划水；

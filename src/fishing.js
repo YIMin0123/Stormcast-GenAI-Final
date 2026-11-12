@@ -22,10 +22,12 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 //   broken()：釣竿是不是斷的（斷了就不能釣）；onSnap(fish)：爆桿了
 //   sound(name)：播一個音效（拋竿、落水、咬鉤、斷竿……），沒有就不播
 //   biteK()：等魚咬的時間倍率（下雨時魚咬得比較快）
+//   net：多人模式下跟伺服器講話用的 { cast(x, z), hook(), miss(), land(), lose(why) }。
+//        有它的時候，魚什麼時候咬、是哪條魚、算不算釣起來都由伺服器決定（serverBite / serverFight / serverNo），這裡只管手感和畫面
 export class Fishing {
   constructor(env) {
     this.env = env;
-    this.state = 'idle';     // idle | charge | fly | wait | bite | fight | snap（竿子剛斷，愣在那裡的一兩秒）
+    this.state = 'idle';     // idle | charge | fly | wait | bite | hooking（按了，等伺服器說是哪條魚）| fight | snap（竿子剛斷，愣在那裡的一兩秒）
     this.reel = false;       // 收線鍵有沒有按著（每幀由外面設定）
     this.power = 0;          // 拋竿力道 0–1
     this.force = 0;          // 收線時玩家的力道 0–1
@@ -76,7 +78,24 @@ export class Fishing {
       if (this.env.broken && this.env.broken()) { this.env.toast('釣竿斷了，要拿回商店的攤位修理'); return; }
       this.state = 'charge'; this.power = 0; this.env.player.yaw = this.env.viewYaw(); // 身體轉向要拋的方向
     } else if (this.state === 'wait') this.cancel();           // 沒魚咬：把線收回來
-    else if (this.state === 'bite') this._hook();
+    else if (this.state === 'bite') {
+      if (this.env.net) { this.state = 'hooking'; this.t = 0; this.env.net.hook(); } else this._hook(this.env.pick(this.land.x, this.land.z));
+    }
+  }
+
+  // ---- 伺服器說的 ----
+  serverBite() {
+    if (this.state !== 'wait') return;
+    this.state = 'bite'; this.biteWin = 1.3;
+    this.env.splash(this.bob.position.x, 0.1, this.bob.position.z);
+    this._sound('bite');
+  }
+  serverFight(fish) { if (this.state === 'hooking') this._hook(fish); }
+  // 伺服器不認（拋到釣不到的地方、按太慢）
+  serverNo(msg) {
+    if (this.state === 'idle' || this.state === 'fight' || this.state === 'snap') return;
+    this.env.toast(msg || (this.state === 'hooking' ? '魚跑了' : '這裡釣不到魚'));
+    this.cancel(null);
   }
 
   // 放開 F
@@ -91,14 +110,18 @@ export class Fishing {
     this._sound('cast');
   }
 
-  cancel() { this.state = 'idle'; this.rodTop.rotation.z = 0; }
+  // why：告訴伺服器為什麼不釣了（null = 不用講）
+  cancel(why = 'cancel') {
+    if (why && this.env.net && this.state !== 'idle' && this.state !== 'charge' && this.state !== 'fly') this.env.net.lose(why);
+    this.state = 'idle'; this.rodTop.rotation.z = 0;
+  }
 
   _sound(name, vol) { if (this.env.sound) this.env.sound(name, vol); }
 
   _biteTime() { return rand(2.5, 9) * Math.pow(0.82, this.env.rodLv()) * (this.env.biteK ? this.env.biteK() : 1); }
 
-  _hook() {
-    const f = this.fish = this.env.pick(this.land.x, this.land.z);
+  _hook(fish) {
+    const f = this.fish = fish;
     const p = this.env.player;
     this.state = 'fight';
     this.dist0 = this.dist = Math.max(4, Math.hypot(this.land.x - p.x, this.land.z - p.z));
@@ -159,7 +182,8 @@ export class Fishing {
           if (!env.isWater(this.land.x, this.land.z)) { env.toast('沒拋進水裡'); this.cancel(); break; }
           env.splash(this.land.x, 0.1, this.land.z);
           this._sound('plop');
-          this.state = 'wait'; this.biteT = this._biteTime();
+          this.state = 'wait';
+          if (env.net) { this.biteT = Infinity; env.net.cast(this.land.x, this.land.z); } else this.biteT = this._biteTime();
         }
         break;
       }
@@ -167,13 +191,22 @@ export class Fishing {
       case 'wait':
         b.set(this.land.x, env.surfaceY(this.land.x, this.land.z) + 0.03, this.land.z);
         if (Math.hypot(b.x - p.x, b.z - p.z) > 60) { this.cancel(); break; }
-        if ((this.biteT -= dt) <= 0) { this.state = 'bite'; this.biteWin = 1.3; env.splash(b.x, 0.1, b.z); this._sound('bite'); }
+        if (!env.net && (this.biteT -= dt) <= 0) { this.state = 'bite'; this.biteWin = 1.3; env.splash(b.x, 0.1, b.z); this._sound('bite'); }
         break;
 
       case 'bite':
         b.set(this.land.x, env.surfaceY(this.land.x, this.land.z) - 0.1 + Math.sin(this.t * 40) * 0.03, this.land.z);
         angle = 0.85; sag = 0.2;
-        if ((this.biteWin -= dt) <= 0) { env.toast('魚跑了'); this.state = 'wait'; this.biteT = this._biteTime(); }
+        if ((this.biteWin -= dt) <= 0) {
+          env.toast('魚跑了'); this.state = 'wait';
+          if (env.net) { this.biteT = Infinity; env.net.miss(); } else this.biteT = this._biteTime();
+        }
+        break;
+
+      case 'hooking':   // 按了，等伺服器回話（通常一眨眼）；等太久就當作跑了
+        b.set(this.land.x, env.surfaceY(this.land.x, this.land.z) - 0.1 + Math.sin(this.t * 40) * 0.03, this.land.z);
+        angle = 0.6; sag = 0.2;
+        if (this.t > 4) { env.toast('魚跑了'); this.cancel(); }
         break;
 
       case 'fight': {
@@ -199,6 +232,7 @@ export class Fishing {
         if (over > 0 && this.risk > 0 && this.grace <= 0) this.strain += dt * this.risk * (0.5 + 2.5 * over);
         else this.strain = Math.max(0, this.strain - dt * 0.4);
         if (this.strain >= 1) {
+          if (env.net) env.net.lose('snap');
           this.state = 'snap'; this.t = 0; this.strain = 0;
           env.splash(b.x, 0.2, b.z);
           this._sound('snap');
@@ -217,11 +251,11 @@ export class Fishing {
         if (!this.inZone && Math.random() < dt * 6) env.splash(x, 0.1, z);
         angle = 0.25 + 0.5 * (1 - this.force) - 0.12 * this.strain * Math.sin(this.t * 55); sag = 0.5 * (1 - this.force);   // 快斷的時候竿子抖
 
-        if (this.progress <= 0) { env.toast('魚掙脫跑掉了'); this.cancel(); } else if (this.progress >= 1) {
+        if (this.progress <= 0) { env.toast('魚掙脫跑掉了'); this.cancel('escape'); } else if (this.progress >= 1) {
           env.splash(b.x, 0.2, b.z);
-          this.cancel();
+          this.cancel(null);
           this._sound('land');
-          env.onCatch(f);
+          if (env.net) env.net.land(); else env.onCatch(f);   // 多人：伺服器認了才真的拿到魚
         }
         break;
       }
@@ -230,7 +264,7 @@ export class Fishing {
         // 竿子斷了：前面那一截折下來晃兩下，人愣一會兒才把竿子收起來
         angle = 0.55;
         this.rodTop.rotation.z = -2.2 + 0.5 * Math.exp(-this.t * 3) * Math.cos(this.t * 14);
-        if (this.t > 1.6) this.cancel();
+        if (this.t > 1.6) this.cancel(null);
         break;
     }
     if (this.state === 'snap') {

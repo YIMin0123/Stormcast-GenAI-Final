@@ -1,0 +1,23 @@
+# 放在伺服器的 /etc/systemd/system/stormcast.service：開機自動啟動、當掉自動重開。
+[Unit]
+Description=Stormcast multiplayer server
+After=network.target
+
+[Service]
+Type=simple
+User=stormcast
+WorkingDirectory=/opt/stormcast/server
+ExecStart=/usr/bin/node index.js
+Restart=always
+RestartSec=3
+Environment=PORT=8787
+Environment=HOST=127.0.0.1
+# 只收從這些網站連進來的玩家（用逗號隔開）
+Environment=ORIGINS=https://yimin0123.github.io
+# 今日紀錄存在這裡
+Environment=DATA_DIR=/var/lib/stormcast
+# 跟瓦爾海姆共用一台：記憶體給個上限，出事也不會拖垮整台
+MemoryMax=400M
+
+[Install]
+WantedBy=multi-user.target

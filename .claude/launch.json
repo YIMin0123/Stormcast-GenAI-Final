@@ -12,6 +12,12 @@
       "runtimeExecutable": "npx",
       "runtimeArgs": ["vite", "--port", "5174"],
       "port": 5174
+    },
+    {
+      "name": "server",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server/dev.js"],
+      "port": 8787
     }
   ]
 }

@@ -2,7 +2,10 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#0b1622" />
   <title>Stormcast</title>
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1622; color: #f3ead6;
@@ -37,8 +40,18 @@
     select { padding: 6px 4px; border-radius: 6px; border: 1px solid rgba(240, 214, 160, 0.3);
       background: #3a2817; color: #fff; font: inherit; }
     /* 開關：亮起來是開 */
-    #sound { min-width: 52px; border-radius: 999px; padding: 4px 12px; }
-    #sound.on { background: #e2b21c; border-color: #e2b21c; color: #2e1e10; font-weight: 600; }
+    #sound, .sw { min-width: 52px; border-radius: 999px; padding: 4px 12px; }
+    #sound.on, .sw.on { background: #e2b21c; border-color: #e2b21c; color: #2e1e10; font-weight: 600; }
+    /* 幾選一：亮起來的那格是現在選的 */
+    .seg { display: flex; }
+    .seg button { padding: 4px 13px; border-radius: 0; margin-left: -1px; }
+    .seg button:first-child { border-radius: 999px 0 0 999px; margin-left: 0; }
+    .seg button:last-child { border-radius: 0 999px 999px 0; }
+    .seg button.on { background: #e2b21c; border-color: #e2b21c; color: #2e1e10; font-weight: 600; }
+    /* 小圖示（見 src/icons.js） */
+    .ic { width: 1.3em; height: 1.3em; vertical-align: -0.28em; }
+    i[data-ic], i.key { font-style: normal; }
+    i.key { margin: 0 3px; color: #ffe9a8; }
     #reset { width: 100%; color: #ffb9a6; border-color: rgba(255, 150, 120, 0.35); }
     /* 操作說明：按鍵一欄、作用一欄 */
     #keys > summary { cursor: pointer; font-size: 11px; font-weight: 600; letter-spacing: 2px; color: #c9a86a; }
@@ -56,7 +69,8 @@
     #aim::after { content: ''; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px;
       border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45); }
     #hud { top: 12px; right: 12px; padding: 8px 14px; font-size: 14px; font-variant-numeric: tabular-nums; }
-    #hud b { margin-left: 10px; color: #fff; }
+    #hud b { margin-left: 5px; color: #fff; }
+    #hud i[data-ic] { color: #e8d4a4; }
     #hSpeed, #hShip { display: none; margin-left: 18px; }
     #hud b.low { color: #ff8a70; }
     #hClock { margin-right: 18px; color: #dccba6; }
@@ -87,6 +101,111 @@
     #map { left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 10px; display: none; }
     #mapCv { display: block; width: min(560px, 74vh); height: min(560px, 74vh); border-radius: 6px; }
     #mapNote { margin-top: 8px; text-align: center; font-size: 12px; color: #dccba6; }
+    /* 進遊戲前：填名字、挑房間。背景是半透明的，看得到後面的港口 */
+    #menu, #net { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+      background: rgba(8, 18, 30, 0.42); z-index: 40; }
+    #menu .card, #net .card { position: static; padding: 26px 30px 22px; width: min(380px, calc(100vw - 32px)); box-sizing: border-box; text-align: center; user-select: auto; }
+    #menu h1 { margin: 0 0 4px; font-size: 32px; letter-spacing: 3px; color: #ffe9a8; }
+    #menu h2 { margin: 0 0 4px; font-size: 20px; letter-spacing: 2px; color: #ffe9a8; }
+    #menu p { margin: 0 0 16px; color: #dccba6; font-size: 13px; }
+    /* 選角色：會轉的 3D 預覽＋兩顆切換鈕 */
+    #lookView { display: block; width: 100%; height: 210px; margin: -4px 0 6px; }
+    #lookPick { justify-content: center; margin-bottom: 14px; }
+    #lookPick button { padding: 6px 18px; font-size: 15px; }
+    #nameInput { width: 100%; box-sizing: border-box; padding: 9px 12px; border-radius: 6px; font: inherit; font-size: 16px;
+      border: 1px solid rgba(240, 214, 160, 0.4); background: rgba(0, 0, 0, 0.3); color: #fff; text-align: center; }
+    #nameGo { width: 100%; margin-top: 10px; padding: 9px; font-size: 15px; font-weight: 600;
+      background: #e2b21c; border-color: #e2b21c; color: #2e1e10; }
+    #nameGo:disabled { opacity: 0.6; cursor: default; }
+    #nameMsg, #lobbyMsg { min-height: 18px; margin-top: 10px; font-size: 13px; color: #ffb9a6; }
+    #roomList { display: flex; flex-direction: column; gap: 7px; max-height: min(46vh, 380px); overflow-y: auto; scrollbar-width: thin; }
+    button.room { display: flex; align-items: baseline; gap: 12px; padding: 10px 14px; font-size: 15px; text-align: left; }
+    button.room b { font-size: 17px; color: #ffe9a8; }
+    button.room .w { color: #dccba6; font-size: 13px; }
+    button.room .n { margin-left: auto; font-variant-numeric: tabular-nums; }
+    button.room:disabled { opacity: 0.4; cursor: default; background: rgba(255,255,255,0.04); }
+    #lobbyBack { margin-top: 12px; padding: 4px 10px; font-size: 12px; color: #dccba6; background: none; border-color: transparent; text-decoration: underline; }
+    #net { z-index: 50; }
+    #netMsg { margin: 0; color: #ffe9a8; font-size: 15px; line-height: 1.7; }
+    #netRetry { display: none; margin-top: 14px; }
+    /* 聊天室：左下角。平常只有最近幾則，按 Enter 打開輸入框 */
+    #chat { position: fixed; left: 12px; bottom: 12px; width: min(380px, calc(100vw - 24px)); font-size: 13px; z-index: 20; pointer-events: none; }
+    #chatLog { max-height: 170px; overflow: hidden; display: flex; flex-direction: column; gap: 3px; }
+    #chat.open #chatLog { max-height: 260px; overflow-y: auto; scrollbar-width: thin; pointer-events: auto;
+      background: rgba(46, 30, 16, 0.55); border-radius: 8px; padding: 6px; }
+    #chat .msg { align-self: flex-start; max-width: 100%; box-sizing: border-box; padding: 3px 9px; border-radius: 7px; background: rgba(46, 30, 16, 0.72);
+      color: #f3ead6; line-height: 1.45; word-break: break-word; transition: opacity 0.6s; }
+    #chat .msg b { color: #ffe9a8; font-weight: 600; }
+    #chat .msg.mine b { color: #9fe0b0; }
+    #chat .msg.sys { color: #bcd7f0; }
+    #chat .msg.sys.join { color: #b9c7b0; }
+    #chat .msg.sys.merge { color: #ffd28a; }
+    #chat .msg.sys.record { color: #ffe066; font-weight: 600; }
+    #chat .msg.sys.warn { color: #ffb9a6; }
+    #chat .msg.old { opacity: 0; }
+    #chat.open .msg.old { opacity: 1; }
+    #chatBox { display: none; margin-top: 6px; pointer-events: auto; }
+    #chat.open #chatBox { display: block; }
+    #chatPresets { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+    #chatPresets button { padding: 3px 9px; font-size: 12px; background: rgba(46, 30, 16, 0.85); }
+    #chatInput { width: 100%; box-sizing: border-box; padding: 7px 10px; border-radius: 6px; font: inherit;
+      border: 1px solid rgba(240, 214, 160, 0.4); background: rgba(20, 13, 7, 0.88); color: #fff; }
+    #chatHint { margin-top: 5px; font-size: 11px; color: rgba(243, 234, 214, 0.55); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); }
+    #chat.open #chatHint { display: none; }
+    #hRoom { margin-right: 18px; color: #ffe9a8; }
+    /* ---- 手機觸控（body 上有 touch 這個 class 才生效；只支援橫放） ---- */
+    #touch { display: none; position: fixed; inset: 0; z-index: 15; pointer-events: none; }
+    #touch button { pointer-events: auto; touch-action: none; }
+    .tBtn { position: absolute; width: 66px; height: 66px; padding: 0; border-radius: 50%; font-size: 15px; font-weight: 600; color: #f3ead6;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(46, 30, 16, 0.55); border: 2px solid rgba(240, 214, 160, 0.45); }
+    .tBtn.on { background: rgba(226, 178, 28, 0.8); color: #2e1e10; }
+    #tAct { right: calc(18px + env(safe-area-inset-right)); bottom: 100px; }
+    #tAct.hit { border-color: #ffd24a; box-shadow: 0 0 0 4px rgba(255, 210, 74, 0.35); }
+    #tFish { right: calc(98px + env(safe-area-inset-right)); bottom: 30px; width: 76px; height: 76px; }
+    #tJump { right: calc(18px + env(safe-area-inset-right)); bottom: 20px; }
+    #tBar { position: absolute; top: 48px; right: calc(12px + env(safe-area-inset-right)); display: flex; gap: 6px; }
+    #tBar button { padding: 6px 9px; line-height: 0; background: rgba(46, 30, 16, 0.72); }
+    #tBar .ic { width: 22px; height: 22px; }
+    .tBtn .ic { width: 32px; height: 32px; }
+    #tFish .ic { width: 40px; height: 40px; }
+    #tBase { display: none; position: absolute; width: 124px; height: 124px; margin: -62px 0 0 -62px; border-radius: 50%;
+      background: rgba(46, 30, 16, 0.32); border: 2px solid rgba(240, 214, 160, 0.35); }
+    #tKnob { position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%; background: rgba(240, 214, 160, 0.6); }
+    #tRotate { display: none; position: fixed; inset: 0; z-index: 100; align-items: center; justify-content: center;
+      background: #0b1622; color: #ffe9a8; font-size: 20px; letter-spacing: 2px; }
+    @media (orientation: portrait) { body.touch #tRotate { display: flex; } }
+    #touchHelp { display: none; }
+    #fps { position: fixed; left: 50%; bottom: 2px; transform: translateX(-50%); z-index: 60; padding: 2px 8px; font: 11px/1.4 monospace;
+      color: #cfe; background: rgba(0, 0, 0, 0.55); border-radius: 4px; pointer-events: none; white-space: nowrap; }
+    html.touch, html.touch body { touch-action: none; overscroll-behavior: none; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }   /* 整頁不准用手指縮放、拖動 */
+    body.touch #panel, body.touch #roomList, body.touch #menu, body.touch #chat.open #chatLog { touch-action: pan-y; }                      /* 這幾塊還是要能上下捲 */
+    body.touch { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+    body.touch input { -webkit-user-select: text; user-select: text; }
+    body.touch canvas { touch-action: none; }
+    body.touch #keys, body.touch #chatHint { display: none; }
+    body.touch #touchHelp { display: block; }
+    body.touch #panel { left: calc(12px + env(safe-area-inset-left)); }
+    body.touch #panel[open] { z-index: 25; }   /* 打開時蓋在聊天訊息和按鈕上面 */
+    body.touch #hud { right: calc(12px + env(safe-area-inset-right)); font-size: 12px; padding: 6px 10px; }
+    body.touch #hRoom, body.touch #hClock { margin-right: 10px; }
+    body.touch #prompt { bottom: 10px; font-size: 13px; padding: 6px 14px; max-width: 42vw; }
+    body.touch #stam { bottom: 50px; }
+    body.touch #toast { top: 92px; bottom: auto; font-size: 13px; max-width: 44vw; }
+    body.touch #fishui { bottom: 52px; width: 270px; padding: 8px 12px; }
+    body.touch #chat { top: 48px; bottom: auto; left: calc(12px + env(safe-area-inset-left)); width: min(260px, 34vw); font-size: 12px; }
+    body.touch #chat.open { width: min(440px, 62vw); }
+    body.touch #chatLog { max-height: 92px; }
+    body.touch #chat.open #chatLog { max-height: 110px; }
+    body.touch #chatInput { font-size: 16px; }   /* 小於 16px 的話 iPhone 點輸入框會自己把畫面放大 */
+    body.touch #mapCv { width: min(560px, 76vh); height: min(560px, 76vh); }
+    body.touch #menu { align-items: flex-start; padding-top: 10px; box-sizing: border-box; overflow-y: auto; }
+    body.touch #menu .card { padding: 14px 22px 12px; }
+    body.touch #menu h1 { font-size: 24px; }
+    body.touch #menu p { margin-bottom: 10px; }
+    body.touch #lookView { height: 130px; }
+    body.touch #lookPick { margin-bottom: 8px; }
+    body.touch #roomList { max-height: 42vh; }
     #err { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
       background: #0b1622; padding: 30px; text-align: center; font-size: 16px; line-height: 1.8; }
   </style>
@@ -96,19 +215,19 @@
   <details id="panel" class="card">
     <summary><span class="gear">⚙</span>設定<span class="x">收起</span></summary>
     <div class="sec"><h4>畫面</h4>
-      <div class="row"><label>畫質（解析度） <b id="vQuality"></b></label>
+      <div class="line"><span>畫質</span><div id="gfx" class="seg"><button data-v="0">手機</button><button data-v="1">低</button><button data-v="2">中</button><button data-v="3">高</button></div></div>
+      <div class="row" style="margin-top: 9px"><label>解析度 <b id="vQuality"></b></label>
         <input id="quality" type="range" min="0.5" max="1.5" step="0.1" value="1" /></div>
+      <p class="note">畫面會卡就調低；兩個都不會自己變，調過會記住</p>
+      <div class="line" id="fullRow" style="display: none; margin-top: 9px"><span>全螢幕</span><button id="fullBtn" class="sw">關</button></div>
+      <p class="note" id="fullNote" style="display: none">想收掉上面的網址列：用 Safari 的「分享 → 加入主畫面」，再從主畫面打開</p>
+    </div>
+    <div class="sec"><h4>角色</h4>
+      <div class="line"><span>外觀</span><div id="lookSet" class="seg"><button data-look="girl">♀ 女生</button><button data-look="boy">♂ 男生</button></div></div>
+      <p class="note">換角色會重新載入一次（自動回到原本的房間）</p>
     </div>
     <div class="sec"><h4>聲音</h4>
       <div class="line"><span>遊戲音效</span><button id="sound">關</button></div>
-    </div>
-    <div class="sec"><h4>時間與天氣</h4>
-      <div class="line"><span>時間</span><button id="skipHour">快轉 3 小時</button></div>
-      <div class="line"><span>海上事件</span><span class="two"><select id="evKind">
-        <option value="storm">風暴</option><option value="thunder">雷暴雨</option><option value="tsunami">巨浪</option>
-        <option value="spout">水龍捲</option><option value="whirl">漩渦</option><option value="typhoon">颱風</option>
-      </select><button id="evGo">引發</button></span></div>
-      <p class="note">海上事件平常也會隨機發生</p>
     </div>
     <details id="keys" class="sec">
       <summary>操作說明</summary>
@@ -120,6 +239,7 @@
         <dt><kbd>E</kbd></dt><dd>把畫面中央的準心對準東西再按：拿起／放下、掌舵、加油、修船、開關船燈、坐下、綁纜繩、按按鈕、買東西</dd>
         <dt><kbd>F</kbd></dt><dd>釣魚：按住蓄力、放開拋竿；魚咬了按一下；收線時按住／放開控制力道。大魚別硬拉，釣竿負荷滿了會斷（要回商店修）</dd>
         <dt><kbd>G</kbd></dt><dd>動作與表情：按住叫出輪盤，移動滑鼠選（內圈表情、外圈動作），放開播放。表情維持 10 秒；走動就停下動作</dd>
+        <dt><kbd>Enter</kbd></dt><dd>聊天：打字後按 Enter 送出，也可以點預設短句；Esc 關閉</dd>
       </dl>
       <h5>開船</h5>
       <dl>
@@ -136,15 +256,42 @@
         <dt><kbd>M</kbd></dt><dd>地圖</dd>
       </dl>
     </details>
-    <div class="sec"><button id="reset">重新開始（清除存檔）</button></div>
+    <div id="touchHelp" class="sec"><h4>操作說明</h4>
+      <p class="note">左半邊畫面：按住拖曳就是搖桿，輕推走路、推到底跑步；開船時往前後是油門、左右是方向盤</p>
+      <p class="note">其他地方：滑動轉視角，兩指捏合調鏡頭遠近</p>
+      <p class="note"><i data-ic="hand"></i> 互動：把畫面中央的準心對準東西再按（拿起、放下、掌舵、加油、修船、坐下、買東西…）；手上有東西時變成 <i data-ic="drop"></i> 放下，掌舵、坐著時變成 <i data-ic="leave"></i> 離開</p>
+      <p class="note"><i data-ic="fish"></i> 釣魚：按住蓄力、放開拋竿；魚咬了按一下；收線時按住／放開控制力道</p>
+      <p class="note"><i data-ic="jump"></i> 跳</p>
+      <p class="note">右上角：<i data-ic="map"></i> 地圖　<i data-ic="chat"></i> 聊天　<i data-ic="emote"></i> 表情（點一格就播放）　<i data-ic="view"></i> 切換第一／第三人稱　<i data-ic="full"></i> 全螢幕</p>
+    </div>
+    <div class="sec"><button id="reset">離開房間（回到大廳）</button><p class="note">離開後進度會清空，下次進房從頭開始</p></div>
   </details>
-  <div id="hud" class="card"><span id="hClock"></span>金錢<b id="hMoney">$0</b><span id="hShip">耐久<b id="hHp">100%</b>　燃油<b id="hFuel">0</b></span><span id="hSpeed">船速<b id="hBoat">0.0 節</b></span></div>
+  <div id="hud" class="card"><span id="hRoom"></span><span id="hClock"></span><b id="hMoney" title="金錢">$0</b><span id="hShip"><i data-ic="boat" title="船的耐久"></i><b id="hHp">100%</b>　<i data-ic="fuel" title="燃油"></i><b id="hFuel">0</b></span><span id="hSpeed"><i data-ic="speed" title="船速"></i><b id="hBoat">0.0 節</b></span></div>
   <div id="fishui" class="card"><div id="fishLabel"></div><div id="bar"><div id="barSafe"></div><div id="barFill"></div><div id="barMark"></div></div><div id="prog"><div id="progFill"></div></div><div id="strain">釣竿負荷<div id="strainBar"><div id="strainFill"></div></div></div><div id="fishHint"></div></div>
   <div id="toast" class="card"></div>
   <div id="aim"></div>
   <div id="prompt" class="card"></div>
-  <div id="stam" class="card">體力<div id="stamBar"><div id="stamFill"></div></div></div>
-  <div id="map" class="card"><canvas id="mapCv" width="560" height="560"></canvas><div id="mapNote">紅色箭頭是你，黃色是你的船　按 M 或 Esc 關閉</div></div>
+  <div id="stam" class="card"><i data-ic="bolt" title="體力"></i><div id="stamBar"><div id="stamFill"></div></div></div>
+  <div id="map" class="card"><canvas id="mapCv" width="560" height="560"></canvas><div id="mapNote">紅色箭頭是你，黃色是你的船，白色是其他人　按 M 或 Esc 關閉</div></div>
+  <div id="menu">
+    <div id="menuName" class="card">
+      <h1>Stormcast</h1>
+      <p>選好角色、填好名字，跟大家一起出海釣魚</p>
+      <canvas id="lookView"></canvas>
+      <div id="lookPick" class="seg"><button data-look="girl">♀ 女生</button><button data-look="boy">♂ 男生</button></div>
+      <input id="nameInput" maxlength="12" placeholder="你的名字" autocomplete="nickname" />
+      <button id="nameGo">進入大廳</button>
+      <div id="nameMsg"></div>
+    </div>
+    <div id="menuLobby" class="card" style="display: none">
+      <h2>選一間房間</h2>
+      <p><span id="lobbyWho"></span>，點一間就進去。想跟朋友一起玩，就挑同一間</p>
+      <div id="roomList"></div>
+      <div id="lobbyMsg"></div>
+      <button id="lobbyBack">換個名字</button>
+    </div>
+  </div>
+  <div id="net"><div class="card"><p id="netMsg"></p><button id="netRetry">回到大廳</button></div></div>
   <div id="err"></div>
   <script type="module" src="/src/main.js"></script>
 </body>

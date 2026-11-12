@@ -2,35 +2,12 @@
 // 船身與人物座標：+X 前方、+Y 向上、+Z 右側；船的原點在水線中央。
 import * as THREE from 'three';
 import { bulb } from './toon.js';
-import { buildFigure, ARM_LEN } from './figure.js';
+import { buildFigure } from './figure.js';
 export { buildFigure };
 
-// len / beam / draft：長、寬、吃水；deck：甲板離水線的高度；bul：舷牆高；rise：船首翹起的高度
-// speed：極速（公尺/秒）；tiltK：隨浪搖晃的程度；costK：引擎升級的價錢倍率
-// cabin：駕駛艙範圍（沒有就是敞船）；helmX：掌舵時站的位置；box：魚箱的位置與大小
-// hp：耐久度；tank：油箱容量（公升）；burn：油門全開每秒吃多少油；fuelX：加油的位置（引擎旁）
-export const BOAT_TYPES = {
-  skiff: {
-    id: 'skiff', name: '小舢舨', price: 0, len: 6, beam: 2.2, draft: 0.45, deck: 0.32, bul: 0.33, rise: 0.4,
-    speed: 4.4, tiltK: 1.15, costK: 0.4, paint: [0.86, 0.80, 0.62], cabin: null, helmX: -1.9, helmR: 0.8,
-    hp: 60, tank: 20, burn: 0.04, fuelX: -2.6,
-    box: { x: 0.9, z: 0, w: 0.7, d: 0.9, h: 0.4 },
-  },
-  fisher: {
-    id: 'fisher', name: '漁船', price: 700, len: 13, beam: 4.6, draft: 1.0, deck: 0.85, bul: 0.35, rise: 1.1,
-    speed: 7, tiltK: 1, costK: 1, paint: [0.08, 0.42, 0.44], cabin: { x0: -4.2, x1: -0.8, hw: 1.3, top: 2.3 }, helmX: -2.5, helmR: 1.1,
-    hatch: { x: 2.0, s: 1.8 }, barrel: { x: 3.4, z: 0.9 }, box: { x: 0.5, z: 0, w: 0.9, d: 1.3, h: 0.55 },
-    hp: 120, tank: 60, burn: 0.09, fuelX: -5.45,
-  },
-  trawler: {
-    id: 'trawler', name: '大漁船', price: 3000, len: 18, beam: 6.2, draft: 1.3, deck: 1.05, bul: 0.45, rise: 1.4,
-    speed: 8.6, tiltK: 0.75, costK: 1.8, paint: [0.55, 0.16, 0.12], cabin: { x0: -6.2, x1: -1.8, hw: 1.9, top: 2.4 }, helmX: -3.5, helmR: 1.1,
-    hatch: { x: 2.8, s: 2.4 }, barrel: { x: 5.2, z: 1.4 }, box: { x: -0.5, z: 0, w: 1.0, d: 1.7, h: 0.6 },
-    hp: 200, tank: 120, burn: 0.16, fuelX: -7.45,
-  },
-};
-export const BOX_CAP = [0, 6, 12, 20];   // 魚箱各等級裝幾條
-export const MAX_LEVEL = 3;
+import { BOAT_TYPES, BOX_CAP, MAX_LEVEL } from './boatdata.js';
+// 三種船的規格在 boatdata.js（伺服器也用同一份）
+export { BOAT_TYPES, BOX_CAP, MAX_LEVEL };
 const CRACKS = 6;          // 耐久度分成幾處破洞：全破了船就沉
 const DRIFT = 1.2;         // 沒油時只能用這個速度慢慢漂（公尺/秒）
 // 船受得了的搖晃（斜率）：超過 SAFE 開始受損，橫搖超過 CAPSIZE 就翻
@@ -739,7 +716,12 @@ export class Boat {
       if (this.sinking) return;
     }
 
-    // 由船首方向與水面法線組出姿態
+    this._pose();
+  }
+
+  // 由船首方向與水面法線組出姿態，再擺好船上會動的東西
+  _pose() {
+    const S = this.spec, fx = Math.cos(this.heading), fz = Math.sin(this.heading);
     const n = this.normal;
     const f = new THREE.Vector3(fx, 0, fz);
     f.addScaledVector(n, -f.dot(n)).normalize();
@@ -766,7 +748,7 @@ export class Boat {
           this._d.set(P.wheelPos.x - P.helmsman.position.x - 0.03, P.wheelPos.y - S.deck + Math.cos(ang) * WHEEL_R, Math.sin(ang) * WHEEL_R).sub(arm.userData.base);
           const len = this._d.length();
           arm.quaternion.setFromUnitVectors(DOWN, this._d.divideScalar(len));
-          arm.userData.stretch(len / ARM_LEN);
+          arm.userData.stretch(len / P.helmsman.userData.armLen);
         }
       } else {
         // 小舢舨：右手往後握著舵柄
@@ -774,6 +756,45 @@ export class Boat {
         arms[1].rotation.set(0, 0, -0.75 + this.rudder * 0.25);
       }
     }
+  }
+
+  // ---- 多人 ----
+  // 自己的船現在的狀態，送給伺服器轉給別人：[x, z, 航向, 高度, 傾斜 x, z, 船速, 舵, 油門, 狀態（1 燈開著、2 有人掌舵、4 擱淺）, 油量, 耐久（0–1）]
+  netState() {
+    const r = (v, k = 100) => Math.round(v * k) / k, n = this.normal;
+    return [r(this.x), r(this.z), r(this.heading, 1000), r(this.y), r(n.x, 1000), r(n.z, 1000), r(this.speed), r(this.rudder), r(this.throttle),
+      (this.lampOn ? 1 : 0) | (this.manned ? 2 : 0) | (this.aground ? 4 : 0), r(this.fuel, 10), r(this.hp / this.spec.hp)];
+  }
+
+  // 別人的船：收到船主傳來的狀態。第一次、或一下子差太遠（換了停船格）就直接放過去
+  setNet(s, snap = false) {
+    const first = !this.net;
+    this.net = s; this.netAge = 0;
+    this.lampOn = !!(s[9] & 1);
+    if (!!(s[9] & 2) !== this.manned && !this.sinking) this.setManned(!!(s[9] & 2));
+    if (first || snap || Math.hypot(s[0] - this.x, s[1] - this.z) > 30) {
+      this.x = s[0]; this.z = s[1]; this.heading = s[2]; this.y = s[3];
+      this.normal.set(s[4], Math.sqrt(Math.max(0.01, 1 - s[4] * s[4] - s[5] * s[5])), s[5]);
+      this._pose();
+    }
+  }
+
+  // 別人的船每一幀：物理是船主那邊算的，這裡只把收到的狀態平滑地補到位。
+  // 補的目標是「他現在大概在哪」：最後一筆狀態，加上這段時間照船速往前走的距離（最多往前推半秒）
+  updateRemote(dt) {
+    if (this.sinking) return this._sink(dt);
+    const s = this.net;
+    if (!s) return;
+    this.netAge += dt;
+    const lead = Math.min(this.netAge, 0.5), k = 1 - Math.exp(-dt * 10), n = this.normal;
+    const tx = s[0] + Math.cos(s[2]) * s[6] * lead, tz = s[1] + Math.sin(s[2]) * s[6] * lead;
+    this.x += (tx - this.x) * k; this.z += (tz - this.z) * k; this.y += (s[3] - this.y) * k;
+    this.heading += Math.atan2(Math.sin(s[2] - this.heading), Math.cos(s[2] - this.heading)) * k;
+    const nx = n.x + (s[4] - n.x) * k, nz = n.z + (s[5] - n.z) * k;
+    n.set(nx, Math.sqrt(Math.max(0.01, 1 - nx * nx - nz * nz)), nz);
+    this.speed = s[6]; this.rudder += (s[7] - this.rudder) * k; this.throttle += (s[8] - this.throttle) * k;
+    this.aground = !!(s[9] & 4); this.fuel = s[10];
+    this._pose();
   }
 
   // ---- 給在甲板上走動的人用 ----
