@@ -48,9 +48,11 @@
     #keys dd { margin: 0; color: #dccba6; line-height: 1.45; }
     kbd { display: inline-block; min-width: 14px; padding: 1px 5px; margin-right: 2px; border-radius: 4px; text-align: center;
       font: inherit; font-size: 11px; color: #fff; background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(240, 214, 160, 0.35); }
-    /* 第一人稱的準心：畫面正中央一個小白點，外面一圈淡淡的環 */
+    /* 準心：畫面正中央一個小白點，外面一圈淡淡的環。對準了可以互動的東西時，環變大、變成金色 */
     #aim { position: fixed; left: 50%; top: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; display: none;
-      pointer-events: none; border-radius: 50%; border: 1.5px solid rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25); }
+      pointer-events: none; border-radius: 50%; border: 1.5px solid rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+      transition: transform 0.1s, border-color 0.1s; }
+    #aim.hit { transform: scale(1.55); border-color: #ffd24a; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 0 8px rgba(255, 210, 74, 0.55); }
     #aim::after { content: ''; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px;
       border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45); }
     #hud { top: 12px; right: 12px; padding: 8px 14px; font-size: 14px; font-variant-numeric: tabular-nums; }
@@ -72,6 +74,9 @@
     #progFill { height: 100%; width: 0; background: #e2b21c; }
     #barFill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: #6fd08a; }
     #fishHint { color: #dccba6; font-size: 12px; }
+    #strain { display: none; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 12px; color: #ffb9a6; white-space: nowrap; }
+    #strainBar { flex: 1; height: 6px; border-radius: 3px; overflow: hidden; background: rgba(0, 0, 0, 0.45); }
+    #strainFill { height: 100%; width: 0; background: #ff5a3c; }
     #prompt { left: 50%; bottom: 124px; transform: translateX(-50%); padding: 9px 18px; font-size: 16px;
       font-weight: 600; color: #fff; display: none; white-space: nowrap; }
     #stam { left: 50%; bottom: 76px; transform: translateX(-50%); padding: 6px 14px; font-size: 13px;
@@ -112,8 +117,8 @@
         <dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt><dd>走動</dd>
         <dt><kbd>Shift</kbd></dt><dd>跑步</dd>
         <dt><kbd>空白鍵</kbd></dt><dd>跳（跳下水就能游泳）</dd>
-        <dt><kbd>E</kbd></dt><dd>拿起／放下、掌舵、加油、修船、按按鈕、買東西</dd>
-        <dt><kbd>F</kbd></dt><dd>釣魚：按住蓄力、放開拋竿；魚咬了按一下；收線時按住／放開控制力道</dd>
+        <dt><kbd>E</kbd></dt><dd>把畫面中央的準心對準東西再按：拿起／放下、掌舵、加油、修船、開關船燈、坐下、綁纜繩、按按鈕、買東西</dd>
+        <dt><kbd>F</kbd></dt><dd>釣魚：按住蓄力、放開拋竿；魚咬了按一下；收線時按住／放開控制力道。大魚別硬拉，釣竿負荷滿了會斷（要回商店修）</dd>
       </dl>
       <h5>開船</h5>
       <dl>
@@ -133,7 +138,7 @@
     <div class="sec"><button id="reset">重新開始（清除存檔）</button></div>
   </details>
   <div id="hud" class="card"><span id="hClock"></span>金錢<b id="hMoney">$0</b><span id="hShip">耐久<b id="hHp">100%</b>　燃油<b id="hFuel">0</b></span><span id="hSpeed">船速<b id="hBoat">0.0 節</b></span></div>
-  <div id="fishui" class="card"><div id="fishLabel"></div><div id="bar"><div id="barSafe"></div><div id="barFill"></div><div id="barMark"></div></div><div id="prog"><div id="progFill"></div></div><div id="fishHint"></div></div>
+  <div id="fishui" class="card"><div id="fishLabel"></div><div id="bar"><div id="barSafe"></div><div id="barFill"></div><div id="barMark"></div></div><div id="prog"><div id="progFill"></div></div><div id="strain">釣竿負荷<div id="strainBar"><div id="strainFill"></div></div></div><div id="fishHint"></div></div>
   <div id="toast" class="card"></div>
   <div id="aim"></div>
   <div id="prompt" class="card"></div>

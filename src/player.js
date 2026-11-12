@@ -34,6 +34,7 @@ export class Player {
     this.clock = 0; this.bob = 0; this.lean = 0; this.roll = 0;   // 動作用：時間、上下起伏、前傾、左右晃
     this.lookYaw = 0; this.lookPitch = 0;  // 鏡頭看的方向（頭會跟著轉）
     this.eyeH = 1.25;                      // 眼睛離腳多高（游泳時只剩頭露出水面）
+    this.seat = null;                      // 坐在船上的哪個位子：{ boat, x, z, h 坐墊高度, yaw 面向（相對船首） }；沒坐是 null
   }
 
   // 第一人稱：整個人都不畫（低頭只看到地面，不會看到自己的大頭和肩膀），但影子照樣投在地上；
@@ -46,6 +47,7 @@ export class Player {
   // 直接放到某處（開局、放開方向盤時）
   place(world, x, z, boat = null) {
     this.boat = boat;
+    this.seat = null;
     this.onWater = this.swim = false;
     if (boat) {
       this.lx = x; this.lz = z;
@@ -148,11 +150,19 @@ export class Player {
   // world.ground(x,z,under)：地面或棧板高度（很大的值 = 牆）；under = true 時不算棧板，只看底下的地面
   // world.water(x,z)：水面高度；world.boats：可以走上去的船
   update(dt, dirX, dirZ, run, jump, world) {
+    // 坐著：釘在位子上，不能走、不能跳；屁股在坐墊的高度（整個人放低），面向位子的方向
+    if (this.seat && (this.seat.boat !== this.boat || this.boat.sinking)) this.seat = null;
+    const seat = this.seat;
+    if (seat) {
+      this.lx = seat.x; this.lz = seat.z; this.h = 0; this.vy = 0;
+      this.yaw = this.boat.heading + seat.yaw;
+      dirX = dirZ = 0; jump = false;
+    }
     // 腳下的面可能在動（船、浪），每幀重算
     if (this.boat) {
       const w = this.boat.toWorld(this.lx, this.lz);
       this.x = w.x; this.z = w.z;
-      this.base = this.boat.deckY(this.x, this.z);
+      this.base = this.boat.deckY(this.x, this.z) + (seat ? seat.h - 0.38 : 0);
       this.onWater = false;
     } else {
       const s = this._surface(this.x, this.z, world);
@@ -203,8 +213,8 @@ export class Player {
     const { legs, arms, head } = this.mesh.userData;
     const ease = 1 - Math.exp(-dt * 14);
     const shift = idle ? 0.06 * Math.sin(T * 1.3) : 0;
-    legs[0].rotation.z += (swing + shift - legs[0].rotation.z) * ease;
-    legs[1].rotation.z += (-swing - shift - legs[1].rotation.z) * ease;
+    legs[0].rotation.z += ((seat ? 1.36 : swing + shift) - legs[0].rotation.z) * ease;   // 坐著：兩條腿往前伸
+    legs[1].rotation.z += ((seat ? 1.36 : -swing - shift) - legs[1].rotation.z) * ease;
     const paddle = swim && !this.carry;
     const loose = idle ? 0.10 * Math.sin(T * 1.7) : 0;
     const armL = this.carry ? 1.15 : paddle ? 2.3 + stroke * (this.moving ? 0.9 : 0.25) : -swing * 1.05 + loose;

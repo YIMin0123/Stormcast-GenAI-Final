@@ -58,7 +58,24 @@ export function tsuCrest(i, l, seed) {
 
 // 危險係數（0–255）：離最近的陸地越遠越大。島周圍約 60 公尺內是 0，320 公尺外是滿的
 export function computeDanger(bed, N, L) {
-  const DX = L / N, d = new Float32Array(N * N);
+  const DX = L / N, d = landDistance(bed, N), out = new Uint8Array(N * N);
+  for (let k = 0; k < N * N; k++) {
+    const t = clamp((d[k] * DX - 60) / 260, 0, 1);
+    out[k] = Math.round(t * t * (3 - 2 * t) * 255);
+  }
+  return out;
+}
+
+// 每一格離最近的陸地幾公尺（陸地上是 0）：釣魚用——離岸越遠魚越好
+export function computeOffshore(bed, N, L) {
+  const DX = L / N, d = landDistance(bed, N);
+  for (let k = 0; k < N * N; k++) d[k] *= DX;
+  return d;
+}
+
+// 每一格離最近的陸地幾格
+function landDistance(bed, N) {
+  const d = new Float32Array(N * N);
   for (let k = 0; k < N * N; k++) d[k] = bed[k] > 0 ? 0 : 1e9;
   // 兩趟掃描的近似距離變換
   for (let j = 0; j < N; j++) {
@@ -87,12 +104,7 @@ export function computeDanger(bed, N, L) {
       d[k] = v;
     }
   }
-  const out = new Uint8Array(N * N);
-  for (let k = 0; k < N * N; k++) {
-    const t = clamp((d[k] * DX - 60) / 260, 0, 1);
-    out[k] = Math.round(t * t * (3 - 2 * t) * 255);
-  }
-  return out;
+  return d;
 }
 
 // 巨浪到了每個地方還剩幾成高（0–255）：外海是十成；越靠近陸地越矮（浪在淺水破掉了），到岸邊剩 SHORE；

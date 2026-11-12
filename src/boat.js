@@ -32,9 +32,10 @@ export const MAX_LEVEL = 3;
 const CRACKS = 6;          // 耐久度分成幾處破洞：全破了船就沉
 const DRIFT = 1.2;         // 沒油時只能用這個速度慢慢漂（公尺/秒）
 // 船受得了的搖晃（斜率）：超過 SAFE 開始受損，橫搖超過 CAPSIZE 就翻
-const SAFE_ROLL = 0.18, SAFE_PITCH = 0.22, CAPSIZE_ROLL = 0.36, CAPSIZE_PITCH = 1.0;
-const HURT_K = 16;         // 搖過頭時每秒扣多少耐久（乘上超出的角度）。以前是 40，船太容易壞
-const JOLT_K = 1;          // 船身晃多快算「猛地一晃」（俯仰、橫搖的角速度加起來，除以這個數字；1 以上甲板上的魚會被拋起來）
+const SAFE_ROLL = 0.24, SAFE_PITCH = 0.28, CAPSIZE_ROLL = 0.5, CAPSIZE_PITCH = 1.0;   // 外海的浪變大之後，船受得了的角度也跟著放寬
+const HURT_K = 5;          // 搖過頭時每秒扣多少耐久（乘上超出的角度）。以前是 40，船太容易壞；
+// 現在：平常的日子在外海不會壞，風大的日子橫著受浪每分鐘掉一兩點，暴風雨裡橫著受浪小舢舨大約撐三四分鐘
+const JOLT_K = 2;          // 船身晃多快算「猛地一晃」（俯仰、橫搖的角速度加起來，除以這個數字；1 以上甲板上的魚會被拋起來）
 const GALE_HEEL = 0.07;   // 每秒 40 公尺的風（颱風）橫著吹過來時，船被壓歪的斜率（約 4 度；陣風時更多）
 const SPOUT_HEEL = 0.3;  // 水龍捲最強的風橫著吹過來時，船被壓歪的斜率（加上浪的搖晃就可能翻）
 
@@ -383,11 +384,55 @@ function buildCabinBoat(S, g, blocks) {
     g.add(b);
   }
 
+  // ---- 油箱：引擎箱右邊橫躺的一顆鐵桶，上面有加油口，一條油管接進引擎箱 ----
+  const tz = 1.2, tankMat = lambert(0x3f6652), tankY = D + 0.36;
+  const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.27, 0.8, 14), tankMat);
+  drum.rotation.z = Math.PI / 2;
+  drum.position.set(ex, tankY, tz);
+  g.add(drum);
+  for (const sx of [-0.26, 0.26]) {
+    g.add(box(0.1, 0.16, 0.56, darkWood, ex + sx, D + 0.08, tz));                      // 墊木
+    const strap = new THREE.Mesh(new THREE.CylinderGeometry(0.278, 0.278, 0.05, 14), iron);
+    strap.rotation.z = Math.PI / 2;
+    strap.position.set(ex + sx, tankY, tz);
+    g.add(strap);
+  }
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.1, 10), iron);
+  neck.position.set(ex + 0.1, tankY + 0.3, tz);
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.035, 12), brass);
+  cap.position.set(ex + 0.1, tankY + 0.36, tz);
+  const gauge = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.02, 12), lambert(0xf2eede));
+  gauge.rotation.z = Math.PI / 2;
+  gauge.position.set(ex + 0.41, tankY + 0.02, tz);
+  g.add(neck, cap, gauge, box(0.05, 0.05, 0.42, iron, ex - 0.2, D + 0.2, tz - 0.42));   // 油管
+  blocks.push([ex - 0.45, ex + 0.45, tz - 0.3, tz + 0.3]);
+
+  // ---- 前甲板左舷的長椅：坐在上面面向海，可以釣魚 ----
+  const sx = S.hatch.x, sz = -(halfBeam(S, (sx + S.len / 2) / S.len) - 0.62);
+  g.add(box(1.3, 0.06, 0.36, wood, sx, D + 0.42, sz));
+  for (const lx of [-0.52, 0.52]) g.add(box(0.07, 0.4, 0.32, darkWood, sx + lx, D + 0.2, sz));
+  g.add(box(1.04, 0.05, 0.05, darkWood, sx, D + 0.14, sz));
+  blocks.push([sx - 0.66, sx + 0.66, sz - 0.19, sz + 0.19]);
+
+  // ---- 船燈的開關：駕駛艙右前方那根柱子內側的一個小銅盒，上面一根撥桿、一顆指示燈 ----
+  const sw = new THREE.Vector3(x1 - 0.14, D + 1.32, hw - 0.14);
+  g.add(box(0.07, 0.2, 0.13, brass, sw.x, sw.y, sw.z));
+  const lever = new THREE.Group();
+  lever.position.set(sw.x - 0.04, sw.y - 0.02, sw.z);
+  lever.add(box(0.09, 0.025, 0.025, iron, -0.04, 0, 0), box(0.035, 0.045, 0.045, lambert(0xb23a2e), -0.09, 0, 0));
+  const pilot = new THREE.Mesh(new THREE.SphereGeometry(0.022, 8, 6), new THREE.MeshBasicMaterial({ color: 0x3a2a1a }));
+  pilot.position.set(sw.x - 0.04, sw.y + 0.065, sw.z);
+  g.add(lever, pilot);
+
   const helmsman = buildFigure();
   helmsman.position.set(S.helmX, D, 0);
   g.add(helmsman);
   return {
-    wheel, wheelPos, throttle, helmsman,
+    wheel, wheelPos, throttle, helmsman, lantern, lever, pilot,
+    helm: wheelPos,                                       // 準心要對準哪裡才能掌舵：方向盤
+    tank: new THREE.Vector3(ex + 0.1, tankY + 0.3, tz),   // 加油口
+    switch: sw, switchR: 0.2,                             // 船燈的開關
+    seats: [{ x: sx, z: sz, h: 0.45, yaw: -Math.PI / 2, out: [0, 0.6] }],   // 坐的位置、坐墊高度、面向（相對船首）、站起來時往哪裡挪
     eye: new THREE.Vector3(S.helmX + 0.08, D + 1.63, 0), // 第一人稱的眼睛位置
     lamp: new THREE.Vector3(cx - 0.8, roofY + 2.5, 0),   // 桅頂的油燈
     roof: [[x0, -hw], [x1, -hw], [x1, hw], [x0, hw]].map(([x, z]) => new THREE.Vector3(x, roofY, z)),
@@ -395,7 +440,7 @@ function buildCabinBoat(S, g, blocks) {
 }
 
 // 小舢舨：敞船，船尾掛一顆小引擎，用舵柄操控
-function buildSkiff(S, g) {
+function buildSkiff(S, g, blocks) {
   const D = S.deck, wood = lambert(0x7a5230), iron = lambert(0x2b2d2f);
   for (const tx of [-0.7, 1.9]) g.add(box(0.28, 0.05, halfBeam(S, (tx + S.len / 2) / S.len) * 1.9, wood, tx, D + 0.3, 0)); // 坐板
   // 船尾外掛引擎與舵柄
@@ -429,12 +474,28 @@ function buildSkiff(S, g) {
   rope.position.set(S.len / 2 - 1.4, D + 0.07, 0.25);
   g.add(post, lantern, rope);
 
+  // 油箱：船尾左側一個紅色的手提油箱，一條油管接到引擎
+  const red = lambert(0xb8322a), tx = -2.25, tz = -0.5;
+  g.add(box(0.44, 0.24, 0.3, red, tx, D + 0.12, tz), box(0.2, 0.03, 0.04, iron, tx - 0.06, D + 0.3, tz),
+    box(0.03, 0.06, 0.04, iron, tx - 0.15, D + 0.27, tz), box(0.03, 0.06, 0.04, iron, tx + 0.03, D + 0.27, tz));
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.05, 10), iron);
+  cap.position.set(tx + 0.14, D + 0.265, tz);
+  const hose = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.62, 5), iron);
+  hose.position.set(-2.62, D + 0.3, -0.27);
+  hose.rotation.set(0.75, 0, 1.0);
+  g.add(cap, hose);
+  blocks.push([tx - 0.24, tx + 0.24, tz - 0.17, tz + 0.17]);
+
   const helmsman = buildFigure();
   helmsman.position.set(S.helmX, D, 0);
   g.add(helmsman);
   const c = [[-1.5, -0.6], [1.5, -0.6], [1.5, 0.6], [-1.5, 0.6]];
   return {
-    wheel: null, tiller, throttle: null, helmsman,
+    wheel: null, tiller, throttle: null, helmsman, lantern, lever: null, pilot: null,
+    helm: new THREE.Vector3(-S.len / 2 + 0.6, D + 0.75, 0),      // 準心要對準哪裡才能掌舵：舵柄
+    tank: new THREE.Vector3(tx + 0.14, D + 0.27, tz),            // 加油口
+    switch: new THREE.Vector3(S.len / 2 - 0.9, D + 1.25, 0), switchR: 0.3,   // 船燈沒有另外的開關：直接對準船首那盞燈
+    seats: [{ x: -0.7, z: 0, h: 0.34, yaw: 0, out: [0.45, 0] }, { x: 1.9, z: 0, h: 0.34, yaw: Math.PI, out: [-0.45, 0] }],   // 兩塊坐板
     eye: new THREE.Vector3(S.helmX + 0.08, D + 1.63, 0),
     lamp: new THREE.Vector3(S.len / 2 - 0.9, D + 1.25, 0),
     roof: c.map(([x, z]) => new THREE.Vector3(x, D, z)),   // 沒有屋頂：影子只算船身
@@ -455,7 +516,7 @@ export function buildBoatMesh(S, blocks = []) {
       g.add(m);
     }
   }
-  g.userData = S.cabin ? buildCabinBoat(S, g, blocks) : buildSkiff(S, g);
+  g.userData = S.cabin ? buildCabinBoat(S, g, blocks) : buildSkiff(S, g, blocks);
   return g;
 }
 
@@ -506,6 +567,7 @@ export class Boat {
     this.sinking = 0;    // 正在沉：開始沉了幾秒（0 = 沒事）
     this.sunkBy = null;  // 'capsize' 被浪打翻、'flood' 破損太嚴重
     this.moor = null;    // 纜繩綁在岸上的哪根繫纜樁：{ i 第幾根, lx, lz 船上綁繩子的位置, len 繩長 }；沒綁是 null
+    this.lampOn = true;  // 船燈的開關（開著：天黑了會照亮甲板；關掉就不亮）
     this._m = new THREE.Matrix4();
     this._v = new THREE.Vector3();
     this._d = new THREE.Vector3();
@@ -617,6 +679,16 @@ export class Boat {
       box(0.05, h, B.d, mat, -B.w / 2, h / 2, 0), box(0.05, h, B.d, mat, B.w / 2, h / 2, 0));
     g.position.set(B.x, S.deck, B.z);
     this.mesh.add(g);
+  }
+
+  // 船燈的樣子。glow：天有多黑（0 白天、1 全黑）。開著的燈白天也看得出是亮的，天黑後亮到會暈開；關掉就是一顆暗的玻璃
+  showLamp(glow) {
+    const P = this.parts, m = P.lantern.material;
+    m.color.copy(m.userData.base).multiplyScalar(this.lampOn ? 0.7 + 1.5 * Math.max(glow, 0.3) * m.userData.k : 0.3);
+    if (P.lever) {
+      P.lever.rotation.z = this.lampOn ? -0.55 : 0.55;   // 撥桿：往上是開
+      P.pilot.material.color.setHex(this.lampOn ? 0x8dff7a : 0x3a2a1a);
+    }
   }
 
   // 有人掌舵時才顯示舵手；fp = 第一人稱（隱藏頭和身體，只留手臂）
@@ -733,7 +805,7 @@ export class Boat {
       // 橫著受浪最傷船（船板是被扭裂的），船頭頂浪好得多
       // 歪得超過「會翻」的角度不會馬上翻掉，而是船板裂得很快（浪打進來）；耐久歸零才沉。只有水龍捲的風會直接把船掀翻
       const over = Math.max(0, ar - CAPSIZE_ROLL) + Math.max(0, ap - CAPSIZE_PITCH);
-      const stress = 2.5 * Math.max(0, ar - SAFE_ROLL) + Math.max(0, Math.abs(this.pitch - this._ride - this._bankP) - SAFE_PITCH) + 0.5 * swamp + 6 * over;
+      const stress = 2.5 * Math.max(0, ar - SAFE_ROLL) + Math.max(0, Math.abs(this.pitch - this._ride - this._bankP) - SAFE_PITCH) + 0.3 * Math.max(0, swamp - 0.3) + 6 * over;   // 浪花潑進來一點不算，水真的高過船舷三十公分以上才傷船
       if (stress > 0) this.hurt(stress * HURT_K * dt);
       // 往低的那一側翻：roll > 0 是右舷被抬高
       const blown = flow && Math.hypot(flow.wx, flow.wz) > 0.3;   // 是被水龍捲的風吹翻的，不是浪

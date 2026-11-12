@@ -23,19 +23,24 @@ export const SPECIES = {
 // 每座島附近的特產
 export const SPECIALTY = { home: 'bream', west: 'flounder', twin: 'grouper', rocks: 'eel', sand: 'mullet', east: 'snapper' };
 
-// 依水深、最近的島與距離決定釣到什麼：岸邊是小魚，島的周圍有特產，離陸地越遠魚越大越貴
+// 依水深、最近的島、離岸多遠決定釣到什麼：岸邊是小魚，島的周圍有特產，離陸地越遠魚越大越貴
+// off：離最近的陸地幾公尺。四個海域——淺灘、近海（一百多公尺內）、離岸（兩百多公尺）、外海、遠洋（四百公尺以上）；
+// 海域的交界不是一刀切，前後幾十公尺兩邊的魚都釣得到
 // 晚上多了夜裡才出來的魚：岸邊的小卷、島周圍的白帶魚、外海的旗魚
-export function pickSpecies(depth, islandId, dist, night = false) {
+export function pickSpecies(depth, islandId, off, night = false) {
   const local = SPECIALTY[islandId] ?? 'mackerel';
+  const d = off + (Math.random() - 0.5) * 70;
   const table = night
     ? (depth < 7 ? [['squid', 55], ['sardine', 30], [local, 15]]
-      : dist < 260 ? [['hairtail', 40], [local, 30], ['mackerel', 20], ['squid', 10]]
-        : dist < 420 ? [['hairtail', 35], ['mackerel', 30], ['bonito', 25], ['swordfish', 10]]
-          : [['bonito', 35], ['swordfish', 30], ['tuna', 20], ['hairtail', 15]])
+      : d < 120 ? [['hairtail', 40], [local, 30], ['mackerel', 20], ['squid', 10]]
+        : d < 250 ? [['hairtail', 35], ['mackerel', 30], ['bonito', 25], ['swordfish', 10]]
+          : d < 400 ? [['bonito', 35], ['swordfish', 30], ['tuna', 20], ['hairtail', 15]]
+            : [['swordfish', 45], ['tuna', 35], ['bonito', 20]])
     : depth < 7 ? [['sardine', 70], [local, 30]]
-      : dist < 260 ? [[local, 45], ['mackerel', 40], ['sardine', 15]]
-        : dist < 420 ? [['mackerel', 55], ['bonito', 35], [local, 10]]
-          : [['bonito', 45], ['tuna', 25], ['mackerel', 30]];
+      : d < 120 ? [[local, 45], ['mackerel', 40], ['sardine', 15]]
+        : d < 250 ? [['mackerel', 50], ['bonito', 35], [local, 15]]
+          : d < 400 ? [['bonito', 45], ['tuna', 25], ['mackerel', 30]]
+            : [['tuna', 50], ['bonito', 40], ['mackerel', 10]];
   let r = Math.random() * table.reduce((s, t) => s + t[1], 0);
   for (const [id, w] of table) { r -= w; if (r <= 0) return id; }
   return table[0][0];
@@ -44,10 +49,12 @@ export function pickSpecies(depth, islandId, dist, night = false) {
 const typicalLength = (id, kg) => (SPECIES[id].lenK ?? 0.42) * Math.cbrt(kg);
 
 // 擲出一條魚的重量與身長：小的多、大的少；同樣重量的魚有的修長、有的短胖
-// big：0–1，浪大的日子外海的魚個頭比較大
-export function rollFish(id, big = 0) {
+// big：0–1，離岸越遠、浪越大的日子，魚的個頭越大（大的變多）；
+// giant：0–1，遠洋才有的超大個體——重量的上限最多再高六成（比圖鑑上最大的還大）
+export function rollFish(id, big = 0, giant = 0) {
   const [a, b] = SPECIES[id].kg, r = Math.random();
-  const kg = +(a + (b - a) * Math.pow(r, 2 - 1.2 * big)).toFixed(2);
+  const top = b * (1 + 0.6 * giant);
+  const kg = +(a + (top - a) * Math.pow(r, 2 - 1.2 * big)).toFixed(2);
   const len = +(typicalLength(id, kg) * (0.92 + Math.random() * 0.16)).toFixed(2);
   return { kg, len };
 }
@@ -409,7 +416,7 @@ export class FishWorld {
         // ---- 船身猛地一晃（開快撞上浪、被浪頭砸到）：沒收進魚箱的魚被拋起來，可能飛出船外 ----
         // 浪本身不會把魚捲走；晃得越兇，拋得越常、越遠
         const jolt = boat.jolt || 0;
-        if (!it.can && jolt > 1 && Math.random() < dt * 0.8 * (jolt - 1)) {   // 油桶重，拋不起來
+        if (!it.can && jolt > 1 && Math.random() < dt * 0.6 * (jolt - 1)) {   // 油桶重，拋不起來
           const a = rand(0, Math.PI * 2), d = rand(0.3, 0.7) * Math.min(jolt, 3.5);
           const dx = Math.cos(a) * d, dz = Math.sin(a) * d, lx = it.lx + dx, lz = it.lz + dz;
           let end = null, ok = true;

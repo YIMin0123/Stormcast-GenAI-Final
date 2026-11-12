@@ -1,0 +1,8 @@
+這個資料夾裡的錄音都來自 BigSoundBank（https://bigsoundbank.com），授權 CC0（公有領域），經過裁切與音量調整。
+檔名 ← 原始錄音（編號）
+sea-waves ← Sea: Waves (0266)　small-waves ← Beach: Small Waves (0265)　gulls-harbor ← Gulls on the Harbor (2573)
+rain-puddle ← Rain on Puddle (1290)　thunder-1/2/3 ← Thunder #1 (2718), #2 (3113), #4 (3115)
+engine ← Small Tractor (0499)　reel ← Fishing reel, medium (1436)　whoosh ← Whoosh #4 (1796)
+splash-small ← Splash, Small #1 (1529)　splash-big ← Splash, Big #1 (1519)　twigs ← Broken twigs #1 (1299)
+steps-wood ← Walk on Pontoon (1845)　steps-grass ← Steps in the short grass (0854)　switch ← Old switch (0540)
+coins ← Coins #1 (0193)　hammer ← Nail and Hammer #1 (0005)　pour ← Flowing water (1522)　thud ← Canvas bag on floor (0576)

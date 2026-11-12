@@ -6,14 +6,14 @@ import { Boat, BOAT_TYPES, BOX_CAP, MAX_LEVEL } from './boat.js';
 import { Player } from './player.js';
 import { ShallowWater, SWE } from './shallow.js';
 import { makeHarbor, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SHOP, LIGHTHOUSE, SELL, setBoard, MOORING, BOLLARDS, MoorLine, SHELF, SHELF_X, SHELF_Z, setTag, PLAYER_SPAWN, onDeck, LAMPS, UNLIT, WET } from './harbor.js';
-import { SPECIES, pickSpecies, rollFish, fishLabel, FishWorld } from './fish.js';
+import { SPECIES, pickSpecies, rollFish, fishValue, fishLabel, FishWorld } from './fish.js';
 import { Fishing } from './fishing.js';
 import { REFL, addOutline, BULBS, softDisc } from './toon.js';   // 它會改掉內建材質的受光算法（改成手繪風）
 import { makeScenery } from './scenery.js';
 import { makeGroundDetail, makeGrassGeometry, WIND, SIGHT } from './foliage.js';
 import { Spray } from './spray.js';
 import { OceanAudio } from './audio.js';
-import { Sea, Climate, computeDanger, computeTsuK, HOUR, TSU, SWELL, swellAt } from './weather.js';
+import { Sea, Climate, computeDanger, computeOffshore, computeTsuK, HOUR, TSU, SWELL, swellAt } from './weather.js';
 import { Rain, Bolt, Spindrift, Spout, WaveSpray } from './skyfx.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -81,6 +81,7 @@ shelterTex.needsUpdate = true;
 
 // 離陸地越遠越危險：風暴與巨浪只在外海發威，島的周圍與港口不受影響
 const dangerData = computeDanger(bedCoarse, N, L);
+const offData = computeOffshore(bedCoarse, N, L);   // 每一格離最近的陸地幾公尺
 const dangerTex = new THREE.DataTexture(dangerData, N, N, THREE.RedFormat, THREE.UnsignedByteType);
 dangerTex.minFilter = dangerTex.magFilter = THREE.LinearFilter;
 dangerTex.needsUpdate = true;
@@ -105,6 +106,7 @@ function sampleGrid(arr, x, z, n = N) {
 const bedAt = (x, z) => sampleGrid(bedData, x, z, NF);
 const shelterAt = (x, z) => sampleGrid(shelterData, x, z) / 255;
 const dangerAt = (x, z) => sampleGrid(dangerData, x, z) / 255;
+const offAt = (x, z) => sampleGrid(offData, x, z);
 const tsuKAt = (x, z) => sampleGrid(tsuKData, x, z) / 255;
 
 // 商店與櫃檯、燈塔：玩家走不進去
@@ -497,16 +499,20 @@ function isWater(x, z) {
   return !boats.some((b) => { const l = b.toLocal(x, z); return b.deckContains(l.x, l.z); });
 }
 const waterY = (x, z) => ocean.sampleHeight(x, z) * clamp((-bedAt(x, z) - 0.3) / 7.7, 0, 1) * waveK(x, z) + tsuAt(x, z);
-// 這個位置會釣到什麼：看水深、最近的是哪座島、離多遠
+// 這個位置會釣到什麼：看水深、最近的是哪座島、離陸地多遠。
+// 離岸越遠：魚種越好（鰹魚、鮪魚、旗魚）、個頭越大，四百公尺以上的遠洋還有比平常最大的更大的超大個體
 function pickFish(x, z) {
   let near = ISLANDS[0], dist = Infinity;
   for (const o of ISLANDS) { const d = Math.hypot(x - o.x, z - o.z); if (d < dist) { dist = d; near = o; } }
-  const id = pickSpecies(-bedAt(x, z), near.id, dist, climate.night);
-  // 浪大的日子，外海的魚個頭比較大
-  const big = dist >= 260 ? clamp((ocean.scale * stormK(x, z) - 1.2) / 1.2, 0, 1) : 0;
-  const f = rollFish(id, big), [a, b] = SPECIES[id].kg;
-  // 同一種魚，個頭越大掙扎越兇
-  return { id, ...f, strength: SPECIES[id].strength * (0.85 + 0.3 * (f.kg - a) / (b - a)) };
+  const off = offAt(x, z), far = clamp((off - 60) / 380, 0, 1);
+  const id = pickSpecies(-bedAt(x, z), near.id, off, climate.night);
+  // 浪大的日子，外海的魚個頭更大
+  const rough = off >= 120 ? clamp((ocean.scale * stormK(x, z) - 1.2) / 1.2, 0, 1) : 0;
+  const f = rollFish(id, clamp(0.7 * far + 0.5 * rough, 0, 1), clamp((off - 250) / 300, 0, 1)), [a, b] = SPECIES[id].kg;
+  // 越值錢的魚越難釣：同一種魚個頭越大掙扎越兇，身價越高（二十塊以下不算、八百塊以上到頂）再往上加
+  const value = fishValue(id, f.kg, f.len);
+  const tough = clamp(Math.log(value / 20) / Math.log(40), 0, 1);
+  return { id, ...f, value, off, strength: SPECIES[id].strength * (0.85 + 0.3 * clamp((f.kg - a) / (b - a), 0, 1.6)) * (0.8 + 0.55 * tough) };
 }
 
 const fish = new FishWorld({
@@ -517,6 +523,15 @@ const fishing = new Fishing({
   player, scene, isWater, surfaceY: waterY, pick: pickFish, splash, toast,
   canFish: () => mode === 'walk' && !fish.held && !player.swim,
   rodLv: () => rodLv,
+  broken: () => rodBroken,
+  sound: (name, vol) => audio.play(name, vol),
+  // 爆桿：魚跑了，釣竿斷了，要拿回商店的攤位花錢修
+  onSnap() {
+    rodBroken = true;
+    refreshTags();
+    saveGame();
+    toast('爆桿了！釣竿斷了，魚也跑了——要拿回商店的攤位修理');
+  },
   biteK: () => 1 - 0.35 * clamp(rainNow / 0.5, 0, 1),   // 下雨時魚咬得比較快
   viewYaw: () => view.walk.yaw,
   onCatch(f) {
@@ -718,14 +733,16 @@ function applyViewSettings() {
 
 // 第一人稱：畫面中央有準心，滑鼠游標收起來（鎖在畫面裡，直接移動就轉視角）。
 // 按 Esc 會放開滑鼠（要去點設定的時候），再點一下畫面就鎖回去；看地圖、切回第三人稱時自動放開
+// 走路時不管第一、第三人稱畫面中央都有準心：要對準東西才能互動（第三人稱的滑鼠照舊按住拖曳，不鎖）
 const aiming = () => mode !== 'sink' && view[mode].fp && !mapOpen;
+const crosshair = () => !mapOpen && (mode === 'walk' || (mode === 'helm' && view.helm.fp));
 const locked = () => document.pointerLockElement === canvas;
 function grabMouse() {
   if (locked() || !canvas.requestPointerLock) return;
   try { const p = canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch { /* 瀏覽器不給鎖就算了，照舊按住拖曳 */ }
 }
 function syncAim() {
-  $('aim').style.display = aiming() ? 'block' : 'none';
+  $('aim').style.display = crosshair() ? 'block' : 'none';
   if (aiming()) grabMouse();
   else if (locked()) document.exitPointerLock();
 }
@@ -897,6 +914,7 @@ const nearHelm = () => player.boat && player.h <= 0
 
 function takeHelm() {
   fishing.cancel();
+  player.seat = null;
   boat = player.boat;
   mode = 'helm';
   camHeading = boat.heading;
@@ -924,8 +942,8 @@ function nearBox() {
   return Math.hypot(player.lx - B.x, player.lz - B.z) < Math.max(B.w, B.d) / 2 + 0.9 ? b : null;
 }
 
-// 腳下這艘船的油箱（要站在船尾引擎旁邊）
-const nearTank = () => (player.boat && Math.hypot(player.lx - player.boat.spec.fuelX, player.lz) < 1.8 ? player.boat : null);
+// 腳下這艘船的油箱（要站在油箱旁邊）
+const nearTank = () => (player.boat && Math.hypot(player.lx - player.boat.parts.tank.x, player.lz - player.boat.parts.tank.z) < 1.9 ? player.boat : null);
 // 腳邊的破洞
 function nearCrack() {
   const b = player.boat, c = b && b.nearDamage(player.lx, player.lz);
@@ -944,15 +962,18 @@ const cleatXZ = (b, lx, lz) => {
   const c = Math.cos(b.heading), s = Math.sin(b.heading);
   return [b.x + c * lx - s * lz, b.z + s * lx + c * lz];
 };
-// 人站在哪根繫纜樁旁邊：上面已經綁著船就回傳那艘（可以解開），否則找一艘停得夠近、還沒綁的船
+// 第 i 根繫纜樁能做什麼：上面已經綁著船就回傳那艘（可以解開），否則找一艘停得夠近、還沒綁的船
+function bollardAt(i) {
+  const tied = boats.find((b) => b.moor && b.moor.i === i);
+  if (tied) return { i, boat: tied, tied: true };
+  return moorSpot(i, boats.filter((b) => !b.moor && !b.sinking));
+}
+// 人站在哪根繫纜樁旁邊
 function nearBollard() {
   if (player.boat || player.swim) return null;
   let i = -1, bd = 1.5;
   BOLLARDS.forEach((p, k) => { const d = Math.hypot(player.x - p.x, player.z - p.z); if (d < bd) { bd = d; i = k; } });
-  if (i < 0) return null;
-  const tied = boats.find((b) => b.moor && b.moor.i === i);
-  if (tied) return { i, boat: tied, tied: true };
-  return moorSpot(i, boats.filter((b) => !b.moor && !b.sinking));
+  return i < 0 ? null : bollardAt(i);
 }
 // 這幾艘船裡，哪一艘的哪個位置離第 i 根樁最近（太遠的不算）
 function moorSpot(i, list, reach = MOOR_REACH) {
@@ -1018,6 +1039,8 @@ const itemLabel = (it) => (it.can ? `油桶（${litres(it.liters)} 公升）` : 
 
 // ---- 商店的商品架 -----------------------------------------------------------
 let rodLv = 0;
+let rodBroken = false;   // 釣竿斷了（爆桿）：要回商店修好才能再釣
+const REPAIR = [40, 100, 220, 450];   // 修釣竿的價錢（依釣竿等級）
 let wrench = false;   // 有沒有扳手（修船用，買一次就一直有）
 const CAN = 20;       // 一桶油幾公升
 const PRICE = { rod: [120, 350, 800], engine: [200, 500, 1000], box: [100, 300, 700], fuel: 30, wrench: 150 };
@@ -1032,6 +1055,12 @@ function offer(id) {
     return { name: '扳手', lines: ['扳手', '修補船上的破洞', `$${PRICE.wrench}`], price: PRICE.wrench, buy() { wrench = true; } };
   }
   if (id === 'rod') {
+    if (rodBroken) {
+      // 錢不夠也修得起：身上有多少算多少（不然釣竿斷了又沒錢，就再也賺不到錢了）
+      const price = Math.min(REPAIR[rodLv], money);
+      return { name: '修理釣竿', act: '修理釣竿', lines: ['修理釣竿', '斷掉的釣竿修好', `$${price}`], price,
+        done: price < REPAIR[rodLv] ? '釣竿修好了（錢不夠，老闆算你便宜）' : '釣竿修好了', buy() { rodBroken = false; } };
+    }
     if (rodLv >= MAX_LEVEL) return { name: '釣竿', lines: ['釣竿', '已經是最好的', '售完'], price: null };
     return { name: `第 ${rodLv + 1} 級釣竿`, lines: [`釣竿 第${rodLv + 1}級`, '拋更遠、更好拉', `$${PRICE.rod[rodLv]}`], price: PRICE.rod[rodLv], buy() { rodLv++; } };
   }
@@ -1062,102 +1091,193 @@ function nearShelf() {
   }
   return best;
 }
-function setMoney(v) { money = v; $('hMoney').textContent = `$${money}`; }
+function setMoney(v) { money = v; $('hMoney').textContent = `$${money}`; if (rodBroken) refreshTags(); }
 
-// E：依情況做一件事——放手／放下魚／掌舵／拿起魚／開魚箱／賣魚／買東西
+// ---- 坐下、站起來 -----------------------------------------------------------
+// 船上的坐板、長椅可以坐：坐著照樣能釣魚、能轉頭看；按移動鍵、空白鍵或再按一次 E 就站起來
+function sitDown(b, seat) {
+  player.seat = { boat: b, x: seat.x, z: seat.z, h: seat.h, yaw: seat.yaw, out: seat.out, src: seat };
+  player.lx = seat.x; player.lz = seat.z; player.h = 0; player.vy = 0;
+  audio.play('sit');
+}
+function standUp() {
+  const s = player.seat;
+  if (!s) return;
+  player.seat = null;
+  // 站到位子旁邊的空位（長椅本身是擋路的，不能站在上面）
+  for (const [dx, dz] of [s.out, [-s.out[0], -s.out[1]], [0.6, 0], [-0.6, 0], [0, 0.6], [0, -0.6]]) {
+    const lx = s.x + dx, lz = s.z + dz;
+    if (s.boat.deckContains(lx, lz) && !s.boat.blockedLocal(lx, lz)) { player.lx = lx; player.lz = lz; break; }
+  }
+}
+
+// ---- 準心：要對準東西才能互動 -------------------------------------------------
+// 畫面正中央那條視線（第一人稱從眼睛看出去；第三人稱從鏡頭穿過人的頭看出去，也就是人物正在看的方向）
+// 離哪樣東西最近，就是對準了它；人還要站得夠近才算。每樣東西當成一顆球：球越大越好對。
+// 第三人稱比較難瞄，多放寬三十公分；鏡頭和人之間（人背後）的東西不算
+const _aimO = new THREE.Vector3(), _aimD = new THREE.Vector3(), _aimV = new THREE.Vector3();
+function aimTarget() {
+  if (mode !== 'walk' || player.swim || drown) return null;
+  const list = [], b = player.boat, px = player.x, pz = player.z;
+  const add = (kind, pos, r, data = {}) => list.push({ kind, pos, r, ...data });
+  if (b && !b.sinking) {
+    b.mesh.updateMatrixWorld();
+    const S = b.spec, D = S.deck, P = b.parts;
+    const at = (x, y, z) => new THREE.Vector3(x, y, z).applyMatrix4(b.mesh.matrixWorld);
+    const near = (x, z, r) => Math.hypot(player.lx - x, player.lz - z) < r;
+    if (nearHelm()) add('helm', at(P.helm.x, P.helm.y, P.helm.z), 0.5, { boat: b });
+    if (nearBox()) add('box', at(S.box.x, D + 0.3, S.box.z), Math.max(S.box.w, S.box.d) / 2 + 0.05, { boat: b });
+    if (near(P.tank.x, P.tank.z, 1.9)) add('tank', at(P.tank.x, P.tank.y, P.tank.z), 0.36, { boat: b });
+    for (const c of b.damage) if (near(c.lx, c.lz, 1.7)) add('crack', at(c.lx, D + 0.05, c.lz), 0.4, { boat: b, crack: c });
+    if (near(P.switch.x, P.switch.z, 2.3)) add('lamp', at(P.switch.x, P.switch.y, P.switch.z), P.switchR, { boat: b });
+    for (const s of P.seats) if (near(s.x, s.z, 1.7)) add('seat', at(s.x, D + s.h + 0.05, s.z), 0.42, { boat: b, seat: s });
+  } else if (!b) {
+    BOLLARDS.forEach((p, i) => {
+      if (Math.hypot(px - p.x, pz - p.z) > 1.9) return;
+      const m = bollardAt(i);
+      if (m) add('bollard', new THREE.Vector3(p.x, p.y - 0.05, p.z), 0.36, { moor: m });
+    });
+    if (nearBasket()) add('basket', new THREE.Vector3(SELL.basket.x, DECK_Y + 0.3, SELL.basket.z), 0.5);
+    if (nearButton()) add('button', new THREE.Vector3(SELL.button.x, DECK_Y + 1.1, SELL.button.z), 0.26);
+    // 攤位上的商品：對準桌上的東西或後面的價格牌都算
+    for (const it of SHELF) {
+      if (Math.hypot(px - it.x, pz - (SHELF_Z + 1.3)) > 1.7) continue;
+      add('shelf', new THREE.Vector3(it.x, DECK_Y + 1.1, SHELF_Z), 0.5, { shelf: it });
+      add('shelf', new THREE.Vector3(it.x, DECK_Y + 1.95, SHELF_Z - 0.44), 0.6, { shelf: it });
+    }
+  }
+  // 放在甲板或地上的魚、油桶
+  for (const it of fish.items) {
+    const v = fish.worldPos(it, new THREE.Vector3());
+    if (Math.hypot(v.x - player.pos.x, v.z - player.pos.z) > 1.8 || Math.abs(v.y - player.pos.y) > 1.3) continue;
+    v.y += it.can ? 0.2 : it.thick / 2;
+    add('item', v, it.can ? 0.3 : clamp(it.len * 0.45, 0.22, 0.55), { item: it });
+  }
+  if (!list.length) return null;
+  const fp = view.walk.fp;
+  _aimO.copy(camera.position);
+  camera.getWorldDirection(_aimD);
+  const t0 = fp ? 0 : _aimV.set(player.pos.x, player.pos.y + 1.3, player.pos.z).sub(_aimO).dot(_aimD) - 0.3;
+  let best = null, bs = 1;
+  for (const c of list) {
+    _aimV.copy(c.pos).sub(_aimO);
+    const t = _aimV.dot(_aimD);
+    if (t < t0) continue;
+    const off = Math.sqrt(Math.max(0, _aimV.lengthSq() - t * t)), score = off / (c.r + (fp ? 0.03 * t : 0.3));
+    if (score < bs) { bs = score; best = c; }
+  }
+  return best;
+}
+
+// E：對準什麼就做什麼——掌舵／拿起魚／開魚箱／加油／修船／開關船燈／坐下／綁纜繩／賣魚／買東西。
+// 手上拿著東西時：對準魚箱、籃子、油箱就放進去（倒進去），沒對準就放在面前
 function interact() {
   if (mode === 'sink') return;
   if (mode === 'helm') return releaseHelm();
   if (player.swim || drown) return;   // 在水裡騰不出手
+  const a = aimTarget(), kind = a ? a.kind : '';
   if (fish.held && fish.held.can) {
-    // 提著油桶：站在引擎旁就倒進油箱，倒不完的留在桶裡；其他地方就放下
-    const can = fish.held, b = nearTank(), room = b ? b.spec.tank - b.fuel : 0;
+    // 提著油桶：對準油箱的加油口就倒進去，倒不完的留在桶裡；沒對準就放下
+    const can = fish.held, b = kind === 'tank' ? a.boat : null, room = b ? b.spec.tank - b.fuel : 0;
     if (room < 0.1) return fish.drop();
     const pour = Math.min(can.liters, room);
     b.fuel += pour; can.liters -= pour;
+    audio.play('pour');
     if (can.liters < 0.1) { fish.discardHeld(); toast(`油倒進去了，油箱 ${litres(b.fuel)} / ${b.spec.tank} 公升`); }
     else toast(`油箱加滿了，桶裡還剩 ${litres(can.liters)} 公升`);
     return;
   }
   if (fish.held) {
-    const bx = nearBox();
-    if (nearBasket()) refreshBoard(fish.toBasket());
-    else if (bx && bx.boxFish.length < bx.boxCap) fish.toBox(bx);
+    if (kind === 'basket') refreshBoard(fish.toBasket());
+    else if (kind === 'box' && a.boat.boxFish.length < a.boat.boxCap) fish.toBox(a.boat);
     else fish.drop();
+    audio.play('drop');
     return;
   }
+  if (kind === 'seat' && player.seat && player.seat.src === a.seat) return standUp();
   if (fishing.state !== 'idle') return;   // 手上拿著釣竿
-  if (nearHelm()) return takeHelm();
-  const ck = nearCrack();
-  if (ck) {
-    if (!wrench) return toast('要有扳手才能修，商店有賣');
-    ck.boat.repair(ck.crack);
-    return toast(ck.boat.damage.length ? `修好一處，還有 ${ck.boat.damage.length} 處（耐久 ${hpText(ck.boat)}）` : `都修好了（耐久 ${hpText(ck.boat)}）`);
-  }
-  const mr = nearBollard();
-  if (mr) {
-    if (mr.tied) { mr.boat.moor = null; toast(`解開了${mr.boat.spec.name}的纜繩`); } else { tieBoat(mr); toast(`${mr.boat.spec.name}的纜繩綁好了`); }
-    return saveGame();
-  }
-  const it = fish.nearest(player.pos, 1.5);
-  if (it) return fish.pick(it);
-  const bx = nearBox();
-  if (bx && bx.boxFish.length) return fish.fromBox(bx);
-  if (nearButton() && fish.basket.length) {
-    const total = fish.sell();
-    setMoney(money + total);
-    refreshBoard();
-    saveGame();
-    return toast(`賣出，得到 $${total}`);
-  }
-  const sh = nearShelf();
-  if (sh) {
-    const o = offer(sh.id);
-    if (o.price === null) return toast(`${o.lines[0]}：${o.lines[1]}`);
-    if (money < o.price) return toast(`錢不夠，${o.name}要 $${o.price}`);
-    setMoney(money - o.price);
-    o.buy();
-    refreshTags();
-    saveGame();
-    toast(`買了${o.name}`);
+  switch (kind) {
+    case 'helm': return takeHelm();
+    case 'crack':
+      if (!wrench) return toast('要有扳手才能修，商店有賣');
+      a.boat.repair(a.crack);
+      audio.play('repair');
+      return toast(a.boat.damage.length ? `修好一處，還有 ${a.boat.damage.length} 處（耐久 ${hpText(a.boat)}）` : `都修好了（耐久 ${hpText(a.boat)}）`);
+    case 'bollard': {
+      const mr = a.moor;
+      if (mr.tied) { mr.boat.moor = null; toast(`解開了${mr.boat.spec.name}的纜繩`); } else { tieBoat(mr); toast(`${mr.boat.spec.name}的纜繩綁好了`); }
+      audio.play('rope');
+      return saveGame();
+    }
+    case 'item': audio.play('pick'); return fish.pick(a.item);
+    case 'box': if (a.boat.boxFish.length) { audio.play('pick'); fish.fromBox(a.boat); } return;
+    case 'lamp':
+      a.boat.lampOn = !a.boat.lampOn;
+      audio.play('switch');
+      saveGame();
+      return toast(a.boat.lampOn ? '船燈打開了' : '船燈關掉了');
+    case 'seat': return sitDown(a.boat, a.seat);
+    case 'button': {
+      if (!fish.basket.length) return;
+      const total = fish.sell();
+      setMoney(money + total);
+      refreshBoard();
+      saveGame();
+      audio.play('coin');
+      return toast(`賣出，得到 $${total}`);
+    }
+    case 'shelf': {
+      const o = offer(a.shelf.id);
+      if (o.price === null) return toast(`${o.lines[0]}：${o.lines[1]}`);
+      if (money < o.price) return toast(`錢不夠，${o.name}要 $${o.price}`);
+      o.buy();
+      setMoney(money - o.price);
+      refreshTags();
+      saveGame();
+      audio.play('coin');
+      return toast(o.done || `買了${o.name}`);
+    }
+    default: if (player.seat) standUp();
   }
 }
 
 // 畫面下方的提示：能做什麼就顯示什麼
-let promptText = null;
+let promptText = null, aimHit = false;
 function updatePrompt() {
   let text = '';
+  const a = aimTarget(), kind = a ? a.kind : '';
+  if (!!a !== aimHit) { aimHit = !!a; $('aim').classList.toggle('hit', aimHit); }   // 對準了東西：準心變成金色的大圈
   if (mode === 'walk') {
-    const free = !fish.held && fishing.state === 'idle';
-    const it = free && !nearHelm() ? fish.nearest(player.pos, 1.5) : null;
-    const bx = nearBox(), sh = free ? nearShelf() : null;
-    const ck = free && !nearHelm() ? nearCrack() : null;
-    const mr = free ? nearBollard() : null;
+    const ab = a && a.boat;
     if (player.swim) {
       text = stamina < 0.3 ? '快沒力了！趕快上岸，或游到船邊爬上去'
         : fish.held ? `捧著${fish.held.sp.name}游：比較慢，也比較累` : '';
     } else if (fish.held && fish.held.can) {
-      const b = nearTank();
+      const b = kind === 'tank' ? ab : null;
       text = b && b.spec.tank - b.fuel >= 0.1 ? `按 E 把油倒進油箱（${litres(b.fuel)} / ${b.spec.tank} 公升）`
-        : `${itemLabel(fish.held)}${b ? '　油箱是滿的' : ''}　按 E 放下`;
+        : `${itemLabel(fish.held)}${b ? '　油箱是滿的' : ''}　按 E 放下${!b && nearTank() ? '（對準油箱可以加油）' : ''}`;
     } else if (fish.held) {
-      text = nearBasket() ? '按 E 把魚放進籃子'
-        : bx ? (bx.boxFish.length < bx.boxCap ? `按 E 放進魚箱（${bx.boxFish.length}/${bx.boxCap}）` : `魚箱滿了（${bx.boxCap}/${bx.boxCap}）　按 E 放在地上`)
-          : `${fishLabel(fish.held)}　按 E 放下`;
+      text = kind === 'basket' ? '按 E 把魚放進籃子'
+        : kind === 'box' ? (ab.boxFish.length < ab.boxCap ? `按 E 放進魚箱（${ab.boxFish.length}/${ab.boxCap}）` : `魚箱滿了（${ab.boxCap}/${ab.boxCap}）　按 E 放在地上`)
+          : `${fishLabel(fish.held)}　按 E 放下${nearBox() ? '（對準魚箱可以放進去）' : nearBasket() ? '（對準籃子可以放進去）' : ''}`;
     } else if (fishing.state === 'wait') text = '等魚上鉤…（按 F 收回）';
     else if (fishing.state === 'bite') text = '魚咬了！快按 F';
     else if (fishing.state !== 'idle') text = '';
-    else if (nearHelm()) text = '按 E 掌舵';
-    else if (ck) text = wrench ? '按 E 用扳手修補破洞' : '船板破了一個洞（要有扳手才能修）';
-    else if (mr) text = mr.tied ? `按 E 解開${mr.boat.spec.name}的纜繩` : `按 E 把${mr.boat.spec.name}的纜繩綁在這根樁上`;
-    else if (it) text = `按 E 拿起${it.sp.name}`;
-    else if (bx) text = bx.boxFish.length ? `按 E 從魚箱拿一條出來（${bx.boxFish.length}/${bx.boxCap}）` : `魚箱是空的（0/${bx.boxCap}）`;
-    else if (nearButton() && fish.basket.length) text = `按 E 按下按鈕賣出（$${fish.basketTotal}）`;
-    else if (nearBasket() || nearButton()) text = '把魚拿過來放進籃子，就會顯示價格';
-    else if (sh) {
-      const o = offer(sh.id);
-      text = o.price === null ? `${o.lines[0]}：${o.lines[1]}` : money >= o.price ? `按 E 購買${o.name}　$${o.price}` : `${o.name}　$${o.price}（錢不夠）`;
-    } else if (!player.boat && Math.hypot(player.x - (SHOP.x + 1.6), player.z - (SHOP.z + SHOP.d / 2 + 2)) < 3.2) {
+    else if (kind === 'helm') text = '按 E 掌舵';
+    else if (kind === 'crack') text = wrench ? '按 E 用扳手修補破洞' : '船板破了一個洞（要有扳手才能修）';
+    else if (kind === 'bollard') text = a.moor.tied ? `按 E 解開${a.moor.boat.spec.name}的纜繩` : `按 E 把${a.moor.boat.spec.name}的纜繩綁在這根樁上`;
+    else if (kind === 'item') text = `按 E 拿起${a.item.can ? itemLabel(a.item) : a.item.sp.name}`;
+    else if (kind === 'box') text = ab.boxFish.length ? `按 E 從魚箱拿一條出來（${ab.boxFish.length}/${ab.boxCap}）` : `魚箱是空的（0/${ab.boxCap}）`;
+    else if (kind === 'tank') text = `油箱　${litres(ab.fuel)} / ${ab.spec.tank} 公升（提著油桶對準這裡按 E 加油）`;
+    else if (kind === 'lamp') text = ab.lampOn ? '按 E 關掉船燈' : '按 E 打開船燈';
+    else if (kind === 'seat') text = player.seat && player.seat.src === a.seat ? '按 E 站起來' : '按 E 坐下';
+    else if (kind === 'button') text = fish.basket.length ? `按 E 按下按鈕賣出（$${fish.basketTotal}）` : '把魚拿過來放進籃子，就會顯示價格';
+    else if (kind === 'basket') text = '把魚拿過來放進籃子，就會顯示價格';
+    else if (kind === 'shelf') {
+      const o = offer(a.shelf.id);
+      text = o.price === null ? `${o.lines[0]}：${o.lines[1]}` : money >= o.price ? `按 E ${o.act || `購買${o.name}`}　$${o.price}` : `${o.name}　$${o.price}（錢不夠）`;
+    } else if (player.seat) text = '坐著（按 E 或移動鍵站起來）';
+    else if (!player.boat && Math.hypot(player.x - (SHOP.x + 1.6), player.z - (SHOP.z + SHOP.d / 2 + 2)) < 3.2) {
       text = `${SHOP.name}　${SHOP.hint}`;
     }
   } else if (mode === 'helm') {
@@ -1419,16 +1539,17 @@ function updateWeather(dt) {
   // 天黑了燈才亮：碼頭燈、船上的油燈、燈塔的光束
   const glow = clamp((night - 0.35) / 0.45, 0, 1);
   if (boatLight.parent !== boat.mesh) { boat.mesh.add(boatLight); boatLight.position.copy(boat.parts.lamp); }
-  boatLight.intensity = 10 * glow;
+  boatLight.intensity = boat.lampOn ? 10 * glow : 0;   // 船燈可以自己關掉
   lampLights.forEach((l, i) => {
     l.intensity = 10 * glow;
     shared.uLamp.value[i].set(l.position.x, l.position.z, 0.55 * glow);
   });
   EXTRA_LAMPS.forEach((p, i) => shared.uLamp.value[5 + i].set(p.x, p.z, p.k * glow));
   for (const m of BULBS) m.color.copy(m.userData.base).multiplyScalar(0.7 + 1.5 * glow * m.userData.k);   // 燈泡：天黑後亮到會暈開
+  for (const b of boats) b.showLamp(glow);   // 船上的燈另外看開關
   for (const p of POOLS) { p.mesh.visible = glow > 0.02; p.mat.opacity = p.k * glow; }
   bloom.strength = 0.22 + 0.16 * glow;
-  shared.uLamp.value[4].set(boat.x, boat.z, boat.sinking ? 0 : 0.45 * glow);
+  shared.uLamp.value[4].set(boat.x, boat.z, boat.sinking || !boat.lampOn ? 0 : 0.45 * glow);
   const lit = clamp(0.3 + L.amb[1], 0, 1);
   for (const m of UNLIT) m.color.setScalar(lit);
   for (const m of GLOW) m.emissiveIntensity = 1.3 * glow;   // 天黑了，窗戶透出燈光
@@ -1627,7 +1748,7 @@ function updateSwim(dt) {
     if (stamina <= 0 && !drown) { stamina = 0; beginDrown('你游到沒力，被救回港口'); }
   } else if (!player.swim) stamina = Math.min(1, stamina + dt / 12);
 
-  if (player.swim && !wasSwim) splash(player.x, playerWater(player.x, player.z) + 0.1, player.z, 18);
+  if (player.swim && !wasSwim) { splash(player.x, playerWater(player.x, player.z) + 0.1, player.z, 18); audio.play('dive'); }
   wasSwim = player.swim;
 
   const show = mode === 'walk' && (player.swim || stamina < 0.999);
@@ -1740,10 +1861,10 @@ const r2 = (v) => Math.round(v * 100) / 100;
 function saveGame() {
   if (saveOff) return;
   const data = {
-    v: 1, money, rodLv, wrench,
+    v: 1, money, rodLv, rodBroken, wrench,
     clock: Object.fromEntries(CLOCK_KEYS.map((k) => [k, r2(climate[k])])),
     boats: boats.filter((b) => !b.sinking).map((b) => ({
-      type: b.spec.id, engineLv: b.engineLv, boxLv: b.boxLv, fuel: r2(b.fuel), moor: b.moor ? b.moor.i : -1,
+      type: b.spec.id, engineLv: b.engineLv, boxLv: b.boxLv, fuel: r2(b.fuel), moor: b.moor ? b.moor.i : -1, lamp: b.lampOn ? 1 : 0,
       cracks: b.damage.map((c) => [r2(c.lx), r2(c.lz), r2(c.dmg)]),
       box: b.boxFish.map((it) => [it.id, it.kg, it.len]),
       cans: fish.items.filter((it) => it.can && it.boat === b).map((it) => [r2(it.lx), r2(it.lz), r2(it.liters)]),
@@ -1767,6 +1888,7 @@ function loadGame() {
     b.engineLv = clamp(o.engineLv | 0, 0, MAX_LEVEL);
     if (o.boxLv > 0) b.setBox(clamp(o.boxLv | 0, 1, MAX_LEVEL));
     b.fuel = clamp(+o.fuel || 0, 0, b.spec.tank);
+    b.lampOn = o.lamp !== 0;
     for (const [lx, lz, dmg] of o.cracks ?? []) if (b.hp > dmg) b.restoreCrack(lx, lz, dmg);
     for (const [id, kg, len] of o.box ?? []) if (SPECIES[id] && b.boxFish.length < b.boxCap) fish.stowFish(b, id, kg, len);
     for (const [lx, lz, l] of o.cans ?? []) if (b.deckContains(lx, lz)) fish.stowCan(b, lx, lz, l);
@@ -1778,6 +1900,7 @@ function loadGame() {
   camHeading = boat.heading;
   setMoney(Math.max(0, d.money | 0));
   rodLv = clamp(d.rodLv | 0, 0, MAX_LEVEL);
+  rodBroken = !!d.rodBroken;
   wrench = !!d.wrench;
   for (const k of CLOCK_KEYS) if (d.clock && Number.isFinite(d.clock[k])) climate[k] = d.clock[k];
   climate.cloud = climate.cloudGoal;
@@ -1796,6 +1919,11 @@ function updateFishUi() {
   if (!on) return;
   const fight = st === 'fight';
   $('barSafe').style.display = $('barMark').style.display = $('prog').style.display = fight ? 'block' : 'none';
+  // 釣竿的負荷：只有魚的力氣大到可能把竿子拉斷時才顯示；快滿的時候整塊介面跟著抖
+  const strain = fight ? fishing.strain : 0;
+  $('strain').style.display = fight && fishing.risk > 0 ? 'flex' : 'none';
+  $('strainFill').style.width = `${Math.min(strain, 1) * 100}%`;
+  $('fishui').style.marginLeft = strain > 0.35 ? `${(Math.random() - 0.5) * 10 * strain}px` : '0';
   if (!fight) {
     $('barFill').style.width = `${fishing.power * 100}%`;
     $('barFill').style.background = '#e2b21c';
@@ -1810,7 +1938,7 @@ function updateFishUi() {
   $('barMark').style.background = fishing.inZone ? '#fff' : '#ff8a70';
   $('progFill').style.width = `${clamp(fishing.progress, 0, 1) * 100}%`;
   $('fishLabel').textContent = `把白色指標維持在綠色區間內　還有 ${Math.max(fishing.dist, 0).toFixed(0)} 公尺`;
-  $('fishHint').textContent = fishing.inZone ? '很好，保持住' : fishing.force < fishing.zone ? '力道不夠：按住 F' : '太用力了：放開 F';
+  $('fishHint').textContent = strain > 0.5 ? '釣竿快斷了！放開 F！' : fishing.inZone ? '很好，保持住' : fishing.force < fishing.zone ? '力道不夠：按住 F' : '太用力了：放開 F';
 }
 
 let wakeIdx = 0, wakeTimer = 0, sprayAcc = 0, crestSide = 1, crestI = -1, jetShake = 0;
@@ -1876,6 +2004,7 @@ function advance(dt) {
 
   if (mode === 'walk') {
     const v = view.walk;
+    if (player.seat && (keys.w || keys.a || keys.s || keys.d || keys.space)) standUp();
     const f = drown ? 0 : (keys.w ? 1 : 0) - (keys.s ? 1 : 0), r = drown ? 0 : (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
     const cy = Math.cos(v.yaw), sy = Math.sin(v.yaw);
     // 人在水邊或水裡才需要知道浪高
@@ -1983,6 +2112,25 @@ function drawFrame(dt) {
   audio.set(shared.uWaveScale.value * stormK(cp.x, cp.z) * (0.35 + 0.65 * shelterAt(cp.x, cp.z)), Math.max(sea.rumble * 0.6, 1.5 * crestRoar, 1.3 * whirlRoar), under,
     boat.fuel > 0 ? Math.abs(boat.throttle) : 0, Math.abs(boat.speed) / 7, rainNow, spoutNear, spoutPan, under ? 0 : clamp((galeHere - 5) / 32, 0, 1.4));
 
+  // 實地錄音的那一層：外海的浪、岸邊的小浪、港口的海鷗、雨、引擎、捲線器、腳步
+  {
+    const off = offAt(cp.x, cp.z), helm = mode === 'helm';
+    const walking = mode === 'walk' && player.moving && player.h <= 0 && !player.swim && !player.seat;
+    audio.ambient({
+      under,
+      sea: clamp(0.2 + 0.17 * shared.uWaveScale.value * stormK(cp.x, cp.z), 0, 1) * clamp((off - 15) / 90, 0, 1),   // 平常的外海約五成，暴風雨裡八成
+      shore: clamp(1 - off / 70, 0, 1) * clamp(0.4 + 0.6 * shelterAt(cp.x, cp.z), 0, 1),
+      gulls: clamp(1 - Math.hypot(cp.x + 4, cp.z - 118) / 260, 0, 1) * clamp(1 - night * 1.6, 0, 1) * clamp(1 - rainNow * 3, 0, 1),
+      rain: rainNow,
+      engine: helm && boat.fuel > 0 && !boat.sinking ? 1 : 0,
+      throttle: Math.max(Math.abs(boat.throttle), Math.abs(boat.speed) / boat.maxSpeed),
+      pitch: boat.spec.id === 'skiff' ? 1.25 : boat.spec.id === 'fisher' ? 1 : 0.82,
+      reel: fishing.state === 'fight' && fishing.reel ? 1 : 0,
+      steps: walking ? (keys.shift ? 1.3 : 0.75) : 0,
+      wood: !!player.boat || onDeck(player.x, player.z),
+    });
+  }
+
   shared.uTime.value = time;
   // 樹搖的幅度跟著風：平常微微晃，暴風圈裡晃得厲害
   WIND.amp.value = clamp(0.38 * wind + 1.5 * clamp(sea.storm, 0, 1) * (stormK(cp.x, cp.z) - 1), 0.15, 2.6);
@@ -2048,7 +2196,8 @@ renderer.setAnimationLoop((ms) => {
 // 供除錯與測試使用
 window.__sim = {
   advance, drawFrame, get boat() { return boat; }, boats, addBoat, offer, refreshTags, setMoney, nearBox, nearShelf, SHELF,
-  get rodLv() { return rodLv; }, player, ocean, keys, view, bedAt, walkGround, walkWorld, shelterAt, nearHelm, interact, toggleFp,
+  get rodLv() { return rodLv; }, set rodLv(v) { rodLv = v; }, get rodBroken() { return rodBroken; }, set rodBroken(v) { rodBroken = v; refreshTags(); },
+  aimTarget, sitDown, standUp, offAt, audio, player, ocean, keys, view, bedAt, walkGround, walkWorld, shelterAt, nearHelm, interact, toggleFp,
   fish, fishing, pickFish, isWater, SELL, get money() { return money; },
   sea, dangerAt, tsuAt, stormK, waterY, nearTank, nearCrack, get wrench() { return wrench; }, set wrench(v) { wrench = v; },
   get wreck() { return wreck; }, climate, saveGame, loadGame, wipeSave, lightning, updateWeather, boatEnv, rain, bolt, spouts, SAVE_KEY,
