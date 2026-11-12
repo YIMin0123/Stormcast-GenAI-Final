@@ -88,7 +88,7 @@ function faceTexture() {
     g.fillStyle = '#6a4632'; g.fillRect(x + 1, 10, 4, 3);       // 下半淡一點
     g.fillStyle = '#ffffff'; g.fillRect(x + 1, 4, 2, 3);        // 亮點
   }
-  g.fillStyle = '#f5a3a0'; g.fillRect(1, 14, 4, 2); g.fillRect(27, 14, 4, 2);   // 腮紅
+  g.fillStyle = '#f5a3a0'; g.fillRect(4, 14, 3, 2); g.fillRect(25, 14, 3, 2);   // 腮紅
   g.fillStyle = '#c9584f'; g.fillRect(15, 15, 2, 1);                             // 嘴
   faceTex = new THREE.CanvasTexture(cv);
   faceTex.magFilter = faceTex.minFilter = THREE.NearestFilter;
@@ -155,7 +155,7 @@ export function buildFigure() {
   parent = head; oy = 0.95;
   const HY = 1.17;   // 頭的中心高度
   const at = (pts) => pts.map(([x, y, z]) => [x, y + HY, z]);
-  put(solid(at([...ring(-0.215, -0.13, 0.15, 0.17, 0.06), ...ring(-0.13, -0.24, 0.25, 0.27, 0.07), ...ring(0.085, -0.25, 0.25, 0.285, 0.07),
+  put(solid(at([...ring(-0.215, -0.1, 0.13, 0.1, 0.04), ...ring(-0.15, -0.2, 0.25, 0.2, 0.07), ...ring(-0.03, -0.245, 0.25, 0.262, 0.08), ...ring(0.085, -0.25, 0.25, 0.285, 0.07),
     ...ring(0.2, -0.22, 0.22, 0.25, 0.09), ...ring(0.255, -0.13, 0.13, 0.15, 0.06)]), skin), 0, 0, 0);
   const faceMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.236), face);
   faceMesh.rotation.y = Math.PI / 2;
@@ -168,7 +168,7 @@ export function buildFigure() {
   }
   for (const side of [-1, 1]) {
     put(solid(at([[0.07, 0.12, side * 0.3], [0.23, 0.12, side * 0.3], [0.07, 0.12, side * 0.27], [0.23, 0.12, side * 0.27],
-      [0.2, -0.1, side * 0.305], [0.2, -0.1, side * 0.28], [0.15, -0.27, side * 0.285], [0.15, -0.27, side * 0.265]]), hair), 0, 0, 0);   // 臉頰旁的髮片
+      [0.2, -0.08, side * 0.29], [0.2, -0.08, side * 0.262], [0.16, -0.24, side * 0.235], [0.16, -0.24, side * 0.215]]), hair), 0, 0, 0);   // 臉頰旁的髮片
   }
   put(solid(at([[-0.3, 0.11, 0.05], [-0.3, 0.11, -0.05], [-0.29, 0.02, 0.04], [-0.29, 0.02, -0.04], [-0.48, -0.03, 0.085], [-0.48, -0.03, -0.085],
     [-0.38, -0.12, 0.08], [-0.38, -0.12, -0.08], [-0.45, -0.37, 0]]), hair), 0, 0, 0);                                                    // 馬尾
