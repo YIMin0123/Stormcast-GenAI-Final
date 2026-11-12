@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { makeTerrain, computeShelter, computeShoreDist, ISLANDS } from './terrain.js';
-import { waterVert, waterFrag, terrainVert, terrainFrag, grassVert, grassFrag, skyVert, skyFrag, HAZE, RAIN_HAZE } from './renderShaders.js';
+import { waterVert, waterFrag, terrainVert, terrainFrag, grassVert, grassFrag, skyVert, skyFrag, diagVert, diagFrag, HAZE, RAIN_HAZE } from './renderShaders.js';
 import { FftOcean, makeFoamTexture } from './ocean.js';
 import { Boat, BOAT_TYPES, BOX_CAP } from './boat.js';
 import { BOAT_ORDER, CAN, newKit, shopItem } from './boatdata.js';
@@ -72,10 +72,10 @@ let BASE_RATIO = ratioFor();
 let ratioSaved = parseFloat(getPref('stormcast.res')) >= 0.5;
 let pixelRatio = ratioSaved ? clamp(parseFloat(getPref('stormcast.res')), 0.5, RATIO_MAX) : BASE_RATIO;
 const GFX = [
-  { name: '手機', shadow: 1024, shadowHalf: 40, grass: 3000, ao: false, wet: false, post: false, lite: true },
-  { name: '低', shadow: 1536, shadowHalf: 54, grass: 6000, ao: false, wet: false, post: true, lite: false },
-  { name: '中', shadow: 2048, shadowHalf: 54, grass: 10000, ao: true, wet: false, post: true, lite: false },
-  { name: '高', shadow: 3072, shadowHalf: 54, grass: 14000, ao: true, wet: true, post: true, lite: false },
+  { name: '手機', shadow: 1024, shadowHalf: 40, grass: 3000, ao: false, wet: false, post: false, lite: true, haze: 1.9, far: 520 },
+  { name: '低', shadow: 1536, shadowHalf: 54, grass: 6000, ao: false, wet: false, post: true, lite: false, haze: 1, far: 820 },
+  { name: '中', shadow: 2048, shadowHalf: 54, grass: 10000, ao: true, wet: false, post: true, lite: false, haze: 1, far: 820 },
+  { name: '高', shadow: 3072, shadowHalf: 54, grass: 14000, ao: true, wet: true, post: true, lite: false, haze: 1, far: 820 },
 ];
 // 以前只有低中高三檔（0–2，存在 stormcast.gfx），現在前面多了「手機」，舊的設定往後挪一格
 const oldGfx = getPref('stormcast.gfx'), newGfx = getPref('stormcast.gfx2');
@@ -90,9 +90,17 @@ document.body.appendChild(renderer.domElement);
 const canvas = renderer.domElement;
 
 // 要能畫進浮點貼圖：32 位元的最好；不少手機只支援 16 位元的，海浪模擬會退回 16 位元（見 ocean.js），一樣能玩。
-// ?halffloat：在電腦上假裝不支援 32 位元，測試退路
-if (new URLSearchParams(window.location.search).has('halffloat')) renderer.extensions.get = ((get) => (n) => (n === 'EXT_color_buffer_float' || n === 'OES_texture_float_linear' ? null : get(n)))(renderer.extensions.get.bind(renderer.extensions));
-if (new URLSearchParams(window.location.search).has('halffloat')) renderer.extensions.has = ((has) => (n) => (n === 'EXT_color_buffer_float' || n === 'OES_texture_float_linear' ? false : has(n)))(renderer.extensions.has.bind(renderer.extensions));
+// 測試用：在電腦上假裝不支援某些擴充功能。?halffloat：沒有 32 位元浮點緩衝（也不能平滑取樣）；
+// ?nofloatlinear：只是不能平滑取樣 32 位元浮點貼圖（三星 Mali 這類手機）
+{
+  const q = new URLSearchParams(window.location.search);
+  const off = new Set([...(q.has('halffloat') ? ['EXT_color_buffer_float', 'OES_texture_float_linear'] : []), ...(q.has('nofloatlinear') ? ['OES_texture_float_linear'] : [])]);
+  if (off.size) {
+    const ex = renderer.extensions, get = ex.get.bind(ex), has = ex.has.bind(ex);
+    ex.get = (n) => (off.has(n) ? null : get(n));
+    ex.has = (n) => (off.has(n) ? false : has(n));
+  }
+}
 if (!renderer.capabilities.isWebGL2 || !(renderer.extensions.has('EXT_color_buffer_float') || renderer.extensions.has('EXT_color_buffer_half_float'))) {
   fail('這個瀏覽器或顯示卡不支援浮點數渲染目標（WebGL2 + EXT_color_buffer_float／half_float），無法執行。');
 }
@@ -321,7 +329,7 @@ const shared = {
   uHullSize: { value: Array.from({ length: 3 }, () => new THREE.Vector3(1, 1, 0)) },
   uDanger: { value: dangerTex }, uTsuK: { value: tsuKTex }, uStorm: { value: 0 }, uTsu: { value: new THREE.Vector4(0, 1, 0, 0) }, uTsu2: { value: new THREE.Vector2() }, uGloom: { value: 0 },
   uSunCol: { value: new THREE.Vector3(1, 0.93, 0.8) }, uAmbient: { value: new THREE.Vector3(1, 1, 1) },
-  uDay: { value: 1 }, uDusk: { value: 0 }, uFog: { value: 0 }, uFlash: { value: 0 }, uFlashDir: { value: new THREE.Vector3(0, 1, 0) }, uRain: { value: 0 }, uCloudT: { value: new THREE.Vector2() }, uSwell: { value: 0 }, uSurge: { value: 0 },
+  uDay: { value: 1 }, uDusk: { value: 0 }, uFog: { value: 0 }, uHazeK: { value: 1 }, uFlash: { value: 0 }, uFlashDir: { value: new THREE.Vector3(0, 1, 0) }, uRain: { value: 0 }, uCloudT: { value: new THREE.Vector2() }, uSwell: { value: 0 }, uSurge: { value: 0 },
   uVortex: { value: Array.from({ length: 3 }, () => new THREE.Vector4()) },
   uLamp: { value: Array.from({ length: 8 }, () => new THREE.Vector3()) },
   uBlob: { value: new THREE.Vector3() }, uWet: { value: 0 }, uRainbow: { value: 0 },
@@ -379,7 +387,7 @@ scene.add(sun, sun.target, hemi);
 // ---- 陰影 -------------------------------------------------------------------
 // 太陽（晚上是月亮）投一張陰影貼圖，範圍是鏡頭注視點周圍一塊方形，跟著鏡頭走。
 // 樹、石頭、船、人、港口的建築、山坡都會投影；地形用自己的著色器取樣這張貼圖。
-// 每隔一幀更新一次，跟水面倒影輪流畫，省一半的成本
+// 每一幀都更新（以前隔一幀，手機幀數低的時候人一走動，影子就落在後面一截）
 // 貼圖 3072：在 Iris Xe 上比 2048 每幀多 0.6 毫秒左右，4096 則要多 4.5 毫秒（量過），所以取 3072、範圍收到 54 公尺
 let SHADOW_HALF = gfx.shadowHalf;   // 畫質「手機」收到 40 公尺（貼圖小，範圍也跟著收，影子才不會太粗）
 let SHADOW_SIZE = gfx.shadow;   // 畫質「高」是 3072，中 2048，低 1536，手機 1024
@@ -398,13 +406,14 @@ THREE.ShaderChunk.shadowmap_pars_fragment = THREE.ShaderChunk.shadowmap_pars_fra
 shared.uShadowMat.value = sun.shadow.matrix;
 shared.uShadowTexel.value = 1 / SHADOW_SIZE;
 const _sr = new THREE.Vector3(), _su = new THREE.Vector3(), _sc = new THREE.Vector3();
-// 投影用的太陽方向：太陽每走過 0.35 度才跟上一次（約兩秒）。每一幀都跟的話，貼圖的格子一直在轉，
-// 影子的邊緣會一格一格地爬（看起來在蠕動、細的影子忽粗忽細）；一步一步跟，兩步之間影子是完全靜止的
-const shDir = sunDir.clone(), SH_STEP = Math.cos(0.35 * Math.PI / 180);
+// 投影用的太陽方向：每一幀都跟著太陽走（以前是每走 0.35 度才跟一次，影子每隔一兩秒就跳一下，使用者不要）。
+// 陰影貼圖的格子方向用固定的參考軸（世界的 +Z，太陽的路徑大致繞著它轉）算，太陽移動時格子幾乎不轉，
+// 影子的邊緣只會跟著平順地滑動，不會一格一格地蠕動
+const shDir = sunDir.clone(), SH_REF = new THREE.Vector3(0, 0, 1);
 // 把光源擺到注視點上方。位置對齊陰影貼圖的格子，鏡頭移動時影子的邊緣才不會閃
 function placeSun(center) {
-  if (shDir.dot(sunDir) < SH_STEP) shDir.copy(sunDir);
-  _sr.set(0, 1, 0).cross(shDir);
+  shDir.copy(sunDir);
+  _sr.copy(SH_REF).cross(shDir);
   if (_sr.lengthSq() < 1e-6) _sr.set(1, 0, 0);
   _sr.normalize();
   _su.copy(shDir).cross(_sr);
@@ -705,7 +714,7 @@ function renderReflection(under, turn = true) {
   water.visible = false; sky.visible = false; spray.points.visible = false;
   const rainOn = rain.lines.visible, driftOn = spindrift.mesh.visible;
   rain.lines.visible = false; spindrift.mesh.visible = false;
-  scenery.update(camera.position, true);   // 倒影裡的樹和石頭用簡化版，雨省略
+  scenery.update(camera.position, true, gfx.far);   // 倒影裡的樹和石頭用簡化版，雨省略
   grass.visible = false;                   // 倒影裡不畫雜草
   shared.uReflPass.value = 1;
   renderer.clippingPlanes = clipOn;
@@ -721,7 +730,7 @@ function renderReflection(under, turn = true) {
   shared.uReflPass.value = 0;
   water.visible = true; sky.visible = true; spray.points.visible = true;
   rain.lines.visible = rainOn; spindrift.mesh.visible = driftOn;
-  scenery.update(camera.position);
+  scenery.update(camera.position, false, gfx.far);
   grass.visible = true;
 }
 
@@ -754,7 +763,7 @@ function renderDeckReflection() {
   water.visible = false; sky.visible = false; spray.points.visible = false;
   const rainOn = rain.lines.visible, driftOn = spindrift.mesh.visible;
   rain.lines.visible = false; spindrift.mesh.visible = false;
-  scenery.update(camera.position, true);
+  scenery.update(camera.position, true, gfx.far);
   grass.visible = false;
   shared.uReflPass.value = 1; shared.uReflY.value = DECK_Y;
   WET.reflTex.value = null;   // 正在畫這張貼圖的時候不能同時拿它來用
@@ -772,7 +781,7 @@ function renderDeckReflection() {
   shared.uReflPass.value = 0; shared.uReflY.value = 0;
   water.visible = true; sky.visible = true; spray.points.visible = true;
   rain.lines.visible = rainOn; spindrift.mesh.visible = driftOn;
-  scenery.update(camera.position);
+  scenery.update(camera.position, false, gfx.far);
   grass.visible = true;
 }
 let deckReady = false;
@@ -1580,6 +1589,7 @@ function setGfx(lv) {
     grass.geometry = makeGrassGeometry(grassN, GRASS_T);
   }
   applyLite();
+  shared.uHazeK.value = gfx.haze;
   for (const b of $('gfx').children) b.classList.toggle('on', +b.dataset.v === lv);
 }
 for (const b of $('gfx').children) {
@@ -1587,6 +1597,7 @@ for (const b of $('gfx').children) {
   b.addEventListener('click', () => { b.blur(); setGfx(+b.dataset.v); setPref('stormcast.gfx2', gfxLv); gfxSaved = true; });
 }
 applyLite();
+shared.uHazeK.value = gfx.haze;
 // 設定裡換角色：記下來、重新載入（伺服器 30 秒內認得回來的人，會直接接回原本的房間）
 for (const b of $('lookSet').children) {
   b.classList.toggle('on', b.dataset.look === myLook());
@@ -1859,7 +1870,7 @@ function updateWeather(dt) {
   shared.uBeam.value.set(scenery.beam.position.x, scenery.beam.position.z, Math.cos(scenery.beam.rotation.y), -Math.sin(scenery.beam.rotation.y));
   shared.uBeamOn.value = glow;
 
-  airFog.density = Math.hypot(HAZE, fog / 200, RAIN_HAZE * Math.sqrt(rainNow));   // 下大雨時遠處罩在雨幕裡（跟 shader 的 applyFog 一致）
+  airFog.density = Math.hypot(HAZE * shared.uHazeK.value, fog / 200, RAIN_HAZE * Math.sqrt(rainNow));   // 下大雨時遠處罩在雨幕裡（跟 shader 的 applyFog 一致）
   // 霧的顏色：平常是地平線的天色（跟 shader 裡的 skyGradient 一致），起霧時偏灰白
   const mixv = (a, b, t) => a + (b - a) * t;
   const hz = [[0.50, 0.36, 0.016], [0.71, 0.40, 0.028], [0.88, 0.44, 0.055]].map(([clear, dull, dark], i) =>
@@ -2684,14 +2695,14 @@ function drawFrame(dt) {
   WIND.amp.value = clamp(0.38 * wind + 1.5 * clamp(sea.storm, 0, 1) * (stormK(cp.x, cp.z) - 1), 0.15, 2.6);
   WIND.t.value += dt * (0.75 + 0.45 * WIND.amp.value);
   shared.uCenter.value.set(target.x, target.z);
-  scenery.update(cp);   // 近的島畫精細的樹和石頭，遠的畫簡化版，霧裡的不畫
+  scenery.update(cp, false, gfx.far);   // 近的島畫精細的樹和石頭，遠的畫簡化版，霧裡的不畫（畫質「手機」霧比較濃，520 公尺外就不畫）
   // 草皮的中心放在鏡頭前方十幾公尺：畫面裡看得到的近處都有草
   camera.getWorldDirection(_gd);
   _gd.y = 0;
   grass.material.uniforms.uGrassCam.value.copy(cp).addScaledVector(_gd.normalize(), 13);
   grass.visible = true;
   updateBoatShadow();
-  // 偶數幀重畫倒影，奇數幀重畫陰影
+  // 倒影隔一幀重畫一次；陰影每一幀都重畫
   const even = (drawCount++ & 1) === 0;
   // 地面是濕的、鏡頭在港口附近時，還要畫積水的倒影：跟海面倒影輪流，各自每四幀更新一次
   const deckWet = gfx.wet && !under && WET.wet.value > 0.04 && cp.y > DECK_Y + 0.3 && Math.hypot(cp.x + 4, cp.z - 128) < 120;
@@ -2700,7 +2711,7 @@ function drawFrame(dt) {
   if (deckTurn || (deckWet && !deckReady)) { renderDeckReflection(); deckReady = true; }
   if (!deckWet) deckReady = false;
   WET.reflOn.value = deckWet ? 1 : 0;
-  if (!even || !sun.shadow.map) placeSun(target);
+  placeSun(target);
   if (sun.shadow.map) { shared.uShadowMap.value = sun.shadow.map.depthTexture; shared.uShadowOn.value = 1; }
   // 太陽（月亮）在畫面上的位置；背對著它、或人在水裡時沒有光束
   _rv.copy(camera.position).addScaledVector(sunDir, 1000).project(camera);
@@ -2732,9 +2743,11 @@ boat.update(0.016, boatEnv);
 player.place(walkWorld, PLAYER_SPAWN.x, PLAYER_SPAWN.z);
 
 let frame = 0, last = performance.now();
-const fpsEl = new URLSearchParams(window.location.search).has('fps') ? document.body.appendChild(Object.assign(document.createElement('div'), { id: 'fps' })) : null;
+// 角落一直顯示每秒幾幀、平均一幀幾毫秒；網址加 ?fps 的話，後面再加上解析度、畫質、顯示晶片這些細節
+const fpsMore = new URLSearchParams(window.location.search).has('fps');
+const fpsEl = document.body.appendChild(Object.assign(document.createElement('div'), { id: 'fps', textContent: '-- fps　-- ms' }));
 let fpsN = 0, fpsT = performance.now(), gpuName = '';
-if (fpsEl) {
+if (fpsMore) {
   const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
   gpuName = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)).replace(/ANGLE \(|\)$/g, '').slice(0, 60);
 }
@@ -2751,7 +2764,49 @@ function probeGfx(ms, rawMs) {
   setPref('stormcast.gfx2', gfxLv); gfxSaved = true;
   probe = null;
 }
+// ?diag：診斷手機上的海面。每秒在顯示晶片上算一次「人前方 12 公尺」那一點的海床、避浪、離岸距離、岸邊浪高、FFT 浪高，
+// 跟這邊 CPU 算的對照著顯示在畫面左上角，連同顯示晶片名稱和支援的功能。截圖回報用
+const diag = new URLSearchParams(window.location.search).has('diag') ? (() => {
+  const gl = renderer.getContext(), info = gl.getExtension('WEBGL_debug_renderer_info');
+  const gpu = String(info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)).slice(0, 70);
+  const vp = gl.getShaderPrecisionFormat(gl.VERTEX_SHADER, gl.HIGH_FLOAT), fp = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT);
+  const ext = ['EXT_color_buffer_float', 'EXT_color_buffer_half_float', 'OES_texture_float_linear'].map((n) => `${n.replace(/^(EXT|OES)_/, '')}:${gl.getSupportedExtensions().includes(n) ? '有' : '無'}`).join(' ');
+  const rt = new THREE.WebGLRenderTarget(3, 1, { type: ocean.floatRT ? THREE.FloatType : THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+  const u = { ...shared, uDiagP: { value: new THREE.Vector2() } };
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({ vertexShader: diagVert, fragmentShader: diagFrag, uniforms: u, depthTest: false, depthWrite: false }));
+  quad.frustumCulled = false;
+  const dScene = new THREE.Scene(); dScene.add(quad);
+  const el = document.body.appendChild(Object.assign(document.createElement('pre'), { id: 'diag' }));
+  Object.assign(el.style, { position: 'fixed', left: '8px', top: '60px', zIndex: 99, margin: 0, padding: '6px 8px', font: '12px/1.35 monospace', color: '#fff', background: 'rgba(0,0,0,0.72)', whiteSpace: 'pre', pointerEvents: 'none' });
+  const out = new Float32Array(12), hb = new Uint16Array(12), f = (v) => (Number.isFinite(v) ? v.toFixed(2) : String(v));
+  let t = 0;
+  return (ms) => {
+    if (ms - t < 1000) return;
+    t = ms;
+    camera.getWorldDirection(_gd); _gd.y = 0; _gd.normalize();
+    const px = player.x + _gd.x * 12, pz = player.z + _gd.z * 12;
+    u.uDiagP.value.set(px, pz);
+    const prev = renderer.getRenderTarget();
+    renderer.setRenderTarget(rt); renderer.render(dScene, ocean.cam); 
+    if (rt.texture.type === THREE.FloatType) gl.readPixels(0, 0, 3, 1, gl.RGBA, gl.FLOAT, out);
+    else { gl.readPixels(0, 0, 3, 1, gl.RGBA, gl.HALF_FLOAT, hb); for (let i = 0; i < 12; i++) out[i] = THREE.DataUtils.fromHalfFloat(hb[i]); }
+    renderer.setRenderTarget(prev);
+    el.textContent = [
+      `${gpu}`, `高精度 頂點:${vp.precision} 像素:${fp.precision}  ${ext}`,
+      `畫質${gfx.name} 浮點緩衝:${ocean.floatRT ? 32 : 16}位 位移圖:${ocean.cascades[0].disp[0].texture.type === THREE.FloatType ? 32 : 16}位`,
+      `點 (${f(px)}, ${f(pz)})`,
+      `海床   GPU ${f(out[0])}  CPU ${f(bedAt(px, pz))}`,
+      `避浪   GPU ${f(out[1])}  CPU ${f(shelterAt(px, pz))}`,
+      `危險度 GPU ${f(out[2])}  CPU ${f(dangerAt(px, pz))}`,
+      `離岸   GPU ${f(out[3])}`,
+      `沖岸 ${f(out[4])}  岸浪 ${f(out[5])}  FFT浪 ${f(out[6])}  淺水 ${f(out[7])}`,
+      `expo ${f(out[8])}  ph ${f(out[9])}  浪強 ${f(out[10])}  衰減 ${f(out[11])}`,
+      `浮力讀回 ${f(ocean.sampleHeight(px, pz))}`,
+    ].join(String.fromCharCode(10));
+  };
+})() : null;
 renderer.setAnimationLoop((ms) => {
+  if (diag) diag(ms);
   const rawMs = ms - last;
   const dt = Math.min(rawMs / 1000, 0.05);
   last = ms;
@@ -2759,8 +2814,10 @@ renderer.setAnimationLoop((ms) => {
   if (dt > 0) advance(dt);
   drawFrame(dt);
   if (frame++ % 6 === 0) { updatePrompt(); if (mapOpen) drawMap(); }
-  if (fpsEl && ++fpsN && ms - fpsT >= 1000) {
-    fpsEl.textContent = `${Math.round(fpsN * 1000 / (ms - fpsT))} fps　${pixelRatio.toFixed(1)}×　${canvas.width}×${canvas.height}　畫質${gfx.name}　${TOUCH ? '手機' : '電腦'}　${gpuName}`;
+  if (++fpsN && ms - fpsT >= 1000) {
+    const span = ms - fpsT;
+    fpsEl.textContent = `${Math.round(fpsN * 1000 / span)} fps　${(span / fpsN).toFixed(1)} ms`
+      + (fpsMore ? `　${pixelRatio.toFixed(1)}×　${canvas.width}×${canvas.height}　畫質${gfx.name}　${TOUCH ? '手機' : '電腦'}　${gpuName}` : '');
     fpsN = 0; fpsT = ms;
   }
 });
@@ -2773,7 +2830,7 @@ window.__sim = {
   fish, fishing, isWater, SELL, get money() { return money; },
   // 多人
   net, others, chat, boards, garage, enterRoom, applyWorld, myFishUids, takeHelm, releaseHelm, touch, setGfx, setPixelRatio,
-  get gfxLv() { return gfxLv; }, get pixelRatio() { return pixelRatio; }, GFX, get gfx() { return gfx; },
+  get gfxLv() { return gfxLv; }, get pixelRatio() { return pixelRatio; }, GFX, get gfx() { return gfx; }, diag,
   get kit() { return kit; }, get myBoat() { return myBoat; }, get berth() { return berth; }, get room() { return room; }, get inGame() { return inGame; }, get time() { return time; },
   dev: (cmd, o = {}) => net.send({ t: 'dev', cmd, ...o }),   // 測試指令（伺服器開了開發模式才收）：event / calm / skip / money / fish
   sea, dangerAt, tsuAt, stormK, waterY, nearTank, nearCrack, get wrench() { return wrench; },

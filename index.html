@@ -176,7 +176,7 @@
       background: #0b1622; color: #ffe9a8; font-size: 20px; letter-spacing: 2px; }
     @media (orientation: portrait) { body.touch #tRotate { display: flex; } }
     #touchHelp { display: none; }
-    #fps { position: fixed; left: 50%; bottom: 2px; transform: translateX(-50%); z-index: 60; padding: 2px 8px; font: 11px/1.4 monospace;
+    #fps { position: fixed; right: 4px; bottom: 2px; z-index: 60;   /* 右下角；手機右下是按鈕，改放左下（搖桿區，不擋手指） */ padding: 2px 8px; font: 11px/1.4 monospace;
       color: #cfe; background: rgba(0, 0, 0, 0.55); border-radius: 4px; pointer-events: none; white-space: nowrap; }
     html.touch, html.touch body { touch-action: none; overscroll-behavior: none; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }   /* 整頁不准用手指縮放、拖動 */
     body.touch #panel, body.touch #roomList, body.touch #menu, body.touch #chat.open #chatLog { touch-action: pan-y; }                      /* 這幾塊還是要能上下捲 */
@@ -184,6 +184,7 @@
     body.touch input { -webkit-user-select: text; user-select: text; }
     body.touch canvas { touch-action: none; }
     body.touch #keys, body.touch #chatHint { display: none; }
+    body.touch #fps { right: auto; left: 4px; }
     body.touch #touchHelp { display: block; }
     body.touch #panel { left: calc(12px + env(safe-area-inset-left)); }
     body.touch #panel[open] { z-index: 25; }   /* 打開時蓋在聊天訊息和按鈕上面 */

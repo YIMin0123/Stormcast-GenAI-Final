@@ -506,11 +506,11 @@ export function makeScenery(env) {
   //   已經在霧裡的島（約 800 公尺外）不畫；遠的島整座畫簡化版；
   //   所在的島分區處理，鏡頭附近幾十公尺畫精細版，其餘畫簡化版。
   // simple = true（畫水面倒影時）一律用簡化版
-  function update(cam, simple = false) {
+  function update(cam, simple = false, far = 820) {
     for (const o of isles) {
       const d = Math.hypot(cam.x - o.x, cam.z - o.z) - o.R;
       const close = d < 230 && !simple;
-      o.far.visible = !close && d < 820;
+      o.far.visible = !close && d < far;
       o.near.visible = close;
       if (!close) continue;
       for (const c of o.chunks) {
