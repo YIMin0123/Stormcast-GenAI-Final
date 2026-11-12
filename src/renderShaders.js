@@ -445,9 +445,19 @@ vec2 vortexY(vec2 xz) {
   return h;
 }
 
+// 手機（Adreno）的驅動程式連結不了完整版的海面頂點程式（太複雜，連結失敗、海面整片畫不出來）。
+// 那種機器改用拆開的兩版（WATER_SPLIT）：平常沒有巨浪的程式；巨浪來的時候（TSU_ON）換成有巨浪、但岸邊不捲浪也不沖上沙灘的程式（反正都被巨浪淹過去了）
+#if !defined(WATER_SPLIT) || defined(TSU_ON)
+  #define W_TSU 1
+#endif
+#if !defined(WATER_SPLIT) || !defined(TSU_ON)
+  #define W_SWL 1
+#endif
 void main() {
   vec2 xz = position.xz + uCenter;
+#ifdef W_TSU
   if (uTsu.w > 0.0) xz -= uTsu.xy * tsuPull(xz);
+#endif
   // 大漩渦：海面的網格往漩渦中心擠，漏斗的壁才圓滑
   for (int i = 0; i < 3; i++) {
     vec4 v = uVortex[i];
@@ -482,6 +492,7 @@ void main() {
   vec2 tCurl = vec2(0.0);
   vCurlN = vec3(0.0, 1.0, 0.0);
   vCurl = vec2(0.0);
+#ifdef W_TSU
   if (uTsu.w > 0.0) {
     float tK = tsuKAt(xz);
     tw = tsuWave(xz, spacing * 1.5, ti) * tK;
@@ -496,6 +507,7 @@ void main() {
       vCurl = vec2(Bw, smoothstep(0.0, 0.2, B) * (1.0 - smoothstep(2.5, 4.0, abs(a))));
     }
   }
+#endif
   vTsu = tw;
   // 巨浪的水位湧進來（或浪前海水退下去）的那幾秒，岸邊交還給整片海面去畫：淺水模擬不知道有這道浪
   win *= 1.0 - smoothstep(0.25, 1.2, abs(tw.x));
@@ -511,7 +523,12 @@ void main() {
   float lift = runup(ph, expo) * (1.0 - smoothstep(0.0, 2.5, -bedH));
   float sd = shoreDist(xz), pre;
   // 網格比浪還粗的遠處不抬（那裡只畫浪花的線條）
+#ifdef W_SWL
   float swl = sd < 66.0 ? swell(sd, ph, xz, expo, pre).x * smoothstep(6.0, 2.2, spacing) : 0.0;
+#else
+  float swl = 0.0;
+  lift = 0.0;
+#endif
 
   // 模擬範圍內：水面 = 海床 + 模擬出來的水深（略為墊高，薄薄一層水才不會被沙灘吃掉）
   // 周圍都是乾的陸地：把水面壓到地面下，省得白畫

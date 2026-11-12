@@ -397,6 +397,41 @@ if (new URLSearchParams(window.location.search).has('wlod0')) for (const m of [w
 for (const c of new URLSearchParams(window.location.search).get('wno') || '') if ('fsvtw'.includes(c)) for (const m of [water.material, waterFlag.material]) m.defines['NO_' + c.toUpperCase()] = 1;
 // 測試（?wflat）：海面強制放平，分辨「海面真的被抬高」還是「深度、繪製順序」造成的假象
 if (new URLSearchParams(window.location.search).has('wflat')) for (const m of [water.material, waterFlag.material]) m.defines.WFLAT = 1;
+// 有些手機（Adreno 顯示晶片）的驅動程式連結不了完整版的海面程式：連結失敗，海面整片畫不出來，看到的是底下的東西。
+// 第一次畫完就檢查，失敗的話改用拆開的兩版（見 renderShaders.js 的 WATER_SPLIT）：平常不含巨浪，巨浪來的時候換成含巨浪、岸邊不捲浪的那一版。
+// ?wsplit：電腦上也強制用拆開的兩版，測試用
+let waterSplit = false, waterChecked = false;
+function setWaterSplit() {
+  waterSplit = true;
+  for (const m of [water.material, waterFlag.material]) { m.defines.WATER_SPLIT = 1; m.needsUpdate = true; }
+}
+if (new URLSearchParams(window.location.search).has('wsplit')) setWaterSplit();
+function checkWater() {
+  if (waterChecked) return;
+  const p = renderer.properties.get(water.material).currentProgram;
+  if (!p) return;
+  waterChecked = true;
+  const gl = renderer.getContext();
+  if (!waterSplit && !gl.getProgramParameter(p.program, gl.LINK_STATUS)) { console.warn('海面程式連結失敗，改用拆開的兩版'); setWaterSplit(); }
+  // 巨浪那一版先在背後編好：手機上第一次編要卡一兩秒，不要等到巨浪來了才卡
+  if (waterSplit) setTimeout(() => {
+    const warm = water.material.clone();
+    warm.defines = { ...water.material.defines, TSU_ON: 1 };
+    waterWarm = new THREE.Mesh(water.geometry, warm);
+    waterWarm.frustumCulled = false;
+    renderer.compile(waterWarm, camera);
+  }, 3000);
+}
+let waterWarm = null;   // 留著，編好的程式才不會被丟掉
+function syncWaterTsu() {
+  if (!waterSplit) return;
+  const on = shared.uTsu.value.w > 0;
+  for (const m of [water.material, waterFlag.material]) {
+    if (!!m.defines.TSU_ON === on) continue;
+    if (on) m.defines.TSU_ON = 1; else delete m.defines.TSU_ON;
+    m.needsUpdate = true;
+  }
+}
 scene.add(water);
 DECKS.slice(0, 3).forEach((r, i) => shared.uQuay.value[i].set(r.x0, r.z0, r.x1, r.z1));   // 岸壁、防波堤的位置：海面要在牆腳畫水線
 
@@ -2874,7 +2909,9 @@ function drawFrame(dt) {
       SIGHT.r.value.set(1.3, 2.7);
     }
   } else SIGHT.r.value.set(0, 0);
+  syncWaterTsu();
   composer.render();
+  checkWater();
 }
 
 viewReady = true;
@@ -2995,7 +3032,7 @@ window.__sim = {
   fish, fishing, isWater, SELL, get money() { return money; },
   // 多人
   net, others, chat, boards, garage, enterRoom, applyWorld, myFishUids, takeHelm, releaseHelm, touch, setGfx, setPixelRatio,
-  get gfxLv() { return presetOf(); }, get pixelRatio() { return pixelRatio; }, gs, applyGfx, PRESETS, get gfx() { return gfx; }, diag,
+  get gfxLv() { return presetOf(); }, get waterSplit() { return waterSplit; }, get pixelRatio() { return pixelRatio; }, gs, applyGfx, PRESETS, get gfx() { return gfx; }, diag,
   get kit() { return kit; }, get myBoat() { return myBoat; }, get berth() { return berth; }, get room() { return room; }, get inGame() { return inGame; }, get time() { return time; },
   dev: (cmd, o = {}) => net.send({ t: 'dev', cmd, ...o }),   // 測試指令（伺服器開了開發模式才收）：event / calm / skip / money / fish
   sea, dangerAt, tsuAt, stormK, waterY, nearTank, nearCrack, get wrench() { return wrench; },
