@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stormcast</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1622; color: #f3ead6;
+      font-family: "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", system-ui, sans-serif; }
+    canvas { display: block; }
+    .card { position: fixed; background: rgba(46, 30, 16, 0.80); border: 1px solid rgba(240, 214, 160, 0.28);
+      border-radius: 10px; font-size: 13px; user-select: none; }
+    /* 設定：平常收成左上角一顆小按鈕；打開後分成幾區，一區一件事 */
+    #panel { top: 12px; left: 12px; padding: 0; max-height: calc(100vh - 24px); overflow-y: auto; scrollbar-width: thin; }
+    #panel[open] { width: 268px; }
+    #panel > summary { list-style: none; cursor: pointer; padding: 8px 14px; font-weight: 600; letter-spacing: 1px;
+      display: flex; align-items: center; gap: 7px; }
+    #panel > summary::-webkit-details-marker { display: none; }
+    #panel > summary .gear { font-size: 15px; line-height: 1; opacity: 0.85; }
+    #panel > summary .x { margin-left: auto; display: none; color: #dccba6; font-weight: 400; }
+    #panel[open] > summary { border-bottom: 1px solid rgba(240, 214, 160, 0.22); }
+    #panel[open] > summary .x { display: inline; }
+    #panel > summary:hover { background: rgba(255, 255, 255, 0.06); border-radius: 10px; }
+    .sec { padding: 10px 14px 11px; border-bottom: 1px solid rgba(240, 214, 160, 0.14); }
+    .sec:last-child { border-bottom: 0; }
+    .sec h4 { margin: 0 0 7px; font-size: 11px; font-weight: 600; letter-spacing: 2px; color: #c9a86a; }
+    .line { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 6px 0 0; color: #dccba6; }
+    .line:first-of-type { margin-top: 0; }
+    .row label { display: flex; justify-content: space-between; margin-bottom: 4px; color: #dccba6; }
+    .row label b { color: #fff; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .note { margin: 6px 0 0; font-size: 11px; color: #b7a37c; }
+    input[type=range] { width: 100%; margin: 0; accent-color: #e2b21c; }
+    button { padding: 6px 12px; border-radius: 6px; border: 1px solid rgba(240, 214, 160, 0.3);
+      background: rgba(255,255,255,0.08); color: #fff; font: inherit; cursor: pointer; white-space: nowrap; }
+    button:hover { background: rgba(255,255,255,0.18); }
+    .two { display: flex; gap: 6px; }
+    select { padding: 6px 4px; border-radius: 6px; border: 1px solid rgba(240, 214, 160, 0.3);
+      background: #3a2817; color: #fff; font: inherit; }
+    /* 開關：亮起來是開 */
+    #sound { min-width: 52px; border-radius: 999px; padding: 4px 12px; }
+    #sound.on { background: #e2b21c; border-color: #e2b21c; color: #2e1e10; font-weight: 600; }
+    #reset { width: 100%; color: #ffb9a6; border-color: rgba(255, 150, 120, 0.35); }
+    /* 操作說明：按鍵一欄、作用一欄 */
+    #keys > summary { cursor: pointer; font-size: 11px; font-weight: 600; letter-spacing: 2px; color: #c9a86a; }
+    #keys h5 { margin: 10px 0 5px; font-size: 12px; font-weight: 600; color: #f3ead6; }
+    #keys dl { display: grid; grid-template-columns: auto 1fr; gap: 5px 10px; margin: 0; align-items: baseline; }
+    #keys dt { white-space: nowrap; }
+    #keys dd { margin: 0; color: #dccba6; line-height: 1.45; }
+    kbd { display: inline-block; min-width: 14px; padding: 1px 5px; margin-right: 2px; border-radius: 4px; text-align: center;
+      font: inherit; font-size: 11px; color: #fff; background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(240, 214, 160, 0.35); }
+    /* 第一人稱的準心：畫面正中央一個小白點，外面一圈淡淡的環 */
+    #aim { position: fixed; left: 50%; top: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; display: none;
+      pointer-events: none; border-radius: 50%; border: 1.5px solid rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25); }
+    #aim::after { content: ''; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px;
+      border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45); }
+    #hud { top: 12px; right: 12px; padding: 8px 14px; font-size: 14px; font-variant-numeric: tabular-nums; }
+    #hud b { margin-left: 10px; color: #fff; }
+    #hSpeed, #hShip { display: none; margin-left: 18px; }
+    #hud b.low { color: #ff8a70; }
+    #hClock { margin-right: 18px; color: #dccba6; }
+    #fade { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; }
+    #toast { left: 50%; bottom: 176px; transform: translateX(-50%); padding: 7px 16px; font-size: 14px;
+      color: #ffe9a8; display: none; white-space: nowrap; }
+    #fishui { left: 50%; bottom: 226px; transform: translateX(-50%); padding: 10px 16px; width: 320px;
+      display: none; text-align: center; font-size: 14px; }
+    #bar { position: relative; height: 16px; margin: 8px 0 6px; border-radius: 8px; overflow: hidden;
+      background: rgba(0, 0, 0, 0.45); }
+    #barSafe { position: absolute; left: 0; width: 30%; top: 0; bottom: 0; background: rgba(110, 215, 135, 0.6); border-radius: 8px; }
+    #barMark { position: absolute; top: 0; bottom: 0; width: 6px; margin-left: -3px; background: #fff; border-radius: 3px;
+      box-shadow: 0 0 4px rgba(0, 0, 0, 0.8); }
+    #prog { height: 6px; margin: 0 0 6px; border-radius: 3px; overflow: hidden; background: rgba(0, 0, 0, 0.45); }
+    #progFill { height: 100%; width: 0; background: #e2b21c; }
+    #barFill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: #6fd08a; }
+    #fishHint { color: #dccba6; font-size: 12px; }
+    #prompt { left: 50%; bottom: 124px; transform: translateX(-50%); padding: 9px 18px; font-size: 16px;
+      font-weight: 600; color: #fff; display: none; white-space: nowrap; }
+    #stam { left: 50%; bottom: 76px; transform: translateX(-50%); padding: 6px 14px; font-size: 13px;
+      display: none; align-items: center; gap: 10px; white-space: nowrap; }
+    #stamBar { width: 190px; height: 10px; border-radius: 5px; overflow: hidden; background: rgba(0, 0, 0, 0.45); }
+    #stamFill { height: 100%; width: 100%; background: #6fd08a; }
+    #stamFill.low { background: #ff8a70; }
+    #map { left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 10px; display: none; }
+    #mapCv { display: block; width: min(560px, 74vh); height: min(560px, 74vh); border-radius: 6px; }
+    #mapNote { margin-top: 8px; text-align: center; font-size: 12px; color: #dccba6; }
+    #err { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+      background: #0b1622; padding: 30px; text-align: center; font-size: 16px; line-height: 1.8; }
+  </style>
+</head>
+<body>
+  <div id="fade"></div>
+  <details id="panel" class="card">
+    <summary><span class="gear">⚙</span>設定<span class="x">收起</span></summary>
+    <div class="sec"><h4>畫面</h4>
+      <div class="row"><label>畫質（解析度） <b id="vQuality"></b></label>
+        <input id="quality" type="range" min="0.5" max="1.5" step="0.1" value="1" /></div>
+    </div>
+    <div class="sec"><h4>聲音</h4>
+      <div class="line"><span>遊戲音效</span><button id="sound">關</button></div>
+    </div>
+    <div class="sec"><h4>時間與天氣</h4>
+      <div class="line"><span>時間</span><button id="skipHour">快轉 3 小時</button></div>
+      <div class="line"><span>海上事件</span><span class="two"><select id="evKind">
+        <option value="storm">風暴</option><option value="thunder">雷暴雨</option><option value="tsunami">巨浪</option>
+        <option value="spout">水龍捲</option><option value="whirl">漩渦</option><option value="typhoon">颱風</option>
+      </select><button id="evGo">引發</button></span></div>
+      <p class="note">海上事件平常也會隨機發生</p>
+    </div>
+    <details id="keys" class="sec">
+      <summary>操作說明</summary>
+      <h5>走路</h5>
+      <dl>
+        <dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt><dd>走動</dd>
+        <dt><kbd>Shift</kbd></dt><dd>跑步</dd>
+        <dt><kbd>空白鍵</kbd></dt><dd>跳（跳下水就能游泳）</dd>
+        <dt><kbd>E</kbd></dt><dd>拿起／放下、掌舵、加油、修船、按按鈕、買東西</dd>
+        <dt><kbd>F</kbd></dt><dd>釣魚：按住蓄力、放開拋竿；魚咬了按一下；收線時按住／放開控制力道</dd>
+      </dl>
+      <h5>開船</h5>
+      <dl>
+        <dt><kbd>W</kbd><kbd>S</kbd></dt><dd>油門、倒俥</dd>
+        <dt><kbd>A</kbd><kbd>D</kbd></dt><dd>打方向盤</dd>
+        <dt><kbd>E</kbd></dt><dd>放開方向盤</dd>
+      </dl>
+      <h5>視角</h5>
+      <dl>
+        <dt><kbd>C</kbd></dt><dd>切換第一／第三人稱</dd>
+        <dt><kbd>滑鼠</kbd></dt><dd>第三人稱：按住拖曳轉視角；第一人稱：直接移動就轉</dd>
+        <dt><kbd>滾輪</kbd></dt><dd>鏡頭遠近</dd>
+        <dt><kbd>Esc</kbd></dt><dd>第一人稱時放開滑鼠（再點一下畫面就回去）</dd>
+        <dt><kbd>M</kbd></dt><dd>地圖</dd>
+      </dl>
+    </details>
+    <div class="sec"><button id="reset">重新開始（清除存檔）</button></div>
+  </details>
+  <div id="hud" class="card"><span id="hClock"></span>金錢<b id="hMoney">$0</b><span id="hShip">耐久<b id="hHp">100%</b>　燃油<b id="hFuel">0</b></span><span id="hSpeed">船速<b id="hBoat">0.0 節</b></span></div>
+  <div id="fishui" class="card"><div id="fishLabel"></div><div id="bar"><div id="barSafe"></div><div id="barFill"></div><div id="barMark"></div></div><div id="prog"><div id="progFill"></div></div><div id="fishHint"></div></div>
+  <div id="toast" class="card"></div>
+  <div id="aim"></div>
+  <div id="prompt" class="card"></div>
+  <div id="stam" class="card">體力<div id="stamBar"><div id="stamFill"></div></div></div>
+  <div id="map" class="card"><canvas id="mapCv" width="560" height="560"></canvas><div id="mapNote">紅色箭頭是你，黃色是你的船　按 M 或 Esc 關閉</div></div>
+  <div id="err"></div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
