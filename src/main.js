@@ -1941,7 +1941,7 @@ function updateFishUi() {
   $('fishHint').textContent = strain > 0.5 ? '釣竿快斷了！放開 F！' : fishing.inZone ? '很好，保持住' : fishing.force < fishing.zone ? '力道不夠：按住 F' : '太用力了：放開 F';
 }
 
-let wakeIdx = 0, wakeTimer = 0, sprayAcc = 0, crestSide = 1, crestI = -1, jetShake = 0;
+let wakeIdx = 0, wakeTimer = 0, sprayAcc = 0, crestSide = 1, crestI = -1, jetShake = 0, lastStep = 0;
 function advance(dt) {
   time += dt;
   updateOcean(dt);
@@ -2012,6 +2012,12 @@ function advance(dt) {
     player.look(v.yaw, v.pitch);
     player.update(dt, cy * f - sy * r, sy * f + cy * r, keys.shift, keys.space && !drown, walkWorld);
     if (v.fp) { player.yaw = v.yaw; player.mesh.rotation.y = -v.yaw; } // 第一人稱時身體跟著視線
+    // 腳步聲：腳每落地一次（走路動作每半圈）播一聲，木板和草地沙地各一組
+    const stepN = Math.floor(player.phase / Math.PI);
+    if (stepN !== lastStep) {
+      lastStep = stepN;
+      if (player.moving && player.h <= 0 && !player.swim && !player.seat) audio.play(player.boat || onDeck(player.x, player.z) ? 'stepWood' : 'stepGrass', keys.shift ? 1 : 0.7);
+    }
   }
 
   updateSwim(dt);
@@ -2115,8 +2121,12 @@ function drawFrame(dt) {
   // 實地錄音的那一層：外海的浪、岸邊的小浪、港口的海鷗、雨、引擎、捲線器、腳步
   {
     const off = offAt(cp.x, cp.z), helm = mode === 'helm';
-    const walking = mode === 'walk' && player.moving && player.h <= 0 && !player.swim && !player.seat;
+    // 島上的環境音：鏡頭在陸地上（離岸二十幾公尺內漸漸淡掉）。港口那一帶是人住的地方，鳥叫蟲鳴小聲一點
+    const land = clamp(1 - off / 25, 0, 1) * (0.45 + 0.55 * clamp((Math.hypot(cp.x + 4, cp.z - 118) - 30) / 60, 0, 1));
     audio.ambient({
+      birds: land * clamp(1 - night * 1.8, 0, 1) * clamp(1 - rainNow * 3, 0, 1),
+      night: land * clamp((night - 0.45) / 0.35, 0, 1) * clamp(1 - rainNow * 2, 0, 1),
+      trees: land * clamp(0.25 + 0.35 * WIND.amp.value, 0, 1),
       under,
       sea: clamp(0.2 + 0.17 * shared.uWaveScale.value * stormK(cp.x, cp.z), 0, 1) * clamp((off - 15) / 90, 0, 1),   // 平常的外海約五成，暴風雨裡八成
       shore: clamp(1 - off / 70, 0, 1) * clamp(0.4 + 0.6 * shelterAt(cp.x, cp.z), 0, 1),
@@ -2126,8 +2136,6 @@ function drawFrame(dt) {
       throttle: Math.max(Math.abs(boat.throttle), Math.abs(boat.speed) / boat.maxSpeed),
       pitch: boat.spec.id === 'skiff' ? 1.25 : boat.spec.id === 'fisher' ? 1 : 0.82,
       reel: fishing.state === 'fight' && fishing.reel ? 1 : 0,
-      steps: walking ? (keys.shift ? 1.3 : 0.75) : 0,
-      wood: !!player.boat || onDeck(player.x, player.z),
     });
   }
 

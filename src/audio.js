@@ -1,8 +1,8 @@
-// 聲音分兩層：
-//   一、程式合成的（濾過的雜訊）：海浪、浪花、海嘯的轟鳴、風、水龍捲——這些要跟著海況即時變化，一直都在；
-//   二、實地錄音（public/audio/ 裡的 mp3，CC0 授權，來源見該資料夾的 CREDITS.txt）：外海的浪、岸邊的小浪、港口的海鷗、
-//       雨、雷、引擎、捲線器、腳步，以及各種短音效。按下「遊戲音效」之後才在背景載入；
-//       哪個檔沒載到（還沒下載、網路斷了）就自動退回只用合成的聲音，不會壞掉。
+// 聲音以實地錄音為主（public/audio/ 裡的 mp3，CC0 授權，來源見該資料夾的 CREDITS.txt）：
+//   海浪、岸邊的小浪、海鷗、雨、雷、風、引擎、捲線器、腳步、島上的鳥叫蟲鳴，以及各種短音效。
+//   按下「遊戲音效」之後才在背景載入。
+// 程式合成的聲音（濾過的雜訊）只當備用：哪一種聲音的錄音檔還沒有、或沒載到，那一種才用合成的頂著；
+//   錄音一載好，對應的合成聲就完全關掉（兩種疊在一起聽起來很怪）。
 // 瀏覽器規定要使用者點擊後才能發聲，所以由按鈕呼叫 start()。
 
 // 會一直循環播放的錄音：[檔名, 從第幾秒, 到第幾秒, 接法]
@@ -15,8 +15,16 @@ const LOOPS = {
   rain: ['rain-puddle.mp3', 0, 75, 2],
   engine: ['engine.mp3', 0.03, 6.97, 'n'],
   reel: ['reel.mp3', 0.1, 14.9, 'n'],
-  stepWood: ['steps-wood.mp3', 0.03, 5.67, 'n'],      // 九步
-  stepGrass: ['steps-grass.mp3', 0.03, 10.9, 'n'],
+  // 風：平常的風聲、強風的呼嘯（音高跟著風速變）；水龍捲用同一段強風錄音放慢，從它所在的方向傳過來
+  wind: ['wind.mp3', 0.05, 600, 'n'],
+  gale: ['gale.mp3', 0.05, 600, 'n'],
+  spout: ['gale.mp3', 0.05, 600, 'n'],
+  // 海嘯、漩渦逼近時的轟鳴：大水的錄音放慢、只留低頻
+  roar: ['roar.mp3', 0.05, 600, 'n'],
+  // 島上的環境音：白天的鳥、夜裡的蟲、樹林裡的風
+  birds: ['birds.mp3', 0, 600, 2],
+  night: ['night.mp3', 0, 600, 2],
+  trees: ['trees.mp3', 0, 600, 2],
 };
 // 短音效：名字 → 幾個版本，每個是 [檔名, 從第幾秒, 播幾秒, 音量]（播的時候隨機挑一個）
 const one = (file, k, ...cuts) => cuts.map(([at, dur]) => [file, at, dur, k]);
@@ -36,6 +44,9 @@ const CLIPS = {
   pick: one('thud.mp3', 0.4, [2.45, 0.5], [3.3, 0.5]),
   sit: one('thud.mp3', 0.45, [4.15, 0.5]),
   rope: one('thud.mp3', 0.55, [5.05, 0.5]),
+  // 腳步：一步一聲，跟著角色的腳落地的那一下播（走在木板上、走在草地沙地上各一組）
+  stepWood: one('steps-wood.mp3', 0.75, [0.05, 0.5], [0.7, 0.5], [1.35, 0.5], [1.95, 0.5], [2.55, 0.5], [3.1, 0.5], [3.8, 0.5], [4.45, 0.5], [5.1, 0.5]),
+  stepGrass: one('steps-grass.mp3', 0.9, [0.0, 0.6], [0.95, 0.6], [1.95, 0.6], [2.85, 0.5], [7.35, 0.5], [8.35, 0.45], [9.3, 0.5], [10.05, 0.55]),
 };
 const THUNDER = ['thunder-1.mp3', 'thunder-2.mp3', 'thunder-3.mp3'];
 
@@ -59,7 +70,12 @@ export class OceanAudio {
       if (file !== f || this.loops[name]) continue;
       const out = this.ctx.createGain();
       out.gain.value = 0;
-      out.connect(this.master);
+      if (name === 'spout') out.connect(this.spoutPan);            // 從水龍捲的方向傳過來
+      else if (name === 'roar') {                                  // 只留低頻的轟隆聲
+        const lp = this.ctx.createBiquadFilter();
+        lp.type = 'lowpass'; lp.frequency.value = 260;
+        out.connect(lp).connect(this.master);
+      } else out.connect(this.master);
       const buf = this.buf[f], a = t0, b = Math.min(t1, buf.duration);
       const L = this.loops[name] = { out, buf, a, b, x: join, next: this.ctx.currentTime + 0.05, rate: 1, srcs: [] };
       if (join === 'n') {
@@ -69,7 +85,6 @@ export class OceanAudio {
         src.start(0, a);
       }
     }
-    if (this.loops.sea && this.loops.rain) this.real = 1;   // 海和雨的錄音都有了：合成的浪聲、雨聲退到後面當底
     if (!this._timer) this._timer = window.setInterval(() => this._pump(), 500);
     this._pump();
   }
@@ -109,7 +124,8 @@ export class OceanAudio {
   // 每幀由外面告訴它周圍的狀況，調整各段錄音的音量：
   //   sea：外海的浪有多大 0–1；shore：人離岸邊多近 0–1；gulls：聽得到海鷗的程度 0–1（白天、港口附近、沒下大雨）
   //   rain：雨勢 0–1；engine：引擎開著（0 / 1）；throttle：油門 0–1；pitch：引擎的音高倍率（小船高、大船低）
-  //   reel：正在收線 0–1；steps：走多快 0–1（0 = 沒在走）；wood：腳下是木板（否則是草地、沙地）；under：鏡頭在水裡
+  //   reel：正在收線 0–1；under：鏡頭在水裡
+  //   birds：聽得到鳥叫的程度 0–1（白天、在島上、沒下雨）；night：蟲鳴 0–1（夜裡、在島上）；trees：樹林裡的風 0–1
   ambient(o) {
     if (!this.ctx || !this.on) return;
     const dry = o.under ? 0 : 1;
@@ -120,9 +136,9 @@ export class OceanAudio {
     this._vol('engine', o.engine * (0.22 + 0.3 * o.throttle), 0.3);
     this._rate('engine', o.pitch * (0.85 + 0.5 * o.throttle));
     this._vol('reel', 0.5 * o.reel, 0.06);
-    this._vol('stepWood', o.wood ? 0.6 * Math.min(o.steps, 1) : 0, 0.08);
-    this._vol('stepGrass', o.wood ? 0 : 0.5 * Math.min(o.steps, 1), 0.08);
-    this._rate('stepWood', 0.9 + 0.5 * o.steps); this._rate('stepGrass', 0.9 + 0.5 * o.steps);
+    this._vol('birds', 0.5 * o.birds * dry, 1.2);
+    this._vol('night', 0.45 * o.night * dry, 1.2);
+    this._vol('trees', 0.5 * o.trees * dry, 0.6);
     this.engineReal = !!this.loops.engine;
     this.engineOn = o.engine;
   }
@@ -251,7 +267,8 @@ export class OceanAudio {
       src.connect(lp).connect(g).connect(this.master);
       src.start(t);
     }
-    const real = recs.length ? 0.35 : 1;   // 合成的隆隆聲退到後面墊底
+    if (recs.length) return;               // 有錄音就不用合成的雷聲
+    const real = 1;
     const vol = (0.3 + 2.0 * near * near) * Math.min(1, Math.max(0.3, 1.25 - dist / 4500));
     const dur = 3.5 + 3 * (1 - near) + Math.random() * 1.5;
     // 隆隆聲的起伏：一開始最響，後面再來幾下餘響，整體慢慢收掉
@@ -293,20 +310,26 @@ export class OceanAudio {
   // spout：最近的水龍捲有多近 0–1；spoutPan：它在左邊（-1）還是右邊（+1）；wind：風有多大（0 微風、1 颱風、陣風時超過 1）
   set(wave, roar, under, throttle = 0, speed = 0, rain = 0, spout = 0, spoutPan = 0, wind = 0) {
     if (!this.ctx || !this.on) return;
-    const t = this.ctx.currentTime, k = 0.25;
-    this.spoutRoar.gain.setTargetAtTime(1.5 * spout, t, k);
-    this.spoutFlut.gain.setTargetAtTime(0.4 * spout, t, k);
-    this.spoutHiss.gain.setTargetAtTime(0.5 * spout * spout * spout, t, k);
+    const t = this.ctx.currentTime, k = 0.25, L = this.loops, dry = under ? 0.3 : 1;
+    // 每一種聲音：有錄音就用錄音、合成的關掉（syn = 0）；沒有錄音才用合成的
+    const synSpout = L.spout ? 0 : 1, synRain = L.rain ? 0 : 1, synSea = L.sea ? 0 : 1, synRoar = L.roar ? 0 : 1;
+    this.spoutRoar.gain.setTargetAtTime(1.5 * spout * synSpout, t, k);
+    this.spoutFlut.gain.setTargetAtTime(0.4 * spout * synSpout, t, k);
+    this.spoutHiss.gain.setTargetAtTime(0.5 * spout * spout * spout * synSpout, t, k);
     if (this.spoutPan.pan) this.spoutPan.pan.setTargetAtTime(spoutPan, t, 0.15);
-    const syn = 1 - 0.6 * this.real;   // 有錄音的時候，合成的浪聲、雨聲只留四成當底（它們會跟著海況即時起伏）
-    this.rainG.gain.setTargetAtTime(0.09 * rain * syn, t, k);
-    this.rainLow.gain.setTargetAtTime(0.07 * rain * rain * syn, t, k);
-    this.windLow.gain.setTargetAtTime(0.42 * wind, t, 0.3);
-    this.windHowl.gain.setTargetAtTime(0.5 * wind * wind, t, 0.3);
+    this._vol('spout', 1.3 * spout * dry); this._rate('spout', 0.62 + 0.12 * spout);
+    this.rainG.gain.setTargetAtTime(0.09 * rain * synRain, t, k);
+    this.rainLow.gain.setTargetAtTime(0.07 * rain * rain * synRain, t, k);
+    // 風：平常的風聲跟著風速慢慢變大；強風的呼嘯在風大時才出來，陣風一來音量和音高一起往上竄
+    this.windLow.gain.setTargetAtTime(L.wind ? 0 : 0.42 * wind, t, 0.3);
+    this.windHowl.gain.setTargetAtTime(L.gale ? 0 : 0.5 * wind * wind, t, 0.3);
     this.windHowlF.frequency.setTargetAtTime(380 + 420 * wind, t, 0.4);
-    this.wash.gain.setTargetAtTime((0.10 + 0.14 * wave) * syn + 0.25 * roar, t, k);
-    this.hiss.gain.setTargetAtTime(0.012 * wave * wave * syn + 0.10 * roar, t, k);
-    this.rumble.gain.setTargetAtTime(1.6 * roar, t, k);
+    this._vol('wind', Math.min(0.75 * wind, 0.6) * dry, 0.4);
+    this._vol('gale', Math.min(0.85 * wind * wind, 1.1) * dry, 0.3); this._rate('gale', 0.85 + 0.3 * Math.min(wind, 1.4));
+    this.wash.gain.setTargetAtTime((0.10 + 0.14 * wave) * synSea + 0.25 * roar * synRoar, t, k);
+    this.hiss.gain.setTargetAtTime(0.012 * wave * wave * synSea + 0.10 * roar * synRoar, t, k);
+    this.rumble.gain.setTargetAtTime(1.6 * roar * synRoar, t, k);
+    this._vol('roar', 2.2 * roar); this._rate('roar', 0.55);
     this.muffle.frequency.setTargetAtTime(under ? 320 : 18000, t, 0.08);
     // 引擎：有人掌舵才有聲音（以前不管人在哪都有一點怠速聲）；有引擎的錄音就用錄音，合成的關掉
     this.engine.gain.setTargetAtTime(this.engineReal ? 0 : (this.engineOn ?? 1) * (0.035 + 0.07 * throttle), t, 0.3);
