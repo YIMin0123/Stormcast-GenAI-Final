@@ -25,9 +25,9 @@ const dist = (ax, az, bx, bz) => Math.hypot(ax - bx, az - bz);
 let nextUid = 1;
 
 // 一個新玩家（剛進房、什麼都沒有）
-export function newPlayer(id, ws, token, name) {
+export function newPlayer(id, ws, token, name, look = 'girl') {
   return {
-    id, ws, token, name, room: null,
+    id, ws, token, name, look, room: null,   // look：選的角色（girl／boy）
     kit: newKit(),
     pos: null, posAt: 0, posDirty: false,      // 位置：[x, y, z, yaw, 狀態, 跳多高, 視線左右, 視線上下, 站在誰的船上, 船上座標 x, z, 動作, 表情]
     boat: null, boatDirty: false,               // 放在世界裡的那艘船：{ type, s: [x, z, 航向, 高度, 傾斜 x, z, 船速, 舵, 油門, 狀態, 油量, 耐久], cracks, moor, sunk }
@@ -115,7 +115,7 @@ export class Room {
   }
   boatInfo(p) { return p.boat && { type: p.boat.type, boxLv: p.kit.boats[p.boat.type]?.boxLv ?? 0, s: p.boat.s, sunk: p.boat.sunk }; }
   roster(except) {
-    return [...this.players.values()].filter((p) => p !== except).map((p) => ({ id: p.id, name: p.name, here: !!p.ws, pos: p.ws ? p.pos : null, boat: this.boatInfo(p), hold: p.ws ? p.hold : null, line: p.ws ? p.line : null }));
+    return [...this.players.values()].filter((p) => p !== except).map((p) => ({ id: p.id, name: p.name, look: p.look, here: !!p.ws, pos: p.ws ? p.pos : null, boat: this.boatInfo(p), hold: p.ws ? p.hold : null, line: p.ws ? p.line : null }));
   }
   boards() { return { t: 'boards', room: this.board.slice(0, 10).map(pub), daily: this.hub.daily.top() }; }
 
@@ -137,7 +137,7 @@ export class Room {
         moved = pose;
       }
     }
-    this.all({ t: 'join', id: p.id, name: p.name, here: !!p.ws, boat: this.boatInfo(p), quiet }, p);
+    this.all({ t: 'join', id: p.id, name: p.name, look: p.look, here: !!p.ws, boat: this.boatInfo(p), quiet }, p);
     if (!quiet) this.sys(`${p.name} 加入了房間`, 'join', p);
     return moved;
   }

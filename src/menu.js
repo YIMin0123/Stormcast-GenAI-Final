@@ -1,18 +1,22 @@
 // 進遊戲前的畫面：先填名字，再從大廳的房間列表挑一間，點下去就進房（沒有「開始」鈕）。
 // 背景照常畫著港口，只是人還不能動。
 import { TEST, QUERY } from './net.js';
+import { startLookPick } from './lookPick.js';
 
 const $ = (id) => document.getElementById(id);
 
 // 回傳伺服器給的整包進房資料（Promise）。30 秒內斷線回來的人會跳過大廳，直接接回原本的房間
-export function runMenu(net) {
+// onLook(look)：在選單裡換了角色（讓港口裡自己的人偶也跟著換）
+export function runMenu(net, onLook) {
   return new Promise((done) => {
     const box = $('menu'), nameStep = $('menuName'), lobbyStep = $('menuLobby');
     const input = $('nameInput'), go = $('nameGo'), nameMsg = $('nameMsg'), list = $('roomList'), lobbyMsg = $('lobbyMsg');
     let busy = false, finished = false;
+    const stopPick = startLookPick(onLook);
 
     const finish = (joined) => {
       finished = true;
+      stopPick();
       box.style.display = 'none';
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
       done(joined);

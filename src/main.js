@@ -32,6 +32,8 @@ import { Others } from './others.js';
 import { Chat } from './chat.js';
 import { Boards } from './boards.js';
 import { runMenu } from './menu.js';
+import { restyle } from './figure.js';
+import { myLook, setMyLook } from './look.js';
 
 // ---- 世界參數 -------------------------------------------------------------
 const N = 512;          // 避浪、危險度這些粗略資料的解析度（4 m 一格）
@@ -1522,6 +1524,16 @@ for (const b of $('gfx').children) {
   b.classList.toggle('on', +b.dataset.v === gfxLv);
   b.addEventListener('click', () => { b.blur(); setGfx(+b.dataset.v); setPref('stormcast.gfx', gfxLv); });
 }
+// 設定裡換角色：記下來、重新載入（伺服器 30 秒內認得回來的人，會直接接回原本的房間）
+for (const b of $('lookSet').children) {
+  b.classList.toggle('on', b.dataset.look === myLook());
+  b.addEventListener('click', () => {
+    b.blur();
+    if (b.dataset.look === myLook()) return;
+    setMyLook(b.dataset.look);
+    window.location.reload();
+  });
+}
 // 手機：設定裡的全螢幕開關（收掉瀏覽器上面那條網址列）；瀏覽器不給全螢幕的（iPhone）改成教人加到主畫面
 if (TOUCH && canFullscreen) {
   $('fullRow').style.display = 'flex';
@@ -2205,7 +2217,7 @@ net.on('k', (m) => {
   for (const q of m.b) if (q[0] !== net.id) others.setBoatState(q[0], q.slice(1));
 });
 net.on('world', (m) => applyWorld(m));
-net.on('join', (m) => others.add({ id: m.id, name: m.name, here: m.here, boat: m.boat }));
+net.on('join', (m) => others.add({ id: m.id, name: m.name, look: m.look, here: m.here, boat: m.boat }));
 net.on('h', (m) => others.setHold(m.id, m.s));
 net.on('fl', (m) => others.setLine(m.id, m.s));
 net.on('leave', (m) => others.leave(m.id));
@@ -2706,4 +2718,5 @@ window.__sim = {
 };
 
 // 先填名字、挑房間；進房之後才能動
-runMenu(net).then(enterRoom);
+// 選單裡換角色：港口裡自己的人偶、自己船上的舵手跟著換
+runMenu(net, (look) => { restyle(player.mesh, look); restyle(myBoat.parts.helmsman, look); }).then(enterRoom);

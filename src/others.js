@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { Player } from './player.js';
 import { ACTION_BY_ID } from './emotes.js';
 import { SPECIES, makeFishMesh, makeCanMesh } from './fish.js';
+import { restyle } from './figure.js';
 
 // 頭上的名牌：一張畫著名字的小圖，永遠面向鏡頭、遠近都一樣大
 function nameTag(name) {
@@ -45,10 +46,16 @@ export class Others {
   }
 
   // 房裡的一個人。here：他現在連著線（沒有的話只有船，人不在）；boat：{ type, boxLv, s, sunk }
-  add({ id, name, here = true, pos = null, boat = null, hold = null, line = null }) {
+  // look：他選的角色（'girl'／'boy'）
+  add({ id, name, look = 'girl', here = true, pos = null, boat = null, hold = null, line = null }) {
     let o = this.map.get(id);
-    if (!o) { o = { id, name, fig: null, tag: null, rod: null, boat: null, st: null, lastAct: '', hold: null, held: null, ln: null, bob: null, line: null, rodA: ROD_ANGLE }; this.map.set(id, o); }
+    if (!o) { o = { id, name, look, fig: null, tag: null, rod: null, boat: null, st: null, lastAct: '', hold: null, held: null, ln: null, bob: null, line: null, rodA: ROD_ANGLE }; this.map.set(id, o); }
     o.name = name;
+    if (o.look !== look) {   // 換了角色（重新整理後回來）：人偶重做、船上的舵手也換
+      o.look = look;
+      if (o.fig) this._unfigure(o);
+      if (o.boat) restyle(o.boat.parts.helmsman, look);
+    }
     if (here && !o.fig) this._figure(o);
     if (!here) this._unfigure(o);
     if (boat) this.setBoat(id, boat);
@@ -59,7 +66,7 @@ export class Others {
   }
 
   _figure(o) {
-    const fig = o.fig = new Player(0, 0, 0);
+    const fig = o.fig = new Player(0, 0, 0, o.look);
     this.env.decorate(fig.mesh);
     // 釣竿：拿著的時候才顯示（只畫竿子，不畫線和浮標）
     const rod = o.rod = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.03, ROD_LEN, 6).translate(0, ROD_LEN / 2, 0), new THREE.MeshLambertMaterial({ color: 0x3b2a1a }));
@@ -122,6 +129,7 @@ export class Others {
       o.boat = this.env.makeBoat(info.type, { x: info.s[0], z: info.s[1], heading: info.s[2] }, info.boxLv);
       o.boat.remote = true;
       o.boat.owner = { id, name: o.name };
+      restyle(o.boat.parts.helmsman, o.look);   // 只有船主能開：舵手長得跟船主一樣
     } else if (o.boat.boxLv !== info.boxLv && info.boxLv > 0) o.boat.setBox(info.boxLv);
     o.boat.setNet(info.s, true);
   }

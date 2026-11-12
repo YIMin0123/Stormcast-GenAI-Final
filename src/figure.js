@@ -5,28 +5,34 @@
 // 模型的手是 A 字張開的；手臂的關節底下再掛一根骨頭先把手轉回垂直，所以關節轉 0 就是手直直垂下，跟以前一樣。
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { addOutline } from './toon.js';
+import { LOOKS, myLook } from './look.js';
+export { LOOKS, myLook };
 
-// 網址加 ?boy 換成男版（開發測試用；之後換角色／換裝再做正式的選擇）
-const MODEL = new URLSearchParams(location.search).has('boy') ? 'boy' : 'girl';
-const gltf = await new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}models/${MODEL}.glb`);
-const SRC = {};
-// 關節位置：男女版比例不同，各自存在模型裡（tools/tripo_figure.py 寫進骨架的 extras.joints；權重是照這些位置分的）
-let J = null;
-gltf.scene.traverse((m) => { if (m.userData.joints) J = m.userData.joints; });
-J ??= { NECK: 0.97, SHOULDER: 0.923, SHOULDER_Z: 0.219, WAIST: 0.76, HIP: 0.486, HIP_Z: 0.151, HAND: 0.6, HAND_Z: 0.373 };
-const HIP_Y = J.HIP, HIP_Z = J.HIP_Z, WAIST_Y = J.WAIST, NECK_Y = J.NECK;
-const SHOULDER_Y = J.SHOULDER, SHOULDER_Z = J.SHOULDER_Z, HAND_Y = J.HAND, HAND_Z = J.HAND_Z;
-const A_POSE = Math.atan2(HAND_Z - SHOULDER_Z, SHOULDER_Y - HAND_Y);   // 模型的手往外張開幾度
-export const ARM_LEN = Math.hypot(HAND_Z - SHOULDER_Z, SHOULDER_Y - HAND_Y) + 0.02;   // 肩膀到握東西的位置；握舵時用它算手臂要拉長多少
-gltf.scene.traverse((m) => { if (m.isSkinnedMesh) SRC[m.name.startsWith('face') ? 'face' : 'body'] = m; });
-// 頂點顏色的紅色 = 這裡用平滑著色（頭部的膚色；見 tools/tripo_figure.py）。拿出來改成 smoothK，顏色本身不用
-{
+// 角色：女版（girl）、男版（boy）兩個模型都先載進來；每個人用哪個看他選的（自己的見 look.js，別人的伺服器轉過來）
+const loader = new GLTFLoader();
+const MODELS = {};
+await Promise.all(LOOKS.map(async (look) => {
+  const gltf = await loader.loadAsync(`${import.meta.env.BASE_URL}models/${look}.glb`);
+  const SRC = {};
+  // 關節位置：男女版比例不同，各自存在模型裡（tools/tripo_figure.py 寫進骨架的 extras.joints；權重是照這些位置分的）
+  let J = null;
+  gltf.scene.traverse((m) => { if (m.userData.joints) J = m.userData.joints; });
+  J ??= { NECK: 0.97, SHOULDER: 0.923, SHOULDER_Z: 0.219, WAIST: 0.76, HIP: 0.486, HIP_Z: 0.151, HAND: 0.6, HAND_Z: 0.373 };
+  gltf.scene.traverse((m) => { if (m.isSkinnedMesh) SRC[m.name.startsWith('face') ? 'face' : 'body'] = m; });
+  // 頂點顏色的紅色 = 這裡用平滑著色（頭部的膚色；見 tools/tripo_figure.py）。拿出來改成 smoothK，顏色本身不用
   const geo = SRC.body.geometry, col = geo.getAttribute('color');
   const k = new Float32Array(geo.getAttribute('position').count);
   if (col) for (let i = 0; i < k.length; i++) k[i] = col.getX(i);
   geo.setAttribute('smoothK', new THREE.BufferAttribute(k, 1));
   geo.deleteAttribute('color');
-}
+  MODELS[look] = {
+    SRC, J,
+    A_POSE: Math.atan2(J.HAND_Z - J.SHOULDER_Z, J.SHOULDER - J.HAND),   // 模型的手往外張開幾度
+    ARM_LEN: Math.hypot(J.HAND_Z - J.SHOULDER_Z, J.SHOULDER - J.HAND) + 0.02,   // 肩膀到握東西的位置；握舵時用它算手臂要拉長多少
+    armGeo: null,
+  };
+}));
 
 // ---- 像素雜點：每個面依它最朝向的軸，把物件自己的座標切成邊長 TEXEL 的方格，每格隨機亮一點或暗一點 ----
 const TEXEL = 0.035;   // 方格大一點、明暗差多一點，才看得出一格一格的色塊
@@ -133,7 +139,11 @@ function faceTexture(id = 'normal') {
   return (faceTex[id] = t);
 }
 
-export function buildFigure() {
+export function buildFigure(look = myLook()) {
+  if (!MODELS[look]) look = 'girl';
+  const M = MODELS[look], SRC = M.SRC, J = M.J;
+  const HIP_Y = J.HIP, HIP_Z = J.HIP_Z, WAIST_Y = J.WAIST, NECK_Y = J.NECK;
+  const SHOULDER_Y = J.SHOULDER, SHOULDER_Z = J.SHOULDER_Z, HAND_Y = J.HAND, HAND_Z = J.HAND_Z;
   const g = new THREE.Group();
   const bone = (parent, x, y, z) => { const b = new THREE.Bone(); b.position.set(x, y, z); parent.add(b); return b; };
   // 骨頭（都是轉角 0 的；位置 = 關節在父關節裡的位置）
@@ -178,30 +188,49 @@ export function buildFigure() {
   faceMesh.castShadow = false;   // 貼在臉前面 3 公釐的薄片：投影的話會在臉上印出一片斑點
   faceMesh.userData.noCast = true;
   // 掌舵的第一人稱只看得到兩隻手臂：另外做一份只有手臂那些面的網格，平常藏著
-  const armsOnly = new THREE.SkinnedMesh(armGeometry(), bodyMat);
+  const armsOnly = new THREE.SkinnedMesh(armGeometry(M), bodyMat);
   armsOnly.bind(body.skeleton, new THREE.Matrix4());
   armsOnly.visible = false;
   g.add(armsOnly);
-  armBones.forEach((b, i) => { b.rotation.x = arms[i].userData.side * A_POSE; });   // 往身體收回 A 字的角度
+  armBones.forEach((b, i) => { b.rotation.x = arms[i].userData.side * M.A_POSE; });   // 往身體收回 A 字的角度
 
   g.traverse((m) => { if (m.isMesh) m.userData.figure = true; });
+  for (const c of g.children) c.userData.figPart = true;   // 人偶本身的骨頭和網格（restyle 換角色時只拿掉這些，別人掛上去的釣竿、魚不動）
   // fpHide：掌舵的第一人稱要藏起來的；fpShow：那時才顯示的（只有手臂）；mats：這個人用到的所有材質
   // setFace：換表情（FACES 裡的一個）
   const setFace = (id) => { const t = faceTexture(FACES.includes(id) ? id : 'normal'); if (face.map !== t) face.map = t; };
-  g.userData = { legs, arms, head, upper, setFace, fpHide: [body, faceMesh], fpShow: [armsOnly], torso: [], mats: [bodyMat, face] };
+  // look：哪個角色；armLen：肩膀到手心多長（握舵時算手臂要拉長多少）
+  g.userData = { look, armLen: M.ARM_LEN, legs, arms, head, upper, setFace, fpHide: [body, faceMesh], fpShow: [armsOnly], torso: [], mats: [bodyMat, face] };
   return g;
 }
 
+// 把已經放在場景裡的人偶換成另一個角色（同一個 Group，位置、掛在上面的東西都不變）。
+// 原本有描邊、有接影子的話，新的也照樣弄好
+export function restyle(g, look) {
+  if (g.userData.look === look) return;
+  const n = buildFigure(look);
+  const old = g.children.filter((c) => c.userData.figPart);
+  let hull = false, recv = false;
+  for (const c of old) c.traverse((m) => { if (m.userData.hull) hull = true; else if (m.isMesh && m.receiveShadow) recv = true; });
+  const fp = g.userData.fpShow?.[0]?.visible;   // 正在掌舵的第一人稱（只顯示手臂）
+  for (const c of old) g.remove(c);
+  for (const mat of g.userData.mats || []) mat.dispose();
+  for (const c of [...n.children]) g.add(c);
+  Object.assign(g.userData, n.userData);
+  if (fp) { for (const m of g.userData.fpHide) m.visible = false; for (const m of g.userData.fpShow) m.visible = true; }
+  if (recv) g.traverse((m) => { if (m.isMesh && !m.userData.hull) m.receiveShadow = true; });
+  if (hull) addOutline(g);
+}
+
 // 只有手臂的那些三角形（三個頂點都主要跟著手臂骨頭的）
-let armGeo = null;
-function armGeometry() {
-  if (armGeo) return armGeo;
-  const src = SRC.body.geometry, idx = src.index.array, si = src.attributes.skinIndex, sw = src.attributes.skinWeight;
+function armGeometry(M) {
+  if (M.armGeo) return M.armGeo;
+  const SRC = M.SRC, src = SRC.body.geometry, idx = src.index.array, si = src.attributes.skinIndex, sw = src.attributes.skinWeight;
   const names = SRC.body.skeleton.bones.map((b) => b.name);
   const isArm = (v) => { let best = 0, bw = -1; for (let k = 0; k < 4; k++) if (sw.getComponent(v, k) > bw) { bw = sw.getComponent(v, k); best = si.getComponent(v, k); } return names[best].startsWith('arm'); };
   const out = [];
   for (let i = 0; i < idx.length; i += 3) if (isArm(idx[i]) && isArm(idx[i + 1]) && isArm(idx[i + 2])) out.push(idx[i], idx[i + 1], idx[i + 2]);
-  armGeo = src.clone();
-  armGeo.setIndex(out);
-  return armGeo;
+  M.armGeo = src.clone();
+  M.armGeo.setIndex(out);
+  return M.armGeo;
 }

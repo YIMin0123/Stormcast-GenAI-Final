@@ -108,6 +108,10 @@
     #menu h1 { margin: 0 0 4px; font-size: 32px; letter-spacing: 3px; color: #ffe9a8; }
     #menu h2 { margin: 0 0 4px; font-size: 20px; letter-spacing: 2px; color: #ffe9a8; }
     #menu p { margin: 0 0 16px; color: #dccba6; font-size: 13px; }
+    /* 選角色：會轉的 3D 預覽＋兩顆切換鈕 */
+    #lookView { display: block; width: 100%; height: 210px; margin: -4px 0 6px; }
+    #lookPick { justify-content: center; margin-bottom: 14px; }
+    #lookPick button { padding: 6px 18px; font-size: 15px; }
     #nameInput { width: 100%; box-sizing: border-box; padding: 9px 12px; border-radius: 6px; font: inherit; font-size: 16px;
       border: 1px solid rgba(240, 214, 160, 0.4); background: rgba(0, 0, 0, 0.3); color: #fff; text-align: center; }
     #nameGo { width: 100%; margin-top: 10px; padding: 9px; font-size: 15px; font-weight: 600;
@@ -199,6 +203,8 @@
     body.touch #menu .card { padding: 14px 22px 12px; }
     body.touch #menu h1 { font-size: 24px; }
     body.touch #menu p { margin-bottom: 10px; }
+    body.touch #lookView { height: 130px; }
+    body.touch #lookPick { margin-bottom: 8px; }
     body.touch #roomList { max-height: 42vh; }
     #err { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
       background: #0b1622; padding: 30px; text-align: center; font-size: 16px; line-height: 1.8; }
@@ -215,6 +221,10 @@
       <p class="note">畫面會卡就調低；兩個都不會自己變，調過會記住</p>
       <div class="line" id="fullRow" style="display: none; margin-top: 9px"><span>全螢幕</span><button id="fullBtn" class="sw">關</button></div>
       <p class="note" id="fullNote" style="display: none">想收掉上面的網址列：用 Safari 的「分享 → 加入主畫面」，再從主畫面打開</p>
+    </div>
+    <div class="sec"><h4>角色</h4>
+      <div class="line"><span>外觀</span><div id="lookSet" class="seg"><button data-look="girl">♀ 女生</button><button data-look="boy">♂ 男生</button></div></div>
+      <p class="note">換角色會重新載入一次（自動回到原本的房間）</p>
     </div>
     <div class="sec"><h4>聲音</h4>
       <div class="line"><span>遊戲音效</span><button id="sound">關</button></div>
@@ -266,7 +276,9 @@
   <div id="menu">
     <div id="menuName" class="card">
       <h1>Stormcast</h1>
-      <p>填好你的名字，跟大家一起出海釣魚</p>
+      <p>選好角色、填好名字，跟大家一起出海釣魚</p>
+      <canvas id="lookView"></canvas>
+      <div id="lookPick" class="seg"><button data-look="girl">♀ 女生</button><button data-look="boy">♂ 男生</button></div>
       <input id="nameInput" maxlength="12" placeholder="你的名字" autocomplete="nickname" />
       <button id="nameGo">進入大廳</button>
       <div id="nameMsg"></div>

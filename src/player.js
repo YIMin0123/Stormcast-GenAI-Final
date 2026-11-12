@@ -15,8 +15,8 @@ const HOPS = [0.5, 1.0, 1.5];     // 碼頭與船之間的空隙，一步能跨�
 const SUBMERGE = 0.95;             // 浮在水裡時，腳在水面下多深（只露出頭和肩膀）
 
 export class Player {
-  constructor(x, z, yaw) {
-    this.mesh = buildFigure();
+  constructor(x, z, yaw, look) {
+    this.mesh = buildFigure(look);
     this.x = x; this.z = z; this.y = 0;   // 世界座標
     this.yaw = yaw;                        // 面向：(cos yaw, sin yaw)
     this.boat = null;                      // 腳下踩的船；不在船上時為 null
