@@ -149,7 +149,10 @@ export class FftOcean {
     // 每個波數同時有 h0(k) 與 h0(-k) 兩項貢獻，所以總變異數是兩倍
     const norm0 = hsTarget / (4 * Math.sqrt(2 * variance));
 
-    const target = (type, mip) => {
+    // aniso：各向異性過濾。只給斜率圖（像素著色器取樣、貼著水面看遠處才清楚）；
+    // 位移圖是頂點著色器用 textureLod 取樣的，頂點階段用不到它，而且 Adreno（三星、小米等）在頂點階段
+    // 「指定層級取樣＋各向異性過濾」會讀到亂值，海面變成越遠越高的斜坡
+    const target = (type, mip, aniso = false) => {
       const t = new THREE.WebGLRenderTarget(N, N, {
         type, format: THREE.RGBAFormat, depthBuffer: false, stencilBuffer: false,
         minFilter: mip ? THREE.LinearMipmapLinearFilter : THREE.NearestFilter,
@@ -157,7 +160,7 @@ export class FftOcean {
         generateMipmaps: mip,
         wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping,
       });
-      if (mip) t.texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+      if (mip && aniso) t.texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
       return t;
     };
 
@@ -184,7 +187,7 @@ export class FftOcean {
       return {
         patch: this.patches[ci], h0, slopeVar,
         disp: [target(mapType, true), target(mapType, true)], cur: 0,
-        slope: target(THREE.HalfFloatType, true),
+        slope: target(THREE.HalfFloatType, true, true),
       };
     });
 

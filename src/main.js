@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { makeTerrain, computeShelter, computeShoreDist, ISLANDS } from './terrain.js';
-import { waterVert, waterFrag, terrainVert, terrainFrag, grassVert, grassFrag, skyVert, skyFrag, diagVert, diagFrag, HAZE, RAIN_HAZE } from './renderShaders.js';
+import { waterVert, waterFrag, terrainVert, terrainFrag, grassVert, grassFrag, skyVert, skyFrag, diagVert, diagFrag, diagPtFrag, HAZE, RAIN_HAZE } from './renderShaders.js';
 import { FftOcean, makeFoamTexture } from './ocean.js';
 import { Boat, BOAT_TYPES, BOX_CAP } from './boat.js';
 import { BOAT_ORDER, CAN, newKit, shopItem } from './boatdata.js';
@@ -393,6 +393,8 @@ waterFlag.renderOrder = 2.1;
 water.add(waterFlag);   // 跟著海面一起顯示、隱藏（畫倒影時海面是藏起來的）
 // 測試（?wlod0）：海面頂點不用縮小版的浪高圖，查手機上遠處海面翹起來的問題
 if (new URLSearchParams(window.location.search).has('wlod0')) for (const m of [water.material, waterFlag.material]) m.defines.WLOD0 = 1;
+// 測試（?wflat）：海面強制放平，分辨「海面真的被抬高」還是「深度、繪製順序」造成的假象
+if (new URLSearchParams(window.location.search).has('wflat')) for (const m of [water.material, waterFlag.material]) m.defines.WFLAT = 1;
 scene.add(water);
 DECKS.slice(0, 3).forEach((r, i) => shared.uQuay.value[i].set(r.x0, r.z0, r.x1, r.z1));   // 岸壁、防波堤的位置：海面要在牆腳畫水線
 
@@ -2914,6 +2916,16 @@ const diag = new URLSearchParams(window.location.search).has('diag') ? (() => {
   const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({ vertexShader: diagVert, fragmentShader: diagFrag, uniforms: u, depthTest: false, depthWrite: false }));
   quad.frustumCulled = false;
   const dScene = new THREE.Scene(); dScene.add(quad);
+  // 第二部分：用海面的頂點程式本身算人前方 12、40、150 公尺三點（見 renderShaders.js 的 DIAG）
+  const DISTS = [12, 40, 150];
+  const ptGeo = new THREE.BufferGeometry();
+  ptGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(18), 3));
+  const ptMat = new THREE.ShaderMaterial({ vertexShader: waterVert, fragmentShader: diagPtFrag, uniforms: shared, defines: { DIAG: 1, ...water.material.defines }, depthTest: false, depthWrite: false });
+  const pts = new THREE.Points(ptGeo, ptMat);
+  pts.frustumCulled = false;
+  const pScene = new THREE.Scene(); pScene.add(pts);
+  const rt2 = new THREE.WebGLRenderTarget(6, 1, { type: rt.texture.type, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+  const out2 = new Float32Array(24), hb2 = new Uint16Array(24);
   const el = document.body.appendChild(Object.assign(document.createElement('pre'), { id: 'diag' }));
   Object.assign(el.style, { position: 'fixed', left: '8px', top: '60px', zIndex: 99, margin: 0, padding: '6px 8px', font: '12px/1.35 monospace', color: '#fff', background: 'rgba(0,0,0,0.72)', whiteSpace: 'pre', pointerEvents: 'none' });
   const out = new Float32Array(16), hb = new Uint16Array(16), f = (v) => (Number.isFinite(v) ? v.toFixed(2) : String(v));
@@ -2928,7 +2940,18 @@ const diag = new URLSearchParams(window.location.search).has('diag') ? (() => {
     renderer.setRenderTarget(rt); renderer.render(dScene, ocean.cam); 
     if (rt.texture.type === THREE.FloatType) gl.readPixels(0, 0, 4, 1, gl.RGBA, gl.FLOAT, out);
     else { gl.readPixels(0, 0, 4, 1, gl.RGBA, gl.HALF_FLOAT, hb); for (let i = 0; i < 16; i++) out[i] = THREE.DataUtils.fromHalfFloat(hb[i]); }
+    // 頂點程式算的三點
+    const pa = ptGeo.attributes.position.array, cx = shared.uCenter.value.x, cz = shared.uCenter.value.y;
+    DISTS.forEach((D, i) => {
+      for (let j = 0; j < 2; j++) { const o = (i * 2 + j) * 3; pa[o] = player.x + _gd.x * D - cx; pa[o + 1] = i * 2 + j; pa[o + 2] = player.z + _gd.z * D - cz; }
+    });
+    ptGeo.attributes.position.needsUpdate = true;
+    const cc = renderer.getClearColor(new THREE.Color()), ca = renderer.getClearAlpha();
+    renderer.setRenderTarget(rt2); renderer.setClearColor(0x000000, 0); renderer.clear(); renderer.render(pScene, ocean.cam); renderer.setClearColor(cc, ca);
+    if (rt2.texture.type === THREE.FloatType) gl.readPixels(0, 0, 6, 1, gl.RGBA, gl.FLOAT, out2);
+    else { gl.readPixels(0, 0, 6, 1, gl.RGBA, gl.HALF_FLOAT, hb2); for (let i = 0; i < 24; i++) out2[i] = THREE.DataUtils.fromHalfFloat(hb2[i]); }
     renderer.setRenderTarget(prev);
+    const vtx = DISTS.map((D, i) => { const a = i * 8; return `頂點${D}m 高${f(out2[a])} FFT${f(out2[a + 1])} 岸${f(out2[a + 2])} 漩${f(out2[a + 3])} 巨${f(out2[a + 4])} 長${f(out2[a + 5])} lod${f(out2[a + 6])}`; });
     el.textContent = [
       `${gpu}`, `高精度 頂點:${vp.precision} 像素:${fp.precision}  ${ext}`,
       `畫質${gfx.name} 浮點緩衝:${ocean.floatRT ? 32 : 16}位 位移圖:${ocean.cascades[0].disp[0].texture.type === THREE.FloatType ? 32 : 16}位`,
@@ -2941,6 +2964,7 @@ const diag = new URLSearchParams(window.location.search).has('diag') ? (() => {
       `expo ${f(out[8])}  ph ${f(out[9])}  浪強 ${f(out[10])}  衰減 ${f(out[11])}`,
       `縮小版浪高 L2 ${f(out[12])}  L4 ${f(out[13])}  L6 ${f(out[14])}  第二層L4 ${f(out[15])}${water.material.defines.WLOD0 ? '  (wlod0)' : ''}`,
       `浮力讀回 ${f(ocean.sampleHeight(px, pz))}`,
+      ...vtx,
     ].join(String.fromCharCode(10));
   };
 })() : null;

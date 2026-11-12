@@ -414,6 +414,9 @@ float tsuPull(vec2 xz) {
 `;
 
 export const waterVert = /* glsl */ `
+#ifdef DIAG
+varying vec4 vDiagOut;
+#endif
 ${bed}
 ${waveDecl}
 ${shore}
@@ -516,8 +519,19 @@ void main() {
   vec3 pos = vec3(xz.x + d.x + uTsu.x * tCurl.x, d.y + tw.x + tCurl.y + vY.x + swY + shoreY, xz.y + d.z + uTsu.y * tCurl.x);
   vP0 = xz;
   vWaveH = d.y;
+#ifdef WFLAT
+  pos.y = 0.0;   // 測試（?wflat）：海面強制放平
+#endif
   vWorld = pos;
   gl_Position = projectionMatrix * viewMatrix * vec4(pos, 1.0);
+#ifdef DIAG
+  // 診斷（?diag）：用這段頂點程式本身算幾個點，畫進一排 6 格的貼圖（position.y 是第幾格）：
+  // 偶數格 (海面高度, FFT 浪, 岸邊浪, 漩渦)，奇數格 (巨浪, 颱風長浪, 取第幾層縮小版, 網格間距)
+  float dk = position.y;
+  vDiagOut = mod(dk, 2.0) < 0.5 ? vec4(pos.y, d.y, shoreY, vY.x) : vec4(tw.x, swY, lod0, spacing);
+  gl_Position = vec4((dk + 0.5) / 3.0 - 1.0, 0.0, 0.0, 1.0);
+  gl_PointSize = 1.0;
+#endif
 }
 `;
 
@@ -1440,6 +1454,10 @@ void main() {
 // ---- 診斷（?diag）----
 // 在顯示晶片上照海面頂點著色器的算法，算一次某一點的輸入值，畫進一張 3×1 的浮點貼圖再讀回來顯示：
 // 手機上海面形狀不對時，拿來比對哪一項跟電腦算的不一樣
+export const diagPtFrag = /* glsl */ `
+varying vec4 vDiagOut;
+void main() { gl_FragColor = vDiagOut; }
+`;
 export const diagVert = /* glsl */ `
 void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }
 `;
