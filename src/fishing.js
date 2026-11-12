@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 
 const ROD_LEN = 2.7;
+const GRIP = 0.14;       // 竿尾到握的地方多長
 const BREAK_AT = 0.5;    // 釣竿斷在多高的地方（佔全長的比例）
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -49,7 +50,6 @@ export class Fishing {
     upper.position.y = ROD_LEN * (1 - BREAK_AT) / 2;
     this.rodTop.add(upper);
     this.rod.add(lower, this.rodTop);
-    this.rod.position.set(0.42, 1.12, 0.27);
     this.rod.visible = false;
     env.player.mesh.add(this.rod);
     this.rodAngle = 0.7;     // 從垂直往前倒的角度
@@ -118,9 +118,19 @@ export class Fishing {
     this.inZone = true;
   }
 
+  // 竿子握在右手：照現在的角度擺好，握把的位置對到右手手心（竿尾比手低一小截）
+  _hold() {
+    const mesh = this.env.player.mesh, a = this.rodAngle;
+    this.rod.rotation.z = -a;
+    mesh.updateMatrixWorld(true);
+    mesh.userData.arms[1].userData.grip.getWorldPosition(this.rod.position);
+    mesh.worldToLocal(this.rod.position);
+    this.rod.position.x -= Math.sin(a) * GRIP; this.rod.position.y -= Math.cos(a) * GRIP;
+    this.rod.updateMatrixWorld(true);
+  }
+
   _tip() {
-    this.rod.rotation.z = -this.rodAngle;
-    this.env.player.mesh.updateMatrixWorld(true);
+    this._hold();
     return this.tip.set(0, ROD_LEN, 0).applyMatrix4(this.rod.matrixWorld);
   }
 
@@ -226,7 +236,7 @@ export class Fishing {
     if (this.state === 'snap') {
       this.bob.visible = this.line.visible = false;
       this.rodAngle += (angle - this.rodAngle) * (1 - Math.exp(-dt * 12));
-      this.rod.rotation.z = -this.rodAngle;
+      this._hold();
       return;
     }
     if (this.state === 'idle') { this.rod.visible = this.bob.visible = this.line.visible = false; p.rod = false; return; }
