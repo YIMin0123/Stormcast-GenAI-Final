@@ -70,6 +70,8 @@ function solid(points, mat) {
 }
 // 一圈八個點（切了角的長方形）：高度 y、前後 x0–x1、左右半寬 hz、切角 c
 const ring = (y, x0, x1, hz, c) => [[x0, y, hz - c], [x0, y, c - hz], [x1, y, hz - c], [x1, y, c - hz], [x0 + c, y, hz], [x0 + c, y, -hz], [x1 - c, y, hz], [x1 - c, y, -hz]];
+// 一圈橢圓形排列的點（面比切角長方形多，輪廓比較圓）：高度 y、中心的前後位置 cx、前後半徑 rx、左右半徑 rz
+const oval = (y, cx, rx, rz, n = 10) => Array.from({ length: n }, (_, i) => { const a = (i + 0.5) / n * Math.PI * 2; return [cx + rx * Math.cos(a), y, rz * Math.sin(a)]; });
 // 稜柱（上下半徑不同的幾邊形柱子）；四邊的轉 45 度，面才會朝正前、正側
 function prism(mat, rTop, rBot, len, sides) {
   const geo = new THREE.CylinderGeometry(rTop, rBot, len, sides, 1);
@@ -101,7 +103,7 @@ function faceTexture() {
 export function buildFigure() {
   const g = new THREE.Group();
   const skin = flat(0xf6cfa8), hair = flat(0x7a4a2e), navy = flat(0x3d4290), shirt = flat(0xf6eeee);
-  const boot = flat(0x6e4028), trim = flat(0xe9e4f2), ribbon = flat(0xd2302c);
+  const boot = flat(0x6e4028), trim = flat(0xe9e4f2), ribbon = flat(0xd2302c), bootHi = flat(0x8a563c), soleM = flat(0x482a1c);
   const face = new THREE.MeshLambertMaterial({ map: faceTexture(), alphaTest: 0.5, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
   // 一段稜柱狀的肢體：上端在關節上，往下垂
   const limb = (mat, rTop, rBot, len, x, y, z) => {
@@ -120,14 +122,23 @@ export function buildFigure() {
     shaft.position.y = -0.31;
     const toe = solid([[-0.09, -0.44, 0.092], [-0.09, -0.44, -0.092], [0.18, -0.44, 0.088], [0.18, -0.44, -0.088], [0.18, -0.385, 0.082], [0.18, -0.385, -0.082],
       [0.09, -0.33, 0.084], [0.09, -0.33, -0.084], [-0.09, -0.33, 0.092], [-0.09, -0.33, -0.092]], boot);
-    joint.add(shaft, toe);
+    const cuff = prism(bootHi, 0.127, 0.122, 0.035, 4);   // 靴口翻出來的一圈
+    cuff.position.y = -0.218;
+    const sock = prism(trim, 0.077, 0.075, 0.04, 4);      // 露出一點點的白襪
+    sock.position.y = -0.19;
+    const sole = solid([[-0.1, -0.44, 0.1], [-0.1, -0.44, -0.1], [0.19, -0.44, 0.096], [0.19, -0.44, -0.096], [-0.1, -0.415, 0.1], [-0.1, -0.415, -0.1], [0.19, -0.415, 0.096], [0.19, -0.415, -0.096]], soleM);   // 鞋底
+    joint.add(shaft, toe, cuff, sock, sole);
     return joint;
   });
   const arms = [-1, 1].map((side) => {
     const joint = limb(skin, 0.05, 0.078, ARM_LEN + 0.05, 0, 0.845, side * 0.2);   // 越往手越粗，手就是末端那一塊（沒有另外做手掌）
     const sleeve = prism(shirt, 0.075, 0.105, 0.12, 4);   // 短袖
     sleeve.position.y = -0.04;
-    joint.add(sleeve);
+    const band = prism(navy, 0.104, 0.109, 0.025, 4);     // 袖口的藍邊
+    band.position.y = -0.095;
+    const thumb = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.06, 0.035), skin);   // 拇指
+    thumb.position.set(0.058, -ARM_LEN + 0.01, -side * 0.02);
+    joint.add(sleeve, band, thumb);
     joint.userData.side = side;
     return joint;
   });
@@ -141,8 +152,10 @@ export function buildFigure() {
   };
   // ---- 身體：白色水手服、深藍裙子、紅領巾 ----
   put(solid(ring(0.57, -0.135, 0.135, 0.19, 0.05).concat(ring(0.86, -0.095, 0.095, 0.135, 0.04)), shirt), 0, 0, 0);
-  put(solid(ring(0.35, -0.215, 0.215, 0.275, 0.09).concat(ring(0.61, -0.115, 0.115, 0.16, 0.045)), navy), 0, 0, 0);   // 裙子
+  put(prism(navy, 0.165, 0.29, 0.27, 12), 0, 0.48, 0).scale.x = 0.8;   // 裙子：十二片褶
   put(solid(ring(0.835, -0.125, 0.12, 0.175, 0.05).concat(ring(0.875, -0.1, 0.1, 0.145, 0.045)), navy), 0, 0, 0);     // 水手領（搭在肩膀上的一圈）
+  put(solid(ring(0.838, -0.131, 0.126, 0.181, 0.052).concat(ring(0.85, -0.128, 0.123, 0.178, 0.05)), trim), 0, 0, 0);   // 領子邊上的白線
+  put(new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.045, 0.06), ribbon), 0.135, 0.835, 0);                              // 領巾的結
   put(new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.15, 0.27), navy), -0.115, 0.775, 0);                                // 背後垂下來的方領
   put(new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.02, 0.23), trim), -0.128, 0.725, 0);                               // 領子上的白線
   put(solid([[0.115, 0.855, 0.04], [0.115, 0.855, -0.04], [0.15, 0.80, 0.055], [0.15, 0.80, -0.055], [0.115, 0.79, 0.055], [0.115, 0.79, -0.055],
@@ -156,18 +169,18 @@ export function buildFigure() {
   parent = head; oy = 0.95;
   const HY = 1.2;   // 頭的中心高度
   const at = (pts) => pts.map(([x, y, z]) => [x, y + HY, z]);
-  put(solid(at([...ring(-0.265, -0.14, 0.17, 0.165, 0.07), ...ring(-0.2, -0.23, 0.26, 0.235, 0.09), ...ring(0.0, -0.26, 0.26, 0.28, 0.075),
-    ...ring(0.18, -0.24, 0.25, 0.265, 0.09), ...ring(0.27, -0.14, 0.14, 0.16, 0.07)]), skin), 0, 0, 0);
+  put(solid(at([...ring(-0.265, -0.13, 0.16, 0.15, 0.07), ...ring(-0.24, -0.19, 0.225, 0.2, 0.085), ...ring(-0.2, -0.235, 0.26, 0.235, 0.09), ...ring(-0.1, -0.255, 0.26, 0.268, 0.085), ...ring(0.0, -0.265, 0.26, 0.28, 0.08),
+    ...ring(0.1, -0.265, 0.26, 0.28, 0.085), ...ring(0.18, -0.245, 0.25, 0.262, 0.095), ...ring(0.24, -0.2, 0.2, 0.22, 0.09), ...ring(0.27, -0.13, 0.13, 0.15, 0.07)]), skin), 0, 0, 0);
   const faceMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.236), face);
   faceMesh.rotation.y = Math.PI / 2;
   put(faceMesh, 0.2615, HY - 0.082, 0);
   for (const side of [-1, 1]) put(new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.09, 0.04), skin), -0.03, HY - 0.12, side * 0.265);   // 耳朵
   // ---- 頭髮：比頭大一圈、有稜有角的一大塊；額前一片大尖瀏海垂到兩眼中間，兩旁的瀏海往外撇；
   //      兩側各一大束尖尖的頭髮垂到肩膀，後面兩束往外翹；後腦勺的頭髮蓋到脖子 ----
-  put(solid(at([...ring(-0.1, -0.33, -0.05, 0.33, 0.1), ...ring(0.06, -0.335, 0.2, 0.36, 0.1), ...ring(0.2, -0.3, 0.3, 0.33, 0.11),
-    ...ring(0.31, -0.2, 0.2, 0.22, 0.09), [-0.02, 0.37, 0]]), hair), 0, 0, 0);
+  put(solid(at([...oval(-0.1, -0.19, 0.14, 0.335), ...oval(0.0, -0.08, 0.26, 0.36), ...oval(0.1, -0.03, 0.32, 0.365), ...oval(0.2, 0, 0.31, 0.335),
+    ...oval(0.28, -0.01, 0.25, 0.27), ...oval(0.34, -0.015, 0.15, 0.16), [-0.02, 0.378, 0]]), hair), 0, 0, 0);
   // 瀏海：[左右位置, 寬, 尖端的高度, 尖端的左右位置]
-  for (const [zc, w, tipY, tipZ] of [[0, 0.18, -0.085, 0.01], [-0.15, 0.15, -0.02, -0.18], [0.15, 0.15, -0.02, 0.18], [-0.255, 0.14, -0.17, -0.265], [0.255, 0.14, -0.17, 0.265]]) {
+  for (const [zc, w, tipY, tipZ] of [[0, 0.17, -0.085, 0.01], [-0.105, 0.1, 0.005, -0.125], [0.105, 0.1, 0.005, 0.125], [-0.175, 0.11, -0.03, -0.2], [0.175, 0.11, -0.03, 0.2], [-0.255, 0.13, -0.17, -0.265], [0.255, 0.13, -0.17, 0.265]]) {
     put(solid(at([[0.305, 0.19, zc - w / 2], [0.305, 0.19, zc + w / 2], [0.262, 0.19, zc - w / 2], [0.262, 0.19, zc + w / 2], [0.295, tipY, tipZ], [0.268, tipY, tipZ]]), hair), 0, 0, 0);
   }
   for (const side of [-1, 1]) {
@@ -177,6 +190,9 @@ export function buildFigure() {
       [-0.06, -0.25, side * 0.34], [-0.27, -0.22, side * 0.27], [-0.1, -0.25, side * 0.45], [-0.3, -0.24, side * 0.37], [-0.2, -0.52, side * 0.44]]), hair), 0, 0, 0);   // 後面往外翹的一束
   }
   put(solid(at([...ring(-0.08, -0.335, -0.1, 0.3, 0.1), [-0.33, -0.3, 0.13], [-0.33, -0.3, -0.13], [-0.3, -0.37, 0], [-0.2, -0.27, 0.2], [-0.2, -0.27, -0.2]]), hair), 0, 0, 0);   // 後腦勺
+  for (const [z0, tipY] of [[-0.2, -0.4], [-0.07, -0.46], [0.07, -0.44], [0.2, -0.4]]) {
+    put(solid(at([[-0.31, -0.2, z0 - 0.07], [-0.31, -0.2, z0 + 0.07], [-0.2, -0.2, z0 - 0.07], [-0.2, -0.2, z0 + 0.07], [-0.34, tipY, z0 * 1.15], [-0.3, tipY, z0 * 1.15]]), hair), 0, 0, 0);   // 後腦勺下緣的幾撮髮尖
+  }
   // ---- 紅色大蝴蝶結：綁在後腦勺上方，兩片大翅膀往上往外張，底下垂著兩條帶子 ----
   const bow = new THREE.Group();   // 整個蝴蝶結歪向一邊（從正面只看得到一側露出來）
   bow.rotation.x = 0.3; bow.position.z = 0.03;
@@ -190,7 +206,7 @@ export function buildFigure() {
   parent = head;
   // fpHide：掌舵的第一人稱要藏起來的部分（脖子以上）；mats：這個人用到的所有材質
   g.traverse((m) => { if (m.isMesh) m.userData.figure = true; });
-  g.userData = { legs, arms, head, fpHide: body, torso, mats: [skin, hair, navy, shirt, boot, trim, ribbon, face] };
+  g.userData = { legs, arms, head, fpHide: body, torso, mats: [skin, hair, navy, shirt, boot, trim, ribbon, face, bootHi, soleM] };
   return g;
 }
 
