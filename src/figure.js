@@ -1,64 +1,81 @@
-// 人物：低多邊形的 Q 版水手服少女（早期 3D 主機的味道），照角色設定的四視圖做。
-// 座標：+X 前方、+Y 向上、+Z 右側；原點在兩腳中間的地面。全身高約 1.62 公尺，頭（連頭髮）約佔三分之一多一點。
-// 每一塊都是稜角分明的凸多面體，一個面一個顏色；表面再疊一層一格一格的明暗雜點（像素貼圖的感覺），
-// 眼睛、眉毛、腮紅、嘴畫在臉前面的一張小圖上。
-// 四肢各自掛在關節上（肩膀、髖部、脖子），走路、坐下、握舵時轉動關節即可。
+// 人物：Q 版低多邊形水手服少女。造型和貼圖是 Tripo AI 依角色設定圖生成的，
+// 用 tools/tripo_figure.py（Blender）整理成 public/models/girl.glb：轉成遊戲座標、綁骨架、把貼圖上的五官抹掉、另外做一層貼著臉的薄片放表情。
+// 座標：+X 前方、+Y 向上、+Z 右側；原點在兩腳中間的地面，身高 1.62。
+// 關節跟以前程式拼的人物一樣（遊戲其他地方只轉這幾個關節）：legs（髖關節）、upper（腰）、head（脖子）、arms（肩膀）。
+// 模型的手是 A 字張開的；手臂的關節底下再掛一根骨頭先把手轉回垂直，所以關節轉 0 就是手直直垂下，跟以前一樣。
 import * as THREE from 'three';
-import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
-import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-export const ARM_LEN = 0.27;   // 肩膀到握東西的位置（整條手臂再長 0.03）；握舵時用它算手臂要拉長多少
-const SHOULDER_Y = 0.85, SHOULDER_Z = 0.165, HIP_Y = 0.44, HIP_Z = 0.1, NECK_Y = 1.0;
-const WAIST_Y = 0.7;   // 腰的關節：上半身（衣服、手臂、頭）掛在這裡，鞠躬、伸懶腰、躺下時彎這裡
+// 網址加 ?boy 換成男版（開發測試用；之後換角色／換裝再做正式的選擇）
+const MODEL = new URLSearchParams(location.search).has('boy') ? 'boy' : 'girl';
+const gltf = await new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}models/${MODEL}.glb`);
+const SRC = {};
+// 關節位置：男女版比例不同，各自存在模型裡（tools/tripo_figure.py 寫進骨架的 extras.joints；權重是照這些位置分的）
+let J = null;
+gltf.scene.traverse((m) => { if (m.userData.joints) J = m.userData.joints; });
+J ??= { NECK: 0.97, SHOULDER: 0.923, SHOULDER_Z: 0.219, WAIST: 0.76, HIP: 0.486, HIP_Z: 0.151, HAND: 0.6, HAND_Z: 0.373 };
+const HIP_Y = J.HIP, HIP_Z = J.HIP_Z, WAIST_Y = J.WAIST, NECK_Y = J.NECK;
+const SHOULDER_Y = J.SHOULDER, SHOULDER_Z = J.SHOULDER_Z, HAND_Y = J.HAND, HAND_Z = J.HAND_Z;
+const A_POSE = Math.atan2(HAND_Z - SHOULDER_Z, SHOULDER_Y - HAND_Y);   // 模型的手往外張開幾度
+export const ARM_LEN = Math.hypot(HAND_Z - SHOULDER_Z, SHOULDER_Y - HAND_Y) + 0.02;   // 肩膀到握東西的位置；握舵時用它算手臂要拉長多少
+gltf.scene.traverse((m) => { if (m.isSkinnedMesh) SRC[m.name.startsWith('face') ? 'face' : 'body'] = m; });
+// 頂點顏色的紅色 = 這裡用平滑著色（頭部的膚色；見 tools/tripo_figure.py）。拿出來改成 smoothK，顏色本身不用
+{
+  const geo = SRC.body.geometry, col = geo.getAttribute('color');
+  const k = new Float32Array(geo.getAttribute('position').count);
+  if (col) for (let i = 0; i < k.length; i++) k[i] = col.getX(i);
+  geo.setAttribute('smoothK', new THREE.BufferAttribute(k, 1));
+  geo.deleteAttribute('color');
+}
 
 // ---- 像素雜點：每個面依它最朝向的軸，把物件自己的座標切成邊長 TEXEL 的方格，每格隨機亮一點或暗一點 ----
-const TEXEL = 0.022;
+const TEXEL = 0.035;   // 方格大一點、明暗差多一點，才看得出一格一格的色塊
+// 人物的記號：畫面的 alpha 寫成 2.4，環境光遮蔽（ao.js）看到就只套一點點。
+// Q 版的臉被瀏海、側髮包在裡面，遮蔽會在額頭和臉頰兩旁壓出一片灰灰的雜點，像臉很髒
+const FIG_ALPHA = 2.4;
+function figFlag(sh) {
+  sh.fragmentShader = sh.fragmentShader.replace('#include <dithering_fragment>', `#include <dithering_fragment>
+	gl_FragColor.a = ${FIG_ALPHA.toFixed(1)};`);
+}
+
+// 臉（k = 1 的地方）的打光：
+//   明暗過渡放寬、背光面不壓那麼暗：卡通打光的交界很短，落在臉頰上時會沿著大三角形的邊切出一塊階梯狀的暗區，像黑漬
+//   影子只吃四成：瀏海投在臉上的影子形狀碎、邊緣糊，也像黑漬；整個人站到屋簷下時臉還是會跟著暗一點
+function softFace(sh, k) {
+  sh.fragmentShader = sh.fragmentShader
+    .replace('#include <lights_lambert_pars_fragment>', THREE.ShaderChunk.lights_lambert_pars_fragment.replace(
+      'smoothstep( -0.04, 0.26, rawNL )', `mix( smoothstep( -0.04, 0.26, rawNL ), 0.62 + 0.38 * smoothstep( -0.5, 0.6, rawNL ), ${k} )`))
+    .replace('#include <lights_fragment_begin>', THREE.ShaderChunk.lights_fragment_begin.replace(
+      /directLight\.color \*= (\( directLight\.visible[^;]*);/g, `directLight.color *= mix( ( $1 ), 1.0, 0.6 * ${k} );`));
+}
+
+// 著色：平常是平面著色（每個面一個亮度，看得到稜角）；頂點有 smoothK 的地方（頭部膚色）漸漸換成平滑的法線，
+// 不然臉在側光下一格一格的很明顯
 function pixelMat(color, { amp = 0.09, ...extra } = {}) {
-  const m = new THREE.MeshLambertMaterial({ color, flatShading: true, ...extra });
+  const m = new THREE.MeshLambertMaterial({ color, ...extra });
   m.onBeforeCompile = (sh) => {
-    sh.vertexShader = 'varying vec3 vPix;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvPix = position;');
-    sh.fragmentShader = 'varying vec3 vPix;\n' + sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+    sh.vertexShader = 'attribute float smoothK;\nvarying float vSmooth;\nvarying vec3 vPix;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvPix = position;\n\tvSmooth = smoothK;');
+    sh.fragmentShader = 'varying float vSmooth;\nvarying vec3 vPix;\n' + sh.fragmentShader.replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
+	{
+		vec3 flatN = normalize( cross( dFdx( vViewPosition ), dFdy( vViewPosition ) ) );
+		normal = normalize( mix( flatN, normal, vSmooth ) );
+	}`).replace('#include <color_fragment>', `#include <color_fragment>
 	{
 		vec3 fa = abs( cross( dFdx( vPix ), dFdy( vPix ) ) );
 		vec3 c = floor( vPix / ${TEXEL.toFixed(4)} );
 		vec2 g = fa.x > fa.y && fa.x > fa.z ? c.yz + 17.0 : ( fa.y > fa.z ? c.xz + 41.0 : c.xy + 83.0 );
 		float h = fract( sin( dot( g, vec2( 12.9898, 78.233 ) ) ) * 43758.5453 );
-		diffuseColor.rgb *= 1.0 + ( h - 0.5 ) * ${amp.toFixed(3)};
+		diffuseColor.rgb *= 1.0 + ( h - 0.5 ) * ${amp.toFixed(3)} * ( 1.0 - 0.8 * vSmooth );   // 臉上（平滑著色的地方）雜點淡一點，不然一格一格的
 	}`);
+    softFace(sh, 'vSmooth');
+    figFlag(sh);
   };
-  m.customProgramCacheKey = () => 'pix' + amp;
+  m.customProgramCacheKey = () => 'pix4' + amp;
   return m;
 }
 
-// 把一堆點包起來的凸多面體。法線取相鄰面的平均（描邊是沿法線往外推的，這樣輪廓線才不會在稜角上裂開），
-// 表面的明暗則由材質的 flatShading 一個面一個面算
-function solid(points, mat) {
-  let geo = new ConvexGeometry(points.map((p) => new THREE.Vector3(...p)));
-  geo.deleteAttribute('normal');
-  geo.deleteAttribute('uv');
-  geo = mergeVertices(geo, 1e-4);
-  geo.computeVertexNormals();
-  return new THREE.Mesh(geo, mat);
-}
-// 一圈八個點（切了角的長方形）：高度 y、前後 x0–x1、左右半寬 hz、切角 c
-const ring = (y, x0, x1, hz, c) => [[x0, y, hz - c], [x0, y, c - hz], [x1, y, hz - c], [x1, y, c - hz], [x0 + c, y, hz], [x0 + c, y, -hz], [x1 - c, y, hz], [x1 - c, y, -hz]];
-// 一圈橢圓形排列的點：高度 y、中心的前後位置 cx、前後半徑 rx、左右半徑 rz
-const oval = (y, cx, rx, rz, n = 10) => Array.from({ length: n }, (_, i) => { const a = (i + 0.5) / n * Math.PI * 2; return [cx + rx * Math.cos(a), y, rz * Math.sin(a)]; });
-// 八角柱（切了角的方柱）：上端在 y0、下端在 y1，半寬 r0 → r1，前後中心 cx、左右中心 cz
-const oct = (y0, y1, r0, r1, cx = 0, cz = 0) => [...ring(y0, cx - r0, cx + r0, r0, r0 * 0.42), ...ring(y1, cx - r1, cx + r1, r1, r1 * 0.42)].map(([x, y, z]) => [x, y, z + cz]);
-// 一撮尖尖的頭髮：根部是一塊四邊形，尾端收成一個尖（前後兩點，back 是尖端的前後厚度）
-const tuft = (root, tip, back = 0.03) => [...root, tip, [tip[0] - back, tip[1], tip[2]]];
-// 一撮會彎的頭髮：根部 → 中段（縮成 k 倍寬，移到 mid）→ 尖端，拆成兩個凸塊接起來，中段那裡就有一個彎
-function strand(root, mid, tip, k = 0.6, back = 0.03) {
-  const c = [0, 1, 2].map((i) => root.reduce((t, p) => t + p[i], 0) / root.length);
-  const m = root.map((p) => p.map((v, i) => mid[i] + (v - c[i]) * k));
-  return [[...root, ...m], tuft(m, tip, back)];
-}
-const mz = (pts) => pts.map(([x, y, z]) => [x, y, -z]);              // 左右翻過來
-const shift = (pts, dx, dz) => pts.map(([x, y, z]) => [x + dx, y, z + dz]);
-
 // ---- 臉：一張 110×110 的小圖（一格 4 公釐），貼在臉的正前方，放大時不做平滑 ----
-// 圖的範圍：左右 ±0.22、上下 1.42 → 0.98；圖的左邊是人物的右手邊（+Z）。
+// 圖的左邊是人物的右手邊（+Z）；貼在模型臉上的那層薄片（模型裡的 face）的 UV 已經對好這張圖（眼睛的位置、大小）。
 // 八種表情各一張（角色設定圖上那組）：普通、開心、驚訝、思考、閉眼、微笑、哭泣、眨眼
 export const FACES = ['normal', 'happy', 'surprised', 'thinking', 'closed', 'smile', 'cry', 'wink'];
 const faceTex = {};
@@ -76,7 +93,8 @@ function faceTexture(id = 'normal') {
     px('#f59a80', x0 + 2, 86, 9, 7);
   }
   // 眼睛（x0 是左緣，寬 14、高 56–84）
-  const eyeOpen = (x0, top = 56) => { px(EYE, x0 + 1, top, 12, 85 - top); px(EYE, x0, top + 1, 14, 83 - top); px('#3d2b26', x0 + 2, 79, 10, 4); };
+  // 張開的眼睛：16 格寬、從 top 到 85 列的深色長方塊（四角各缺一格），下緣一條稍亮的；中心跟其他表情的眼睛對齊（x0 + 7）
+  const eyeOpen = (x0, top = 59) => { const a = x0 - 1; px(EYE, a + 1, top, 14, 85 - top); px(EYE, a, top + 1, 16, 83 - top); px('#3d2b26', a + 2, 79, 12, 4); };
   const arc = (x0, f, w = 3) => { for (let i = 0; i < 14; i++) px(LINE, x0 + i, f(Math.abs(i - 6.5)), 1, w); };
   const happyEye = (x0) => arc(x0, (d) => 64 + Math.round(d * 0.9));            // ^
   const closedEye = (x0) => arc(x0, (d) => 77 - Math.round(d * 0.55), 2);       // ‿（往下彎的一條）
@@ -85,23 +103,26 @@ function faceTexture(id = 'normal') {
   };
   // 眉毛（左眼的從外到內、右眼的從內到外）；lift：整條往上幾格；tilt：內側往上幾格
   const brows = (lift = 0, tilt = 0, only = 0) => {
-    if (only >= 0) for (let i = 0; i < 18; i++) px(BROW, 13 + i, 41 - lift - (i < 4 ? -1 : 0) - Math.round(tilt * i / 17), 1, 2);
-    if (only <= 0) for (let i = 0; i < 18; i++) px(BROW, 79 + i, 41 - lift - (i > 13 ? -1 : 0) - Math.round(tilt * (17 - i) / 17), 1, 2);
+    if (only >= 0) for (let i = 0; i < 18; i++) px(BROW, 13 + i, 47 - lift - (i < 4 ? -1 : 0) - Math.round(tilt * i / 17), 1, 2);
+    if (only <= 0) for (let i = 0; i < 18; i++) px(BROW, 79 + i, 47 - lift - (i > 13 ? -1 : 0) - Math.round(tilt * (17 - i) / 17), 1, 2);
   };
-  const smallO = () => { px(LIP, 54, 96, 3, 1); px(LIP, 53, 97, 1, 2); px(LIP, 57, 97, 1, 2); px(LIP, 54, 99, 3, 1); px('#c46e56', 54, 97, 3, 2); };
-  const smileMouth = () => { px(LIP, 51, 95, 1, 1); px(LIP, 52, 96, 1, 1); px(LIP, 53, 97, 5, 1); px(LIP, 58, 96, 1, 1); px(LIP, 59, 95, 1, 1); };
-  const openSmile = () => { px(LIP, 51, 95, 9, 1); px(MOUTH, 52, 96, 7, 3); px(LIP, 51, 96, 1, 2); px(LIP, 59, 96, 1, 2); px(LIP, 52, 98, 1, 1); px(LIP, 58, 98, 1, 1); px(LIP, 53, 99, 5, 1); px('#e07a6a', 54, 97, 3, 1); };
+  // 嘴：M 是嘴的上緣那一列。新的模型下巴短，嘴太低會落在下巴轉彎的地方被拉歪，所以比眼睛低 3 公分多一點就好
+  const M = 91;
+  // 普通的小嘴：輪廓清楚的小圓口（太小、顏色太暗的話遠看像一點髒污）
+  const smallO = () => { px(LIP, 54, M, 4, 1); px(LIP, 53, M + 1, 1, 3); px(LIP, 58, M + 1, 1, 3); px(LIP, 54, M + 4, 4, 1); px('#a8463a', 54, M + 1, 4, 2); px('#e2857a', 54, M + 3, 4, 1); };
+  const smileMouth = () => { px(LIP, 50, M, 1, 1); px(LIP, 51, M + 1, 1, 1); px(LIP, 52, M + 2, 7, 1); px(LIP, 59, M + 1, 1, 1); px(LIP, 60, M, 1, 1); };
+  const openSmile = () => { px(LIP, 51, M, 9, 1); px(MOUTH, 52, M + 1, 7, 3); px(LIP, 51, M + 1, 1, 2); px(LIP, 59, M + 1, 1, 2); px(LIP, 52, M + 3, 1, 1); px(LIP, 58, M + 3, 1, 1); px(LIP, 53, M + 4, 5, 1); px('#e07a6a', 54, M + 3, 3, 1); };
   switch (id) {
     case 'happy':     happyEye(20); happyEye(76); brows(2); openSmile(); break;
-    case 'surprised': eyeOpen(20, 54); eyeOpen(76, 54); brows(5);
-      px(LIP, 54, 95, 3, 1); px(LIP, 53, 96, 1, 4); px(LIP, 57, 96, 1, 4); px(LIP, 54, 100, 3, 1); px(MOUTH, 54, 96, 3, 4); break;
-    case 'thinking':  eyeOpen(22, 60); eyeOpen(78, 60); brows(0, 0, 1); brows(4, -2, -1); px(LIP, 55, 98, 5, 1); break;
+    case 'surprised': eyeOpen(20, 56); eyeOpen(76, 56); brows(5);
+      px(LIP, 54, M, 4, 1); px(LIP, 53, M + 1, 1, 5); px(LIP, 58, M + 1, 1, 5); px(LIP, 54, M + 6, 4, 1); px('#a8463a', 54, M + 1, 4, 5); break;
+    case 'thinking':  eyeOpen(22, 63); eyeOpen(78, 63); brows(0, 0, 1); brows(4, -2, -1); px(LIP, 55, M + 2, 6, 1); break;
     case 'closed':    closedEye(20); closedEye(76); brows(); smileMouth(); break;
     case 'smile':     eyeOpen(20); eyeOpen(76); brows(1); smileMouth(); break;
     case 'cry':
       squeeze(20, 1); squeeze(76, -1); brows(0, 4);
       for (const x of [24, 82]) { px('#8fd0f5', x, 80, 4, 26); px('#c8ecff', x + 1, 82, 1, 20); }   // 兩道淚
-      px(LIP, 52, 97, 7, 1); px(MOUTH, 52, 98, 7, 2); px(LIP, 51, 98, 1, 2); px(LIP, 59, 98, 1, 2); px(LIP, 52, 100, 7, 1); break;
+      px(LIP, 52, M + 1, 7, 1); px(MOUTH, 52, M + 2, 7, 2); px(LIP, 51, M + 2, 1, 2); px(LIP, 59, M + 2, 1, 2); px(LIP, 52, M + 4, 7, 1); break;
     case 'wink':      eyeOpen(20); squeeze(76, -1); brows(1); openSmile(); break;
     default:          eyeOpen(20); eyeOpen(76); brows(); smallO();
   }
@@ -114,185 +135,73 @@ function faceTexture(id = 'normal') {
 
 export function buildFigure() {
   const g = new THREE.Group();
-  const skin = pixelMat(0xf6bd92, { amp: 0.07 }), hair = pixelMat(0x6c3d2c, { amp: 0.12 }), shirt = pixelMat(0xf2e0da, { amp: 0.07 });
-  const skirt = pixelMat(0x3f3862, { amp: 0.1, side: THREE.DoubleSide }), navy = pixelMat(0x3d3660, { amp: 0.08 });
-  const red = pixelMat(0xc8322d, { amp: 0.1 }), boot = pixelMat(0x67392a, { amp: 0.1 }), sole = pixelMat(0x4a2b21, { amp: 0.08 });
-  const trim = pixelMat(0xeee6ee, { amp: 0.04 });
-  // 臉的小圖：只有五官的地方不透明。標成透明的，才不會被描邊、也不投影
-  const face = new THREE.MeshLambertMaterial({ map: faceTexture(), alphaTest: 0.5, transparent: true });
-
-  let parent = g, oy = 0;   // 現在往哪個關節上加東西、那個關節的高度（下面的座標都是整個人的座標，加上去時換算）
-  const list = [];
-  const put = (m) => { m.position.y -= oy; parent.add(m); list.push(m); return m; };
-  const add = (pts, mat) => put(solid(pts, mat));
-
-  // ---- 腿：膚色的八角柱（上端藏在裙子裡）＋ 粗粗的咖啡色短靴（靴筒、往前凸的鞋頭、深色鞋底） ----
-  const legs = [-1, 1].map((s) => {
-    const joint = new THREE.Group();
-    joint.position.set(0, HIP_Y, s * HIP_Z);
-    g.add(joint);
-    const bz = s * 0.015;   // 靴子比腿稍微往外
-    const parts = [
-      solid(oct(0.5, 0.2, 0.072, 0.066), skin),   // 腿的上端只比髖關節高一點點：坐下時腿往前抬，上端才不會從裙子後面戳出來
-      solid(shift(oct(0.25, 0.07, 0.094, 0.1), -0.018, bz), boot),
-      solid(shift([[-0.125, 0.02, 0.108], [-0.125, 0.02, -0.108], [-0.125, 0.13, 0.1], [-0.125, 0.13, -0.1], [0.03, 0.14, 0.1], [0.03, 0.14, -0.1],
-        [0.12, 0.12, 0.09], [0.12, 0.12, -0.09], [0.165, 0.08, 0.08], [0.165, 0.08, -0.08], [0.17, 0.02, 0.085], [0.17, 0.02, -0.085],
-        [0.1, 0.02, 0.115], [0.1, 0.02, -0.115]], 0, bz), boot),
-      solid(shift([[-0.13, 0, 0.11], [-0.13, 0, -0.11], [0.1, 0, 0.118], [0.1, 0, -0.118], [0.175, 0, 0.085], [0.175, 0, -0.085],
-        [-0.13, 0.026, 0.112], [-0.13, 0.026, -0.112], [0.1, 0.026, 0.12], [0.1, 0.026, -0.12], [0.178, 0.026, 0.087], [0.178, 0.026, -0.087]], 0, bz), sole),
-    ];
-    for (const m of parts) { m.position.y -= HIP_Y; joint.add(m); }
-    return joint;
-  });
-
-  // ---- 上半身：掛在腰的關節上 ----
-  const upper = new THREE.Group();
-  upper.position.y = WAIST_Y;
-  g.add(upper);
-
-  // ---- 手臂：白色短袖（下緣張開）＋ 膚色手臂 ＋ 末端粗一點的方塊手 ----
+  const bone = (parent, x, y, z) => { const b = new THREE.Bone(); b.position.set(x, y, z); parent.add(b); return b; };
+  // 骨頭（都是轉角 0 的；位置 = 關節在父關節裡的位置）
+  const root = bone(g, 0, 0, 0);                                   // 裙子跟著它（不跟腿擺）
+  const upper = bone(g, 0, WAIST_Y, 0);                            // 腰
+  const head = bone(upper, 0, NECK_Y - WAIST_Y, 0);                // 脖子
+  const legs = [-1, 1].map((s) => bone(g, 0, HIP_Y, s * HIP_Z));
+  const armBones = [];
   const arms = [-1, 1].map((s) => {
-    const joint = new THREE.Group();
-    joint.position.set(-0.015, SHOULDER_Y - WAIST_Y, s * SHOULDER_Z);
-    joint.userData.base = new THREE.Vector3(-0.015, SHOULDER_Y, s * SHOULDER_Z);   // 肩膀在整個人座標裡的位置（握舵時算手要伸多長）
-    upper.add(joint);
-    const at = (pts) => pts.map(([x, y, z]) => [x, y - SHOULDER_Y, z]);
-    const sleeve = solid(at(oct(0.885, 0.745, 0.064, 0.086)), shirt);                       // 袖子
-    const hand = new THREE.Group();                                                          // 手（掛在手腕上）
-    hand.position.y = 0.635 - SHOULDER_Y;
-    hand.add(solid([...oct(0, -0.06, 0.066, 0.07), ...oct(-0.075, -0.082, 0.055, 0.055)], skin));
-    joint.add(sleeve, solid(at(oct(0.79, 0.62, 0.056, 0.06)), skin), hand);                 // 中間是手臂
-    const grip = new THREE.Object3D();                                                       // 手心：拿東西（釣竿）的位置
-    grip.position.y = -0.04;
-    hand.add(grip);
-    joint.userData.side = s;
-    joint.userData.grip = grip;
-    // 握舵時手臂要伸長才搆得到：只拉長手臂那一段，袖子和手維持原來的樣子
-    joint.userData.stretch = (k) => { joint.scale.y = k; sleeve.scale.y = hand.scale.y = 1 / k; };
+    const joint = bone(upper, 0, SHOULDER_Y - WAIST_Y, s * SHOULDER_Z);
+    const b = bone(joint, 0, 0, 0);                                // 把 A 字張開的手轉回垂直的那根
+    armBones.push(b);
+    const grip = new THREE.Object3D();                             // 手心：拿東西（釣竿）的位置
+    grip.position.set(0, HAND_Y - SHOULDER_Y - 0.02, s * (HAND_Z - SHOULDER_Z));
+    b.add(grip);
+    joint.userData = {
+      side: s, grip, base: new THREE.Vector3(0, SHOULDER_Y, s * SHOULDER_Z),
+      stretch: (k) => { joint.scale.y = k; },                     // 握舵時手臂要伸長才搆得到
+    };
     return joint;
   });
+  // Blender 裡的骨頭名字 → 這裡的骨頭（Blender 的 .L 是人物的左邊 = 遊戲的 -Z）
+  // （GLTFLoader 會把名字裡的「.」拿掉，所以比對時只看英數字）
+  const byName = { root, upper, head, legL: legs[0], legR: legs[1], armL: armBones[0], armR: armBones[1] };
+  const key = (n) => n.replace(/[^A-Za-z0-9]/g, '');
 
-  // ---- 身體：短短的白色水手服（上半身）、深藍百褶裙（跟著腿那半邊）、藍色水手領、紅領巾 ----
-  put(new THREE.Mesh(skirtGeometry(), skirt));
-  parent = upper; oy = WAIST_Y;
-  add([...ring(0.69, -0.11, 0.125, 0.178, 0.05), ...ring(0.75, -0.105, 0.12, 0.172, 0.05), ...ring(0.86, -0.098, 0.112, 0.17, 0.05),
-    ...ring(0.92, -0.085, 0.1, 0.13, 0.045), ...ring(0.975, -0.06, 0.07, 0.072, 0.03)], shirt);
-  // 水手領：背後垂一片方領（上緣在脖子後面），從肩膀繞到胸前收成 V 字；邊上一條白線
-  add([[-0.06, 1.0, 0.07], [-0.06, 1.0, -0.07], [-0.088, 0.975, 0.12], [-0.088, 0.975, -0.12], [-0.12, 0.86, 0.135], [-0.12, 0.86, -0.135],
-    [-0.045, 1.0, 0.07], [-0.045, 1.0, -0.07], [-0.07, 0.97, 0.115], [-0.07, 0.97, -0.115], [-0.1, 0.86, 0.13], [-0.1, 0.86, -0.13]], navy);
-  for (const s of [-1, 1]) {
-    const S = (pts) => (s > 0 ? pts : mz(pts));
-    add(S([[-0.06, 1.0, 0.07], [-0.088, 0.975, 0.125], [0.04, 0.975, 0.075], [0.035, 0.945, 0.135],
-      [-0.05, 0.985, 0.065], [-0.075, 0.96, 0.115], [0.035, 0.96, 0.07], [0.03, 0.935, 0.12]]), navy);             // 肩上那一段
-    add(S([[0.04, 0.975, 0.075], [0.035, 0.945, 0.135], [0.118, 0.925, 0.0], [0.113, 0.9, 0.04],
-      [0.03, 0.965, 0.07], [0.025, 0.935, 0.12], [0.102, 0.92, 0.0], [0.1, 0.9, 0.035]]), navy);                    // 胸前那一段
-    add(S([[0.036, 0.952, 0.128], [0.041, 0.958, 0.122], [0.113, 0.908, 0.036], [0.117, 0.913, 0.031],
-      [0.027, 0.945, 0.125], [0.103, 0.905, 0.034]]), trim);                                                         // 胸前的白線
-    add(S([[-0.123, 0.875, 0.118], [-0.123, 0.875, 0.108], [-0.093, 0.965, 0.108], [-0.093, 0.965, 0.098],
-      [-0.113, 0.875, 0.118], [-0.083, 0.965, 0.106]]), trim);                                                        // 背後方領兩側的白線
-  }
-  add([[-0.124, 0.874, 0.118], [-0.124, 0.874, -0.118], [-0.121, 0.884, 0.108], [-0.121, 0.884, -0.108],
-    [-0.112, 0.874, 0.118], [-0.112, 0.874, -0.118], [-0.11, 0.884, 0.108], [-0.11, 0.884, -0.108]], trim);              // 背後方領下緣的白線
-  add([...ring(0.955, 0.098, 0.14, 0.034, 0.012), ...ring(0.905, 0.105, 0.147, 0.03, 0.012)], red);                  // 領巾的結
-  add([[0.135, 0.905, 0.03], [0.135, 0.905, -0.025], [0.118, 0.905, 0.025], [0.118, 0.905, -0.02],
-    [0.172, 0.775, 0.1], [0.155, 0.775, 0.095], [0.17, 0.78, -0.03], [0.153, 0.78, -0.028],
-    [0.18, 0.72, 0.05], [0.165, 0.72, 0.05]], red);                                                                   // 垂下來的領巾（往右手邊斜一點）
-  const torso = list.splice(0);   // 到這裡為止是軀幹：第一人稱走路時留著，掌舵時才藏
-
-  // ---- 頭：掛在脖子的關節上，可以轉頭、抬頭、低頭 ----
-  const neck = solid(oct(1.05, 0.95, 0.045, 0.048), skin);
-  neck.position.y = -WAIST_Y;
-  upper.add(neck);
-  const head = new THREE.Group();
-  head.position.y = NECK_Y - WAIST_Y;
-  upper.add(head);
-  parent = head; oy = NECK_Y;
-  // 頭殼：正面是一整片平的臉（x = 0.205），下巴寬寬的、兩角切掉
-  add([[0.205, 1.43, 0.2], [0.205, 1.43, -0.2], [0.205, 1.04, 0.2], [0.205, 1.04, -0.2], [0.205, 1.01, 0.175], [0.205, 1.01, -0.175],
-    [0.2, 0.982, 0.12], [0.2, 0.982, -0.12], [0.15, 0.975, 0.12], [0.15, 0.975, -0.12], [0.07, 0.99, 0.17], [0.07, 0.99, -0.17],
-    [0.15, 1.03, 0.235], [0.15, 1.03, -0.235], [0.12, 1.3, 0.25], [0.12, 1.3, -0.25], [-0.06, 1.08, 0.235], [-0.06, 1.08, -0.235],
-    [-0.08, 1.35, 0.25], [-0.08, 1.35, -0.25], [-0.22, 1.25, 0.2], [-0.22, 1.25, -0.2], [-0.2, 1.08, 0.15], [-0.2, 1.08, -0.15],
-    [0.0, 1.55, 0.15], [0.0, 1.55, -0.15]], skin);
-  const faceMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.44, 0.44), face);
-  faceMesh.rotation.y = Math.PI / 2;
-  faceMesh.position.set(0.2075, 1.2, 0);
-  put(faceMesh);
-  for (const s of [-1, 1]) add(oct(1.19, 1.11, 0.03, 0.028, -0.05, s * 0.245), skin);   // 耳朵（從側髮和後面那束頭髮之間露出來）
-
-  // ---- 頭髮 ----
-  // 頭頂：屋脊一樣尖起來的一大塊，從正面看像個五角形；前緣是額頭上的瀏海根部，後面蓋到後頸（正中間露出水手領的上緣）
-  add([[-0.02, 1.625, 0.03], ...oval(1.6, -0.01, 0.06, 0.08, 8), ...oval(1.56, -0.02, 0.14, 0.17, 10), ...oval(1.52, -0.025, 0.205, 0.24, 10),
-    ...oval(1.48, -0.025, 0.235, 0.275, 12), ...oval(1.44, -0.01, 0.26, 0.3, 12), ...oval(1.4, 0, 0.28, 0.325, 12),
-    [0.285, 1.42, 0.12], [0.285, 1.42, -0.12], [0.06, 1.34, 0.33], [0.06, 1.34, -0.33], [-0.12, 1.34, 0.335], [-0.12, 1.34, -0.335],
-    [-0.27, 1.34, 0.2], [-0.27, 1.34, -0.2], [-0.29, 1.34, 0.05], [-0.29, 1.34, -0.05],
-    [-0.02, 1.22, 0.32], [-0.02, 1.22, -0.32], [-0.2, 1.2, 0.3], [-0.2, 1.2, -0.3], [-0.285, 1.2, 0.18], [-0.285, 1.2, -0.18], [-0.3, 1.2, 0],
-    [-0.08, 1.08, 0.27], [-0.08, 1.08, -0.27], [-0.22, 1.08, 0.22], [-0.22, 1.08, -0.22], [-0.27, 1.08, 0.1], [-0.27, 1.08, -0.1],
-    [-0.16, 1.02, 0.12], [-0.16, 1.02, -0.12], [-0.215, 1.02, 0]], hair);
-  // 瀏海：從額頭垂下來的幾片大尖片，尖端垂到眼睛的高度（中間偏右手邊那片最長，一片蓋到左眼的上緣）。
-  // 不是一整片平板：根部沿著額頭的弧度往兩旁往後收，每片中段往前鼓、尖端往臉收，相鄰兩片前後錯開一點
-  // [右手邊根部 z、高度]、[左手邊根部 z、高度]、[尖端 z、高度]、這片往前多凸多少
-  const fx = (z) => 0.292 - z * z;   // 額頭前緣的弧度：越往兩旁越往後
-  for (const [[za, ya], [zb, yb], [zt, yt], dx] of [
-    [[0.215, 1.44], [0.124, 1.36], [0.165, 1.27], -0.008],
-    [[0.124, 1.36], [-0.036, 1.405], [0.046, 1.18], 0.008],
-    [[-0.036, 1.405], [-0.196, 1.34], [-0.13, 1.184], 0],
-    [[-0.196, 1.34], [-0.235, 1.43], [-0.23, 1.25], -0.01],
-  ]) {
-    const xa = fx(za) + dx, xb = fx(zb) + dx;
-    const root = [[xa, ya, za], [xb, yb, zb], [xa, 1.45, za], [xb, 1.45, zb], [xa - 0.05, 1.45, za], [xb - 0.05, 1.45, zb], [xa - 0.045, ya, za], [xb - 0.045, yb, zb]];
-    const mzt = (za + zb) / 2 + ((zt - (za + zb) / 2) * 0.45), my = (ya + yb) / 2 + (yt - (ya + yb) / 2) * 0.45;
-    for (const pts of strand(root, [fx(mzt) + dx + 0.004, my, mzt], [Math.max(0.224, fx(zt) + dx - 0.04), yt, zt], 0.55, 0.02)) add(pts, hair);
-  }
-  // 兩側：臉旁垂下來的一大片（在臉頰外側、耳朵前面，上半貼著頭、下半往外鼓），下緣三撮尖：裡面那撮往脖子收，最外面那撮往外翹；
-  // 耳朵後面再一大束往外鼓、往下垂到肩膀。每一撮都是中段彎一下的兩節，不是直直的楔子
-  for (const s of [-1, 1]) {
-    const S = (pts) => (s > 0 ? pts : mz(pts));
-    const side = (root, mid, tip, k = 0.6, back = 0.04) => { for (const pts of strand(root, mid, tip, k, back)) add(S(pts), hair); };
-    const q140 = [[0.09, 1.4, 0.21], [0.09, 1.4, 0.33], [-0.03, 1.4, 0.34], [-0.03, 1.4, 0.22]];
-    const q122 = [[0.085, 1.22, 0.215], [0.085, 1.22, 0.375], [-0.03, 1.22, 0.385], [-0.03, 1.22, 0.225]];
-    const q108 = [[0.075, 1.08, 0.205], [0.07, 1.08, 0.39], [-0.03, 1.08, 0.4], [-0.03, 1.08, 0.215]];
-    add(S([...q140, ...q122]), hair); add(S([...q122, ...q108]), hair);                                     // 臉旁那一大片
-    side([[0.08, 1.12, 0.2], [0.08, 1.12, 0.29], [-0.03, 1.12, 0.29], [-0.03, 1.12, 0.21]], [0.068, 1.0, 0.258], [0.045, 0.88, 0.215], 0.6, 0.05);
-    side([[0.075, 1.12, 0.27], [0.075, 1.12, 0.37], [-0.03, 1.12, 0.37], [-0.03, 1.12, 0.27]], [0.05, 1.03, 0.35], [0.02, 0.94, 0.325], 0.6, 0.05);
-    side([[0.07, 1.16, 0.33], [0.07, 1.16, 0.4], [-0.03, 1.16, 0.4], [-0.03, 1.16, 0.33]], [0.04, 1.1, 0.418], [0.02, 1.03, 0.45], 0.65, 0.05);
-    add(S([[-0.04, 1.32, 0.27], [-0.04, 1.32, 0.34], [-0.26, 1.3, 0.3], [-0.26, 1.3, 0.21], [-0.12, 1.17, 0.385],
-      [-0.04, 1.04, 0.33], [-0.1, 1.04, 0.375], [-0.24, 1.04, 0.34], [-0.29, 1.04, 0.22], [-0.2, 1.04, 0.2]]), hair);   // 耳後那束
-    side([[-0.05, 1.08, 0.3], [-0.05, 1.08, 0.37], [-0.2, 1.08, 0.36], [-0.2, 1.08, 0.29]], [-0.1, 0.97, 0.385], [-0.13, 0.87, 0.35]);
-    side([[-0.15, 1.08, 0.25], [-0.15, 1.08, 0.35], [-0.28, 1.08, 0.3], [-0.28, 1.08, 0.2]], [-0.2, 0.96, 0.33], [-0.2, 0.85, 0.285]);
-    side([[0.0, 1.12, 0.31], [0.0, 1.12, 0.37], [-0.12, 1.12, 0.38], [-0.12, 1.12, 0.32]], [-0.04, 1.02, 0.405], [-0.07, 0.94, 0.395]);
-  }
-
-  // ---- 紅色大蝴蝶結：綁在後腦勺左上方，一片往上往外翹，一片往下往外垂 ----
-  add([[-0.265, 1.51, -0.03], [-0.265, 1.51, -0.1], [-0.265, 1.43, -0.03], [-0.265, 1.43, -0.1],
-    [-0.33, 1.5, -0.035], [-0.33, 1.5, -0.095], [-0.33, 1.44, -0.035], [-0.33, 1.44, -0.095]], red);
-  add([[-0.27, 1.5, -0.08], [-0.27, 1.45, -0.09], [-0.32, 1.5, -0.08], [-0.32, 1.45, -0.09],
-    [-0.31, 1.625, -0.36], [-0.42, 1.59, -0.35], [-0.32, 1.42, -0.36], [-0.41, 1.4, -0.35]], red);
-  add([[-0.27, 1.46, -0.08], [-0.27, 1.43, -0.06], [-0.32, 1.46, -0.08], [-0.32, 1.43, -0.06],
-    [-0.3, 1.27, -0.36], [-0.41, 1.27, -0.36], [-0.3, 1.15, -0.43], [-0.42, 1.16, -0.425],
-    [-0.3, 1.05, -0.12], [-0.4, 1.07, -0.13]], red);
+  const bodyMat = pixelMat(0xffffff, { map: SRC.body.material.map, amp: 0.1 });
+  const face = new THREE.MeshLambertMaterial({ map: faceTexture(), alphaTest: 0.5, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });   // 鏤空靠 alphaTest，不用半透明混色（alpha 要拿來當記號）
+  face.onBeforeCompile = (sh) => { figFlag(sh); softFace(sh, '1.0'); };   // 表情薄片貼在臉上，打光要跟臉一樣，不然腮紅裡會切出一塊暗三角
+  face.customProgramCacheKey = () => 'figface2';
+  // 綁定：在模型原本的姿勢（手 A 字張開）下算好每根骨頭的反矩陣，綁好以後再把手轉回垂直
+  g.updateMatrixWorld(true);
+  const skin = (src, mat) => {
+    const m = new THREE.SkinnedMesh(src.geometry, mat);
+    m.bind(new THREE.Skeleton(src.skeleton.bones.map((b) => byName[key(b.name)])), new THREE.Matrix4());
+    m.castShadow = true;
+    g.add(m);
+    return m;
+  };
+  const body = skin(SRC.body, bodyMat);
+  const faceMesh = skin(SRC.face, face);
+  faceMesh.castShadow = false;   // 貼在臉前面 3 公釐的薄片：投影的話會在臉上印出一片斑點
+  faceMesh.userData.noCast = true;
+  // 掌舵的第一人稱只看得到兩隻手臂：另外做一份只有手臂那些面的網格，平常藏著
+  const armsOnly = new THREE.SkinnedMesh(armGeometry(), bodyMat);
+  armsOnly.bind(body.skeleton, new THREE.Matrix4());
+  armsOnly.visible = false;
+  g.add(armsOnly);
+  armBones.forEach((b, i) => { b.rotation.x = arms[i].userData.side * A_POSE; });   // 往身體收回 A 字的角度
 
   g.traverse((m) => { if (m.isMesh) m.userData.figure = true; });
-  // fpHide：掌舵的第一人稱要藏起來的部分（脖子以上）；mats：這個人用到的所有材質
+  // fpHide：掌舵的第一人稱要藏起來的；fpShow：那時才顯示的（只有手臂）；mats：這個人用到的所有材質
   // setFace：換表情（FACES 裡的一個）
   const setFace = (id) => { const t = faceTexture(FACES.includes(id) ? id : 'normal'); if (face.map !== t) face.map = t; };
-  g.userData = { legs, arms, head, upper, setFace, fpHide: [neck, head], torso, mats: [skin, hair, shirt, skirt, navy, red, boot, sole, trim, face] };
+  g.userData = { legs, arms, head, upper, setFace, fpHide: [body, faceMesh], fpShow: [armsOnly], torso: [], mats: [bodyMat, face] };
   return g;
 }
 
-// 百褶裙：十六片，一片凸一片凹；上窄下寬（A 字）、前後比左右扁一點
-function skirtGeometry() {
-  const n = 16;
-  let geo = new THREE.CylinderGeometry(1, 1, 1, n, 1, true);
-  const p = geo.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
-    const k = ((Math.round(Math.atan2(x, z) / (Math.PI * 2) * n) % n) + n) % n;
-    const f = k % 2 ? 0.955 : 1, top = y > 0;
-    p.setXYZ(i, x * (top ? 0.1 : 0.225) * f, top ? 0.73 : 0.47, z * (top ? 0.12 : 0.275) * f);
-  }
-  geo.deleteAttribute('normal');
-  geo.deleteAttribute('uv');
-  geo = mergeVertices(geo, 1e-4);
-  geo.computeVertexNormals();
-  return geo;
+// 只有手臂的那些三角形（三個頂點都主要跟著手臂骨頭的）
+let armGeo = null;
+function armGeometry() {
+  if (armGeo) return armGeo;
+  const src = SRC.body.geometry, idx = src.index.array, si = src.attributes.skinIndex, sw = src.attributes.skinWeight;
+  const names = SRC.body.skeleton.bones.map((b) => b.name);
+  const isArm = (v) => { let best = 0, bw = -1; for (let k = 0; k < 4; k++) if (sw.getComponent(v, k) > bw) { bw = sw.getComponent(v, k); best = si.getComponent(v, k); } return names[best].startsWith('arm'); };
+  const out = [];
+  for (let i = 0; i < idx.length; i += 3) if (isArm(idx[i]) && isArm(idx[i + 1]) && isArm(idx[i + 2])) out.push(idx[i], idx[i + 1], idx[i + 2]);
+  armGeo = src.clone();
+  armGeo.setIndex(out);
+  return armGeo;
 }

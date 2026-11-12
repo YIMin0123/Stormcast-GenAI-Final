@@ -406,7 +406,7 @@ function shade(obj) {
     if (!m.isMesh || m.userData.hull) return;
     const mat = Array.isArray(m.material) ? m.material[0] : m.material;
     if (mat.transparent && !(mat.alphaTest > 0)) return;
-    m.castShadow = true;
+    m.castShadow = !m.userData.noCast;   // noCast：貼在表面上的薄片（人物的臉），投影會在底下那層印出斑點
     m.receiveShadow = !mat.isMeshBasicMaterial && !mat.userData.noReceive;
   });
 }

@@ -77,7 +77,7 @@ function draw() {
       arms[0].rotation.z = -s * 0.8; arms[1].rotation.z = s * 0.8;
     } else {
       // 站著：手臂往兩旁微微張開（跟遊戲裡站著不動時一樣）
-      for (const a of arms) a.rotation.x = -a.userData.side * +(q.get('out') ?? 0.3);
+      for (const a of arms) a.rotation.x = -a.userData.side * +(q.get('out') ?? 0.48);
     }
   }
   const W = innerWidth, H = innerHeight;
