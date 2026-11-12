@@ -1,5 +1,6 @@
 // 畫面用的 GLSL：海面、地形、天空。海平面固定在 y = 0，起伏全部來自 FFT 風浪。
-import { SEA_FLOOR } from './terrain.js';
+import { SEA_FLOOR, ISLANDS } from './terrain.js';
+import { homeGlsl } from './homeGl.js';
 import { TSU, CURL, EBB, VORTEX, SWELL_K } from './weather.js';
 
 // 遠景的薄霧：越遠越淡，約 800 公尺外就融進天色裡（更遠的樹和石頭乾脆不畫）
@@ -634,7 +635,8 @@ uniform sampler2D uReflTex;
 uniform mat4 uReflMat;
 uniform float uReflOn;
 uniform vec2 uShTri[6];   // 駕駛艙屋頂投在水面上的影子（兩個三角形）
-uniform vec4 uQuay[3];
+${homeGlsl}
+uniform vec4 uQuay[3];   // 岸壁、防波堤的矩形（港座標，用 homeLocal 轉）
 uniform vec4 uHull[3];
 uniform vec3 uHullSize[3];
 uniform vec4 uShHull;     // 船身影子 (x, z, cos, sin)
@@ -644,7 +646,8 @@ uniform vec3 uLamp[8];    // 晚上的燈：(x, z, 亮度)
 #define SH_TAPS 4
 ${shadowRecv}
 // 離岸壁、防波堤的牆面多遠（公尺；在牆外是正的）
-float quayDist(vec2 p) {
+float quayDist(vec2 pw) {
+  vec2 p = homeLocal(pw);
   float d = 1e3;
   for (int i = 0; i < 3; i++) {
     vec2 q = abs(p - 0.5 * (uQuay[i].xy + uQuay[i].zw)) - 0.5 * (uQuay[i].zw - uQuay[i].xy);
@@ -1172,14 +1175,14 @@ void main() {
 
 // 每座島的地表長相（地形與雜草共用）
 const isle = /* glsl */ `
-uniform vec4 uIsle[6];      // 每座島：(x, z, 半徑, 0)
-uniform vec4 uIsleLook[6];  // 每座島的地表：(裸岩多寡, 草木多寡, 沙子多白, 草有多乾黃)
+uniform vec4 uIsle[${ISLANDS.length}];      // 每座島：(x, z, 半徑, 0)
+uniform vec4 uIsleLook[${ISLANDS.length}];  // 每座島的地表：(裸岩多寡, 草木多寡, 沙子多白, 草有多乾黃)
 
 // 這裡是哪座島，地表就長那座島的樣子
 vec4 isleLook(vec2 q) {
   vec4 acc = vec4(0.0);
   float ws = 0.0;
-  for (int i = 0; i < 6; i++) {
+  for (int i = 0; i < ${ISLANDS.length}; i++) {
     float d = length(q - uIsle[i].xy) / uIsle[i].z;
     float w = exp(-d * d * 3.0) + 1e-6;
     acc += uIsleLook[i] * w; ws += w;

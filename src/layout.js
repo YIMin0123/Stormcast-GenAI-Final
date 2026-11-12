@@ -1,6 +1,11 @@
 // 母港的配置：哪裡是岸壁、浮橋、商店、賣魚的籃子、停船格、排行榜看板。
 // 這個檔案只有數字，不碰畫面：伺服器（分配停船格、檢查玩家是不是真的站在商店前）和瀏覽器（蓋模型、判斷互動）共用同一份。
 import { BOAT_TYPES } from './boatdata.js';
+import { toWorld, toLocal, headingToWorld } from './frame.js';
+
+// 這個檔案裡的座標全是「港座標」（見 frame.js）：模型、碰撞矩形、停船格都照港口的設計圖寫，不管港口轉到世界的哪個方向。
+// 要給世界用的（玩家與船的位置、伺服器的檢查）：onDeck / pontoonY / inHarbor 吃世界座標、內部自己轉；
+// berthPose 回傳世界座標；SELL、SHELF 等有 world 版本（見檔尾的 homeW）。要用港座標的（蓋模型）用 onDeckLocal / pontoonYLocal。
 
 export const DECK_Y = 1.3; // 岸壁的高度（海平面以上，公尺）；比船的甲板略高，一步就能跨上船
 
@@ -38,7 +43,7 @@ export const PONTOONS = [{ id: 'A', x: -24.75 }, { id: 'B', x: -5.2 }].map((p) =
   gang: { x0: p.x - GANG_W / 2, x1: p.x + GANG_W / 2, z0: 118, z1: PONTOON_Z[0] },
 }));
 // 浮橋或跳板在 (x, z) 的橋面高度；不在上面就回傳 null
-export function pontoonY(x, z, margin = 0) {
+export function pontoonYLocal(x, z, margin = 0) {
   for (const p of PONTOONS) {
     const d = p.deck, g = p.gang;
     if (x >= d.x0 - margin && x <= d.x1 + margin && z >= d.z0 - margin && z <= d.z1 + margin) return PONTOON_Y;
@@ -47,8 +52,11 @@ export function pontoonY(x, z, margin = 0) {
   return null;
 }
 
+export function pontoonY(x, z, margin = 0) { const [lx, lz] = toLocal(x, z); return pontoonYLocal(lx, lz, margin); }
+
 // 某點是否在岸壁或防波堤上（留一點邊緣餘裕）
-export function onDeck(x, z, margin = 0) {
+export function onDeck(x, z, margin = 0) { const [lx, lz] = toLocal(x, z); return onDeckLocal(lx, lz, margin); }
+export function onDeckLocal(x, z, margin = 0) {
   for (const r of DECKS) {
     if (x >= r.x0 - margin && x <= r.x1 + margin && z >= r.z0 - margin && z <= r.z1 + margin) return true;
   }
@@ -81,14 +89,18 @@ export const BERTHS = [];
 }
 // 這種船停在這一格時，船身中心在哪、朝哪
 export function berthPose(berth, type) {
-  if (berth.kind !== 'big') return { x: berth.x, z: berth.z, heading: berth.heading };
-  const d = berth.off + 0.45 + BOAT_TYPES[type].beam / 2;
-  return { x: berth.ex + berth.nx * d, z: berth.ez + berth.nz * d, heading: berth.heading };
+  let lx = berth.x, lz = berth.z;
+  if (berth.kind === 'big') {
+    const d = berth.off + 0.45 + BOAT_TYPES[type].beam / 2;
+    lx = berth.ex + berth.nx * d; lz = berth.ez + berth.nz * d;
+  }
+  const [x, z] = toWorld(lx, lz);
+  return { x, z, heading: headingToWorld(berth.heading) };
 }
 // 這種船可以停哪幾類格子（依優先順序）
 export const berthKinds = (type) => (type === 'skiff' ? ['small', 'anchor'] : ['big', 'anchor']);
 // 船在不在母港附近（換船、收船時用）
-export const inHarbor = (x, z) => x > -125 && x < 30 && z > 112 && z < 210;
+export const inHarbor = (x, z) => { const [lx, lz] = toLocal(x, z); return lx > -125 && lx < 30 && lz > 112 && lz < 210; };
 
 // ---- 看板 -------------------------------------------------------------------
 // 魚市場前面一排：停船位置牌、本房紀錄、今日紀錄。都面向海（+z）
@@ -105,3 +117,25 @@ export const WALLS = [
   { x0: -33.2, x1: 25.2, z0: 99.5, z1: 101.0 },   // 靠山的擋土牆
   { x0: BOARDS.berth.x - 0.6, x1: BOARDS.daily.x + 1.5, z0: BOARD_Z - 0.3, z1: BOARD_Z + 0.25 },   // 一排看板
 ];
+
+// ---- 世界座標版 ---------------------------------------------------------------
+// 給瀏覽器的互動判斷和伺服器用：把港座標的一個點 {x, z} 轉成世界座標（其他欄位照抄）
+export const homeW = (p) => { const [x, z] = toWorld(p.x, p.z); return { ...p, x, z }; };
+export const SELL_W = { basket: homeW(SELL.basket), board: homeW(SELL.board), button: homeW(SELL.button) };
+export const SHOP_W = homeW(SHOP);
+export const LIGHTHOUSE_W = homeW(LIGHTHOUSE);
+// 商品架：每樣商品的位置（x）、站在桌前的位置（站位）都是世界座標；桌子在港座標的 z
+export const SHELF_W = SHELF.map((it) => ({ ...it, lx: it.x, ...homeW({ x: it.x, z: SHELF_Z }), stand: homeW({ x: it.x, z: SHELF_Z + 1.3 }) }));
+export const BOARD_STAND_W = homeW({ x: BOARDS.berth.x, z: BOARD_Z + 1.2 });
+// 玩家出生點：位置與面向（世界座標）
+export const SPAWN_W = { ...homeW(PLAYER_SPAWN), yaw: headingToWorld(PLAYER_SPAWN.yaw) };
+// 岸壁朝海那一側的邊緣（繫纜樁都在這條邊上），港座標的 z：從岸壁那塊平台推出來，不寫死
+export const QUAY_EDGE_Z = DECKS[0].z1;
+// 岸壁的中央（朝海那一側）、港內水面的中央：海鷗、環境音、鏡頭、地圖標記用（從岸壁那塊平台推出來）
+const quayMidX = (DECKS[0].x0 + DECKS[0].x1) / 2;
+export const QUAY_CENTER_W = homeW({ x: quayMidX, z: DECKS[0].z1 });
+export const HARBOR_CENTER_W = homeW({ x: quayMidX, z: DECKS[0].z1 + 10 });
+// 站在商店櫃檯前（世界座標）：靠近這裡會顯示商店的提示
+export const SHOP_FRONT_W = homeW({ x: SHOP.x + 1.6, z: SHOP.z + SHOP.d / 2 + 2 });
+// 停船位置牌：看板中心（世界座標）
+export const BERTH_BOARD_W = homeW({ x: BOARDS.berth.x, z: BOARD_Z });

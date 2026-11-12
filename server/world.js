@@ -5,7 +5,8 @@ import { computeDanger, computeOffshore } from '../src/weather.js';
 import { onDeck, pontoonY, BERTHS, berthPose } from '../src/layout.js';
 import { BOAT_TYPES } from '../src/boatdata.js';
 
-const N = 512, NF = 1024, L = 2048;
+import { WORLD } from '../src/config.js';
+const N = 512, NF = 1024, L = WORLD.size;
 const bed = makeTerrain(NF, L).bed;
 const coarse = new Float32Array(N * N);
 for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {

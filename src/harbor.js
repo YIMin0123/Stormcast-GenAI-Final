@@ -6,10 +6,13 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { buildBoatMesh, BOAT_TYPES } from './boat.js';
 import { makeCanMesh } from './fish.js';
 import { HOME } from './terrain.js';
+import { HOME_U, homeGlsl } from './homeGl.js';
+import { toWorld } from './frame.js';
 import { bulb, softDisc, softSquare } from './toon.js';
-import { DECK_Y, DECKS, WALLS, SHOP, LIGHTHOUSE, SELL, SHELF, SHELF_X, SHELF_Z, PLAYER_SPAWN, onDeck, PONTOONS, PONTOON_Y, PONTOON_W, BERTHS } from './layout.js';
+import { DECK_Y, DECKS, WALLS, SHOP, LIGHTHOUSE, SELL, SHELF, SHELF_X, SHELF_Z, PLAYER_SPAWN, onDeckLocal, PONTOONS, PONTOON_Y, PONTOON_W, BERTHS } from './layout.js';
 // 港口的配置（哪裡是岸壁、商店、攤位、停船格）在 layout.js，伺服器也用同一份；這裡照著它蓋模型
-export { DECK_Y, DECKS, WALLS, SHOP, LIGHTHOUSE, SELL, SHELF, SHELF_X, SHELF_Z, PLAYER_SPAWN, onDeck };
+export { DECK_Y, DECKS, WALLS, SHOP, LIGHTHOUSE, SELL, SHELF, SHELF_X, SHELF_Z, PLAYER_SPAWN };
+// 這個檔案的座標全是港座標（見 frame.js）；makeHarbor 回傳的 group 由呼叫的人擺到世界裡（位置、轉向）
 
 export const HARBOR_ROCKS = [];   // 消波塊（船和人都過不去）：{ x, z, r, top }
 
@@ -352,6 +355,7 @@ function wetGround(mat) {
     sh.uniforms.uRainK = WET.rain;
     sh.uniforms.uWetT = WET.time;
     sh.uniforms.uDry = WET.dry;
+    sh.uniforms.uHome = HOME_U;
     sh.uniforms.uDeckRefl = WET.reflTex;
     sh.uniforms.uDeckReflMat = WET.reflMat;
     sh.uniforms.uDeckReflOn = WET.reflOn;
@@ -360,6 +364,7 @@ function wetGround(mat) {
       .replace('#include <project_vertex>', '#include <project_vertex>\n\tvWetPos = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;\n\tvWetUp = normalize( mat3( modelMatrix ) * objectNormal ).y;');
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
+${homeGlsl}
 uniform float uWetK;
 uniform float uRainK;
 uniform float uWetT;
@@ -392,7 +397,7 @@ float wetRings( vec2 p, float rain ) {
       .replace('#include <map_fragment>', `#include <map_fragment>
 	float wetHere = 0.0, wetPud = 0.0;
 	if ( uWetK > 0.001 && vWetUp > 0.5 ) {
-		vec2 wq = vWetPos.xz;
+		vec2 wq = homeLocal( vWetPos.xz );   // 淋不到雨的範圍、積水的位置都用港座標
 		float roof = 0.0;
 		for ( int i = 0; i < 4; i ++ ) {
 			vec4 r = uDry[ i ];
@@ -1068,7 +1073,7 @@ export function makeHarbor(bedAt) {
       mesh.computeBoundingSphere();
       group.add(mesh);
     };
-    lay(softDisc(), SOLIDS.filter((c) => onDeck(c.x, c.z)).map((c) => { const k = Math.max(0.9, c.r * 3.4); return [c.x, c.z, k, k]; }));
+    lay(softDisc(), SOLIDS.filter((c) => onDeckLocal(c.x, c.z)).map((c) => { const k = Math.max(0.9, c.r * 3.4); return [c.x, c.z, k, k]; }));
     const k = 1 / 0.6, sq = (x, z, w, d) => [x, z, w * k, d * k];
     lay(softSquare(), [
       sq(SHOP.x, SHOP.z, SHOP.w + 0.5, SHOP.d + 0.5), sq(SHOP.x + 1.6, SHOP.z + SHOP.d / 2 + 0.45, 3.8, 1.1),
@@ -1115,18 +1120,21 @@ export function makeHarbor(bedAt) {
     mat.customProgramCacheKey = () => 'pool';
     mat.onBeforeCompile = (sh) => {
       sh.uniforms.uDeckRect = { value: deckRects };
+      sh.uniforms.uHome = HOME_U;
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec2 vPoolW;')
         .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvPoolW = ( modelMatrix * vec4( transformed, 1.0 ) ).xz;');
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', `#include <common>
 varying vec2 vPoolW;
+${homeGlsl}
 uniform vec4 uDeckRect[ ${DECKS.length} ];`)
         .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
 	bool poolOn = false;
 	for ( int i = 0; i < ${DECKS.length}; i ++ ) {
 		vec4 dr = uDeckRect[ i ];
-		if ( vPoolW.x > dr.x && vPoolW.x < dr.z && vPoolW.y > dr.y && vPoolW.y < dr.w ) poolOn = true;
+		vec2 pl = homeLocal( vPoolW );
+			if ( pl.x > dr.x && pl.x < dr.z && pl.y > dr.y && pl.y < dr.w ) poolOn = true;
 	}
 	if ( ! poolOn ) discard;`);
     };
@@ -1147,3 +1155,11 @@ uniform vec4 uDeckRect[ ${DECKS.length} ];`)
   return group;
 }
 
+
+// makeHarbor 蓋完之後呼叫一次：把給世界用的清單（立在水裡的樁、擋路的東西、消波塊、繫纜樁、路燈）從港座標就地轉成世界座標。
+// 清單裡其他欄位（半徑、高度、亮度）不變
+export function worldizeHarborLists() {
+  for (const list of [PILES, SOLIDS, HARBOR_ROCKS, BOLLARDS, LAMPS, EXTRA_LAMPS]) {
+    for (const p of list) [p.x, p.z] = toWorld(p.x, p.z);
+  }
+}

@@ -1,4 +1,8 @@
-// 地圖：開闊海洋上的六座島，沒有大陸。高程單位公尺，海平面 = 0，負值為海底。
+import { toWorld, toLocal } from './frame.js';
+import { WORLD } from './config.js';
+const IL = WORLD.home.islandLocal;
+
+// 地圖：開闊海洋上的一座母島，沒有大陸。高程單位公尺，海平面 = 0，負值為海底。
 // 座標原點在地圖中心，+z 是南方（風浪由北往南傳）。
 
 function hash2(ix, iy, seed) {
@@ -31,51 +35,26 @@ function fbm(x, y, seed, octaves = 5) {
 
 export const SEA_FLOOR = -30;
 
+// 地形全部用港座標算（母島與港口一起轉過去，見 frame.js）。
 // 每座島由一到數個圓丘組成：位置（公尺）、半徑、峰頂高度；pow 越大頂部越平（沙洲用）
 // R：島的大概半徑（著色與佈景用）
 // shape：地形的性格——beach/bw 沙灘壓得多平、多寬；jag 礁岩的崎嶇程度；cliff 斷崖的高度（公尺）；hill 山丘起伏
 // look：地表的樣子——rock 裸岩多寡、veg 草木多寡、white 沙子多白、dry 草有多乾黃
 // flora：島上種什麼、擺多少石頭
-export const ISLANDS = [
+const LOCAL_ISLANDS = [
   {
-    id: 'home', name: '母港島', x: 0, z: 40, R: 150, bumps: [{ x: 0, z: 40, r: 125, peak: 18 }],
+    id: 'home', name: '母港島', x: IL.x, z: IL.z, R: 150, bumps: [{ x: IL.x, z: IL.z, r: 125, peak: 18 }],
     shape: { beach: 0.72, bw: 2.2, jag: 0, cliff: 0, hill: 0.28 },
     look: { rock: 0.12, veg: 1.0, white: 0.15, dry: 0.15 },
     flora: { broadleaf: 300, conifer: 150, palm: 0, bush: 160, shoreRock: 46, landRock: 30 },
   },
-  {
-    id: 'west', name: '西嶼', x: -520, z: -360, R: 125, bumps: [{ x: -520, z: -360, r: 95, peak: 23 }],
-    shape: { beach: 0.5, bw: 1.7, jag: 0.10, cliff: 0, hill: 0.36 },
-    look: { rock: 0.45, veg: 0.9, white: 0.0, dry: 0.1 },
-    flora: { broadleaf: 30, conifer: 380, palm: 0, bush: 80, shoreRock: 90, landRock: 50 },
-  },
-  {
-    id: 'twin', name: '雙峰島', x: 530, z: -380, R: 150, bumps: [{ x: 500, z: -400, r: 100, peak: 22 }, { x: 600, z: -330, r: 70, peak: 13 }],
-    shape: { beach: 0.45, bw: 1.6, jag: 0.12, cliff: 7, hill: 0.24 },
-    look: { rock: 0.7, veg: 0.55, white: 0.05, dry: 0.45 },
-    flora: { broadleaf: 60, conifer: 120, palm: 0, bush: 140, shoreRock: 110, landRock: 90 },
-  },
-  {
-    id: 'rocks', name: '北礁', x: 0, z: -660, R: 110,
-    bumps: [{ x: 0, z: -660, r: 45, peak: 9 }, { x: 60, z: -700, r: 32, peak: 6 }, { x: -55, z: -625, r: 28, peak: 5 },
-      { x: -20, z: -712, r: 14, peak: 7 }, { x: 38, z: -636, r: 12, peak: 6 }, { x: -84, z: -672, r: 10, peak: 4 }, { x: 98, z: -655, r: 9, peak: 5 }],
-    shape: { beach: 0.12, bw: 1.2, jag: 0.55, cliff: 0, hill: 0.3 },
-    look: { rock: 1.0, veg: 0.08, white: 0.0, dry: 0.6 },
-    flora: { broadleaf: 0, conifer: 0, palm: 0, bush: 18, shoreRock: 190, landRock: 70 },
-  },
-  {
-    id: 'sand', name: '沙洲島', x: -540, z: 420, R: 150, bumps: [{ x: -560, z: 400, r: 105, peak: 3.5, pow: 4 }, { x: -500, z: 445, r: 65, peak: 2.5, pow: 4 }],
-    shape: { beach: 0.86, bw: 3.0, jag: 0, cliff: 0, hill: 0.12 },
-    look: { rock: 0.0, veg: 0.35, white: 1.0, dry: 0.5 },
-    flora: { broadleaf: 0, conifer: 0, palm: 150, bush: 130, shoreRock: 8, landRock: 0 },
-  },
-  {
-    id: 'east', name: '東嶼', x: 560, z: 380, R: 120, bumps: [{ x: 560, z: 380, r: 90, peak: 11 }],
-    shape: { beach: 0.62, bw: 2.0, jag: 0.05, cliff: 2.2, hill: 0.32 },
-    look: { rock: 0.4, veg: 0.7, white: 0.25, dry: 0.3 },
-    flora: { broadleaf: 110, conifer: 20, palm: 0, bush: 150, shoreRock: 60, landRock: 60 },
-  },
 ];
+
+// 世界座標版（佈景、著色器、伺服器用）：島的位置、圓丘的位置都轉成世界座標。地形本身用港座標算（見 makeTerrain）
+export const ISLANDS = LOCAL_ISLANDS.map((o) => {
+  const [x, z] = toWorld(o.x, o.z);
+  return { ...o, x, z, bumps: o.bumps.map((b) => { const [bx, bz] = toWorld(b.x, b.z); return { ...b, x: bx, z: bz }; }) };
+});
 
 // 母港：在母港島南側（背風面）挖出一個港灣。岸邊留一塊平地蓋岸壁和房子；西邊一道斜坡（船揚場）一路伸進水裡
 export const HOME = {
@@ -100,25 +79,26 @@ const SHAPE_KEYS = ['beach', 'bw', 'jag', 'cliff', 'hill'];
 
 export function makeTerrain(N, L, seed = 11) {
   const bed = new Float32Array(N * N);
-  const rises = new Float32Array(ISLANDS.length), sh = {};
+  const rises = new Float32Array(LOCAL_ISLANDS.length), sh = {};
   const T = HOME.terrace, C = HOME.cove;
 
   for (let j = 0; j < N; j++) {
     for (let i = 0; i < N; i++) {
-      const u = (i + 0.5) / N, v = (j + 0.5) / N;
-      const x = (u - 0.5) * L, z = (v - 0.5) * L;
+      // 格子在世界裡的位置，換成港座標再算：母島連同港口整個轉過去，形狀和原本一模一樣
+      const [x, z] = toLocal(((i + 0.5) / N - 0.5) * L, ((j + 0.5) / N - 0.5) * L);
+      const u = x / L + 0.5, v = z / L + 0.5;
       // 把取樣位置扭曲一下，海岸線才不會是正圓
       // 母港島扭曲得少（海灣與平台的位置要準），其他島扭曲得多，輪廓各有不同
-      const far = Math.min(1, Math.max(0, (Math.hypot(x, z - 40) - 180) / 220));
+      const far = Math.min(1, Math.max(0, (Math.hypot(x - IL.x, z - IL.z) - 180) / 220));
       const amp = 18 + 30 * far * far * (3 - 2 * far);
       const wx = x + amp * fbm(u * 9 + 1.7, v * 9, seed + 400, 3) + 7 * fbm(u * 37, v * 37 + 2.1, seed + 600, 2);
       const wz = z + amp * fbm(u * 9, v * 9 + 5.2, seed + 500, 3) + 7 * fbm(u * 37 + 4.4, v * 37, seed + 700, 2);
 
       // 多個圓丘取最高者（不相加），重疊處才不會疊成一座高山
       let rise = 0, near = 0;
-      for (let n = 0; n < ISLANDS.length; n++) {
+      for (let n = 0; n < LOCAL_ISLANDS.length; n++) {
         let r = 0;
-        for (const o of ISLANDS[n].bumps) {
+        for (const o of LOCAL_ISLANDS[n].bumps) {
           const d2 = ((wx - o.x) ** 2 + (wz - o.z) ** 2) / (o.r * o.r);
           r = Math.max(r, (o.peak - SEA_FLOOR) * Math.exp(-(o.pow === 4 ? d2 * d2 : d2)));
         }
@@ -131,14 +111,14 @@ export function makeTerrain(N, L, seed = 11) {
       // 這裡是哪座島的地盤，地形就照那座島的性格來（兩座島之間平滑過渡）
       let wsum = 0;
       for (const k of SHAPE_KEYS) sh[k] = 0;
-      for (let n = 0; n < ISLANDS.length; n++) {
+      for (let n = 0; n < LOCAL_ISLANDS.length; n++) {
         const w = (rises[n] / rise) ** 6;
         if (w < 1e-4) continue;
         wsum += w;
-        for (const k of SHAPE_KEYS) sh[k] += w * ISLANDS[n].shape[k];
+        for (const k of SHAPE_KEYS) sh[k] += w * LOCAL_ISLANDS[n].shape[k];
       }
       for (const k of SHAPE_KEYS) sh[k] /= wsum;
-      const isle = ISLANDS[near];
+      const isle = LOCAL_ISLANDS[near];
 
       // 山丘起伏：越高的地方越崎嶇
       b += sh.hill * Math.max(b + 2, 0) * fbm(u * 26, v * 26, seed + 300, 4);

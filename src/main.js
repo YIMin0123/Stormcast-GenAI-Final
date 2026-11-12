@@ -7,8 +7,11 @@ import { BOAT_ORDER, CAN, newKit, shopItem } from './boatdata.js';
 import { Player } from './player.js';
 import { ShallowWater, SWE } from './shallow.js';
 import { makeSwimFx } from './swimfx.js';
-import { makeHarbor, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SHOP, LIGHTHOUSE, SELL, setBoard, BOLLARDS, MoorLine, SHELF, SHELF_X, SHELF_Z, setTag, PLAYER_SPAWN, onDeck, LAMPS, UNLIT, WET } from './harbor.js';
-import { BERTHS, berthPose, pontoonY, PONTOON_Y, inHarbor, BOARDS, BOARD_Z } from './layout.js';
+import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SHOP, SELL, setBoard, BOLLARDS, MoorLine, SHELF, SHELF_X, SHELF_Z, setTag, LAMPS, UNLIT, WET } from './harbor.js';
+import { WORLD } from './config.js';
+import { HOME_U, placeInHome } from './homeGl.js';
+import { HOME_YAW, toWorld, toLocal, headingToWorld } from './frame.js';
+import { BERTHS, berthPose, pontoonY, onDeck, PONTOON_Y, inHarbor, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, SHOP_FRONT_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
 import { fishLabel, FishWorld } from './fish.js';
 import { money as cash } from './fishdata.js';
 import { Fishing } from './fishing.js';
@@ -40,9 +43,10 @@ import { myLook, setMyLook } from './look.js';
 // ---- 世界參數 -------------------------------------------------------------
 const N = 512;          // 避浪、危險度這些粗略資料的解析度（4 m 一格）
 const NF = 1024;        // 地形高度的解析度（2 m 一格）：海岸線才圓順
-const L = 2048;         // 地圖邊長（公尺）
+const L = WORLD.size;   // 地圖邊長（公尺，見 config.js）
 const DX = L / NF;      // 2 m
-const WAVE_ANGLE = Math.PI / 2 + 0.15; // 風浪由北往南傳，母港在島的南側背風面
+// 風浪朝「港口面向的反方向」推進：港座標裡是由北往南（母港在島的背風面），轉到世界就是由西北往東南
+const WAVE_ANGLE = Math.PI / 2 + WORLD.waveFromHarborBackDeg * Math.PI / 180 - HOME_YAW;
 const HS = 2.2;         // 風浪強度 1.0 時的示性波高（公尺）
 
 const $ = (id) => document.getElementById(id);
@@ -182,7 +186,7 @@ const dangerAt = (x, z) => sampleGrid(dangerData, x, z) / 255;
 const offAt = (x, z) => sampleGrid(offData, x, z);
 const tsuKAt = (x, z) => sampleGrid(tsuKData, x, z) / 255;
 
-// 商店與櫃檯、燈塔：玩家走不進去
+// 商店與櫃檯、燈塔：玩家走不進去（矩形是港座標）
 const BLOCKS = [
   { x0: SHOP.x - SHOP.w / 2 - 0.3, x1: SHOP.x + SHOP.w / 2 + 0.3, z0: SHOP.z - SHOP.d / 2 - 0.3, z1: SHOP.z + SHOP.d / 2 + 0.3 },
   { x0: SHOP.x - 0.4, x1: SHOP.x + 3.6, z0: SHOP.z + SHOP.d / 2, z1: SHOP.z + SHOP.d / 2 + 1.1 },
@@ -214,9 +218,10 @@ function rockAt(x, z) {
 
 // 玩家腳下的高度：棧板、地面，或擋路的牆（回傳很高的值）
 function walkGround(x, z, under = false) {
-  for (const r of BLOCKS) if (x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1) return 99;
+  const [hx, hz] = toLocal(x, z);   // 商店、牆這些矩形是用港座標寫的
+  for (const r of BLOCKS) if (hx > r.x0 && hx < r.x1 && hz > r.z0 && hz < r.z1) return 99;
   if (rockAt(x, z) !== null) return 99;
-  if (Math.hypot(x - LIGHTHOUSE.x, z - LIGHTHOUSE.z) < LIGHTHOUSE.r) return 99;
+  if (Math.hypot(x - LIGHTHOUSE_W.x, z - LIGHTHOUSE_W.z) < LIGHTHOUSE_W.r) return 99;
   if (!under) for (const c of SOLIDS) if ((x - c.x) ** 2 + (z - c.z) ** 2 < c.r * c.r) return 99;   // 棧板上的樁、燈柱、木桶…（在棧板底下游泳時不算）
   if (onDeck(x, z)) return under ? 99 : DECK_Y;   // 岸壁和防波堤是實心的：游泳的人鑽不到底下
   const py = pontoonY(x, z);
@@ -295,7 +300,9 @@ function makePolarGeometry(nA = 384, nR = 420, r0 = 0.8, rMax = 34000) {
 // ?fft16 / ?fft32：強制用哪一種，比較用
 const FFT16 = /[?&]fft16/.test(location.search) || (TOUCH && !/[?&]fft32/.test(location.search));
 const ocean = new FftOcean(renderer, { hs: HS, windAngle: WAVE_ANGLE, fft16: FFT16 });
-const sunDir = new THREE.Vector3(-0.5, 0.52, 0.6).normalize(); // 太陽在西南方，店面與碼頭是向陽面
+// 太陽的水平方向跟著港口轉：港座標裡太陽在西南方，店面與碼頭是向陽面，轉過去之後光照關係不變
+const homeSun = (x, y, z) => [x * Math.cos(HOME_YAW) + z * Math.sin(HOME_YAW), y, -x * Math.sin(HOME_YAW) + z * Math.cos(HOME_YAW)];
+const sunDir = new THREE.Vector3(...homeSun(-0.5, 0.52, 0.6)).normalize();
 const wake = Array.from({ length: 16 }, () => new THREE.Vector4(0, 0, -1e6, 0));
 
 // ---- 海況：平常是普通風浪，偶爾來一場風暴或幾道巨浪 ---------------------------
@@ -458,7 +465,8 @@ function syncWaterTsu() {
   }
 }
 scene.add(water);
-DECKS.slice(0, 3).forEach((r, i) => shared.uQuay.value[i].set(r.x0, r.z0, r.x1, r.z1));   // 岸壁、防波堤的位置：海面要在牆腳畫水線
+DECKS.slice(0, 3).forEach((r, i) => shared.uQuay.value[i].set(r.x0, r.z0, r.x1, r.z1));   // 岸壁、防波堤的位置（港座標，著色器用 uHome 轉）：海面要在牆腳畫水線
+shared.uHome = HOME_U;
 
 const sky = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), new THREE.ShaderMaterial({
   vertexShader: skyVert, fragmentShader: skyFrag, uniforms: shared,
@@ -546,11 +554,11 @@ const underFog = new THREE.FogExp2(0x06323f, 0.032);
 const airFog = new THREE.FogExp2(0xb4bcc6, HAZE);    // 遠景的薄霧；起霧時船、碼頭、樹也要罩在霧裡
 
 const scenery = makeScenery({
-  L, heightAt: bedAt, light: LIGHTHOUSE,
-  // 母港平台周圍和燈塔腳下不種樹
-  skip: (x, z) => (x > -47 && x < 28 && z > 93) || Math.hypot(x - LIGHTHOUSE.x, z - LIGHTHOUSE.z) < 6,
+  L, heightAt: bedAt, light: LIGHTHOUSE_W,
+  // 母港平台周圍和燈塔腳下不種樹（範圍用港座標寫）
+  skip: (x, z) => { const [hx, hz] = toLocal(x, z); return (hx > -47 && hx < 28 && hz > 93) || Math.hypot(x - LIGHTHOUSE_W.x, z - LIGHTHOUSE_W.z) < 6; },
   // 港口和進出港的水道不放石頭
-  clear: (x, z) => (Math.abs(x) < 75 && z > 88 && z < 250) || Math.hypot(x - LIGHTHOUSE.x, z - LIGHTHOUSE.z) < 7,
+  clear: (x, z) => { const [hx, hz] = toLocal(x, z); return (Math.abs(hx) < 75 && hz > 88 && hz < 250) || Math.hypot(x - LIGHTHOUSE_W.x, z - LIGHTHOUSE_W.z) < 7; },
 });
 addRocks(scenery.rocks);
 shade(scenery.group);
@@ -565,7 +573,8 @@ scenery.group.updateMatrixWorld(true);
 scenery.group.traverse((o) => { o.matrixAutoUpdate = false; });
 scenery.beam.traverse((o) => { o.matrixAutoUpdate = true; });
 
-const harbor = makeHarbor(bedAt);
+const harbor = placeInHome(makeHarbor((lx, lz) => bedAt(...toWorld(lx, lz))));   // 港口用港座標蓋，整個擺進世界
+worldizeHarborLists();   // 樁、消波塊、繫纜樁、路燈的清單轉成世界座標
 scene.add(harbor);
 addRocks(HARBOR_ROCKS);   // 消波塊
 shade(harbor);
@@ -617,6 +626,7 @@ let boat = myBoat;   // 「目前這艘」：最後踩上去的船（可能是�
 // ---- 多人：連線、同房的其他人、聊天室、看板 ----
 const net = new Net();
 const boards = new Boards();   // 魚市場前的停船位置牌和兩塊排行榜
+placeInHome(boards.group);
 scene.add(boards.group);
 shade(boards.group);
 const others = new Others({
@@ -632,7 +642,7 @@ const chat = new Chat({
 });
 let room = { id: 0, name: '', max: 30 };
 
-const player = new Player(PLAYER_SPAWN.x, PLAYER_SPAWN.z, PLAYER_SPAWN.yaw);
+const player = new Player(SPAWN_W.x, SPAWN_W.z, SPAWN_W.yaw);
 // 人所在位置的水面高度。浪高每幀只向 GPU 讀一次（讀人腳下那一點），周圍幾步之內共用
 let swimWave = 0;
 function playerWater(x, z) {
@@ -643,7 +653,7 @@ function playerWater(x, z) {
 }
 // 每艘船都可以直接走上去；水深過胸就浮起來游
 const walkWorld = { ground: walkGround, water: playerWater, boats };
-player.place(walkWorld, PLAYER_SPAWN.x, PLAYER_SPAWN.z);
+player.place(walkWorld, SPAWN_W.x, SPAWN_W.z);
 scene.add(player.mesh);
 shade(player.mesh);
 addOutline(player.mesh);
@@ -700,7 +710,7 @@ function isWater(x, z) {
 const waterY = (x, z) => ocean.sampleHeight(x, z) * clamp((-bedAt(x, z) - 0.3) / 7.7, 0, 1) * waveK(x, z) + tsuAt(x, z);
 
 const fish = new FishWorld({
-  player, boats, scene, ground: walkGround, splash, toast, basket: SELL.basket,
+  player, boats, scene, ground: walkGround, splash, toast, basket: SELL_W.basket,
   waveAt: (x, z) => ocean.sampleCached(x, z) * waveK(x, z) + tsuAt(x, z),
   onLost: (uids) => net.send({ t: 'fishGone', uids }),   // 魚掉回海裡、跟著船沉了：告訴伺服器這幾條沒了
 });
@@ -899,7 +909,7 @@ let deckReady = false;
 // yaw / pitch 是視線方向（pitch 負值 = 往下看）；掌舵時 yaw 相對於船首。
 let mode = 'walk';
 const view = {
-  walk: { fp: false, yaw: PLAYER_SPAWN.yaw, pitch: -0.25, dist: 9 },
+  walk: { fp: false, yaw: SPAWN_W.yaw, pitch: -0.25, dist: 9 },
   helm: { fp: true, yaw: 0, pitch: -0.04, dist: 22 },
   sink: { fp: false, yaw: 0.7, pitch: -0.28, dist: 24 },   // 船沉的時候從旁邊看著它
 };
@@ -965,7 +975,7 @@ const camBlockers = [];
   // 攤位背面：一排價格牌，牌子之間有空隙。鏡頭繞到攤位後面時，人被牌子的背面擋掉大半，
   // 沿著攤位走還會從空隙裡忽隱忽現；整排當成一面牆（只給鏡頭用，不畫出來）
   const back = new THREE.Mesh(new THREE.BoxGeometry(SHELF_X[1] - SHELF_X[0] + 0.7, 2.7, 0.2));
-  back.position.set((SHELF_X[0] + SHELF_X[1]) / 2, DECK_Y + 1.35, SHELF_Z - 0.5);
+  { const [bx, bz] = toWorld((SHELF_X[0] + SHELF_X[1]) / 2, SHELF_Z - 0.5); back.position.set(bx, DECK_Y + 1.35, bz); back.rotation.y = HOME_YAW; }
   back.updateMatrixWorld();
   camBlockers.push(back);
 }
@@ -1117,8 +1127,8 @@ function updateCamera(dt) {
   // 還在主選單、大廳：鏡頭在海這一側、對著港口慢慢左右擺（繞整圈的話會轉到山上的樹後面）
   if (!inGame) {
     menuYaw += dt * 0.05;
-    target.set(-4, 5, 128);
-    orbit(-Math.PI / 2 + 0.75 * Math.sin(menuYaw), -0.28, 82);
+    target.set(HARBOR_CENTER_W.x, 5, HARBOR_CENTER_W.z);
+    orbit(headingToWorld(-Math.PI / 2) + 0.75 * Math.sin(menuYaw), -0.28, 82);
     setNear(1);
     return;
   }
@@ -1188,8 +1198,8 @@ function releaseHelm() {
 }
 
 // 賣魚的籃子與按鈕
-const nearBasket = () => !player.boat && Math.hypot(player.x - SELL.basket.x, player.z - SELL.basket.z) < 2.0;
-const nearButton = () => !player.boat && Math.hypot(player.x - SELL.button.x, player.z - SELL.button.z) < 1.7;
+const nearBasket = () => !player.boat && Math.hypot(player.x - SELL_W.basket.x, player.z - SELL_W.basket.z) < 2.0;
+const nearButton = () => !player.boat && Math.hypot(player.x - SELL_W.button.x, player.z - SELL_W.button.z) < 1.7;
 // 腳下這艘船的魚箱（要站在箱子旁邊）
 function nearBox() {
   const b = player.boat;
@@ -1211,7 +1221,7 @@ function nearCrack() {
 const MOOR_REACH = 7.5;               // 船舷離樁多遠以內綁得到（公尺）
 const MOOR_FLOW = 4, MOOR_LIFT = 2;   // 斷掉的限度：水流每秒幾公尺、水位被抬高幾公尺
 const moorLines = new Map();          // 每艘船的纜繩模型
-const QUAY_Z = 118, _mv = new THREE.Vector3();   // 岸壁朝海那一側的邊緣（繫纜樁都在這條邊上）
+const _mv = new THREE.Vector3();
 let moorToast = false;
 // 船上綁繩子的地方（船頭或船尾、靠岸的那一側的船舷）在世界座標的哪裡
 const cleatXZ = (b, lx, lz) => {
@@ -1325,8 +1335,10 @@ function updateMooring(dt, helm) {
     _rv.set(m.lx, b.spec.deck + b.spec.bul + 0.04, m.lz).applyMatrix4(b.mesh.matrixWorld);
     _rf.set(post.x, post.y, post.z);
     // 船在岸壁外、比碼頭面低：繩子先貼著碼頭面拉到邊緣，再垂到船上（不然會直直穿過岸壁的牆角）
-    const edge = QUAY_Z + 0.05, over = _rv.z > edge + 0.1 && _rv.y < DECK_Y + 0.4;
-    if (over) _mv.set(post.x + (_rv.x - post.x) * (edge - post.z) / (_rv.z - post.z), DECK_Y + 0.045, edge);
+    // 岸壁的邊緣是港座標的一條線（繫纜樁都在這條邊上）：先轉成港座標算，再轉回世界
+    const [rlx, rlz] = toLocal(_rv.x, _rv.z), [plx, plz] = toLocal(post.x, post.z);
+    const edge = QUAY_EDGE_Z + 0.05, over = rlz > edge + 0.1 && _rv.y < DECK_Y + 0.4;
+    if (over) { const [mx, mz] = toWorld(plx + (rlx - plx) * (edge - plz) / (rlz - plz), edge); _mv.set(mx, DECK_Y + 0.045, mz); }
     ln.set(_rv, _rf, m.len + 0.5, tsuAt(_rv.x, _rv.z), over ? _mv : null);
   }
   for (const [b, ln] of moorLines) if (!b.moor || !boats.includes(b)) ln.mesh.visible = false;
@@ -1374,8 +1386,8 @@ refreshTags();
 function nearShelf() {
   if (player.boat) return null;
   let best = null, bd = 1.1;
-  for (const it of SHELF) {
-    const d = Math.hypot(player.x - it.x, player.z - (SHELF_Z + 1.3));
+  for (const it of SHELF_W) {
+    const d = Math.hypot(player.x - it.stand.x, player.z - it.stand.z);
     if (d < bd) { bd = d; best = it; }
   }
   return best;
@@ -1474,16 +1486,17 @@ function aimTarget() {
       const m = bollardAt(i);
       if (m) add('bollard', new THREE.Vector3(p.x, p.y - 0.05, p.z), 0.36, { moor: m });
     });
-    if (nearBasket()) add('basket', new THREE.Vector3(SELL.basket.x, DECK_Y + 0.3, SELL.basket.z), 0.5);
-    if (nearButton()) add('button', new THREE.Vector3(SELL.button.x, DECK_Y + 1.1, SELL.button.z), 0.26);
+    if (nearBasket()) add('basket', new THREE.Vector3(SELL_W.basket.x, DECK_Y + 0.3, SELL_W.basket.z), 0.5);
+    if (nearButton()) add('button', new THREE.Vector3(SELL_W.button.x, DECK_Y + 1.1, SELL_W.button.z), 0.26);
     // 攤位上的商品：對準桌上的東西或後面的價格牌都算
-    for (const it of SHELF) {
-      if (Math.hypot(px - it.x, pz - (SHELF_Z + 1.3)) > 1.7) continue;
-      add('shelf', new THREE.Vector3(it.x, DECK_Y + 1.1, SHELF_Z), 0.5, { shelf: it });
-      add('shelf', new THREE.Vector3(it.x, DECK_Y + 1.95, SHELF_Z - 0.44), 0.6, { shelf: it });
+    for (const it of SHELF_W) {
+      if (Math.hypot(px - it.stand.x, pz - it.stand.z) > 1.7) continue;
+      const [bx, bz] = toWorld(it.lx, SHELF_Z - 0.44);   // 價格牌：桌子後面一點
+      add('shelf', new THREE.Vector3(it.x, DECK_Y + 1.1, it.z), 0.5, { shelf: it });
+      add('shelf', new THREE.Vector3(bx, DECK_Y + 1.95, bz), 0.6, { shelf: it });
     }
     // 停船位置牌
-    if (Math.hypot(px - BOARDS.berth.x, pz - (BOARD_Z + 1.2)) < 2.4) add('berth', new THREE.Vector3(BOARDS.berth.x, DECK_Y + 1.7, BOARD_Z), 0.65);
+    if (Math.hypot(px - BOARD_STAND_W.x, pz - BOARD_STAND_W.z) < 2.4) add('berth', new THREE.Vector3(BERTH_BOARD_W.x, DECK_Y + 1.7, BERTH_BOARD_W.z), 0.65);
   }
   // 放在甲板或地上的魚、油桶
   for (const it of fish.items) {
@@ -1623,7 +1636,7 @@ function updatePrompt() {
       text = types.length > 1 ? `按 E 換船：${myBoat.spec.name} → ${BOAT_TYPES[types[(types.indexOf(kit.active) + 1) % types.length]].name}` : `你的${myBoat.spec.name}停在 ${berth.label}`;
     } else if (player.boat && player.boat.remote && nearHelm()) text = `這是 ${player.boat.owner.name} 的${player.boat.spec.name}：可以搭，只有船主能開`;
     else if (player.seat) text = '坐著（按 E 或移動鍵站起來）';
-    else if (!player.boat && Math.hypot(player.x - (SHOP.x + 1.6), player.z - (SHOP.z + SHOP.d / 2 + 2)) < 3.2) {
+    else if (!player.boat && Math.hypot(player.x - SHOP_FRONT_W.x, player.z - SHOP_FRONT_W.z) < 3.2) {
       text = `${SHOP.name}　${SHOP.hint}`;
     }
   } else if (mode === 'helm') {
@@ -2032,7 +2045,7 @@ function updateWeather(dt) {
   thunderShake *= Math.exp(-dt * 2.4);
 
   // 海面、地形、天空的 shader
-  sunDir.set(L.dir[0], L.dir[1], L.dir[2]);
+  sunDir.set(...homeSun(L.dir[0], L.dir[1], L.dir[2]));
   shared.uSunCol.value.set(L.col[0], L.col[1], L.col[2]);
   const wetDark = 1 - 0.22 * rainNow;   // 下大雨時雲層厚，整體再暗一階
   shared.uAmbient.value.set(L.amb[0] * wetDark + flash * 0.9, L.amb[1] * wetDark + flash * 0.95, L.amb[2] * wetDark + flash * 1.1);
@@ -2194,8 +2207,8 @@ function beginWreck(b) {
 // 被救回港口
 function rescue(text) {
   mode = 'walk';
-  player.place(walkWorld, PLAYER_SPAWN.x, PLAYER_SPAWN.z);
-  player.yaw = view.walk.yaw = PLAYER_SPAWN.yaw;
+  player.place(walkWorld, SPAWN_W.x, SPAWN_W.z);
+  player.yaw = view.walk.yaw = SPAWN_W.yaw;
   applyViewSettings();
   fadeIn = 1.6;
   toast(text);
@@ -2259,8 +2272,8 @@ function updateSwim(dt) {
       const lost = fish.held ? `，手上的${fish.held.sp.name}掉進海裡了` : '';
       if (fish.held) fish._gone([fish.held]);
       fish.discardHeld();
-      player.place(walkWorld, PLAYER_SPAWN.x, PLAYER_SPAWN.z);
-      player.yaw = view.walk.yaw = PLAYER_SPAWN.yaw;
+      player.place(walkWorld, SPAWN_W.x, SPAWN_W.z);
+      player.yaw = view.walk.yaw = SPAWN_W.yaw;
       stamina = 1;
       fadeIn = 1.6;
       toast(drown.text + lost);
@@ -2363,7 +2376,7 @@ function drawMap() {
   g.textAlign = 'center'; g.fillText('北', MAP_PX - 26, 42); g.textAlign = 'left';
 
   // 母港
-  const [hx, hy] = P(0, 122);
+  const [hx, hy] = P(QUAY_CENTER_W.x, QUAY_CENTER_W.z);
   g.beginPath(); g.arc(hx, hy, 5, 0, Math.PI * 2);
   g.lineWidth = 2.5; g.strokeStyle = 'rgba(20, 30, 40, 0.9)'; g.stroke();
   g.fillStyle = '#fff'; g.fill();
@@ -2675,7 +2688,7 @@ function enterRoom(j) {
       else fish.stowDeck(myBoat, S.box.x + (Math.random() - 0.5) * 1.2, (Math.random() - 0.5) * S.beam * 0.4, f.id, f.kg, f.len, f.uid, f.value);
     }
   }
-  let px = PLAYER_SPAWN.x + (Math.random() - 0.5) * 3, pz = PLAYER_SPAWN.z + (Math.random() - 0.5) * 2, yaw = PLAYER_SPAWN.yaw, deck = null;
+  let px = SPAWN_W.x + (Math.random() - 0.5) * 3, pz = SPAWN_W.z + (Math.random() - 0.5) * 2, yaw = SPAWN_W.yaw, deck = null;
   if (pos && !(rb && rb.sunk)) {
     deck = pos[8] ? (pos[8] === j.id ? myBoat : others.boat(pos[8])) : null;
     if (deck && deck.deckContains(pos[9], pos[10])) { px = pos[9]; pz = pos[10]; } else { deck = null; if (!pos[8]) { px = pos[0]; pz = pos[2]; } }   // 在船上的：照甲板上的位置放回去
@@ -2896,13 +2909,13 @@ function drawFrame(dt) {
     _sp.set(tk ? tk.x : -2, 0.5, tk ? tk.z : 0).applyMatrix4(boat.mesh.matrixWorld);
     spots.engine = [_sp.x, _sp.y, _sp.z, 0.3];
     // 海鷗：在港口上空盤旋；人就在港口裡的時候是頭頂一大片
-    spots.gulls = [-4, 22, 118, clamp(1 - Math.hypot(cp.x + 4, cp.z - 118) / 70, 0, 0.75)];
+    spots.gulls = [QUAY_CENTER_W.x, 22, QUAY_CENTER_W.z, clamp(1 - Math.hypot(cp.x - QUAY_CENTER_W.x, cp.z - QUAY_CENTER_W.z) / 70, 0, 0.75)];
     // 岸邊的浪：從最近的岸那個方向來（看離岸距離往哪邊變小）；人在岸上、或緊貼著岸，就是四周都有
     const gx = offAt(cp.x + 6, cp.z) - offAt(cp.x - 6, cp.z), gz = offAt(cp.x, cp.z + 6) - offAt(cp.x, cp.z - 6), gl = Math.hypot(gx, gz);
     spots.shore = gl > 1 && off > 2 ? [cp.x - gx / gl * Math.max(off, 5), 0, cp.z - gz / gl * Math.max(off, 5), clamp(1 - (off - 3) / 30, 0.3, 1)] : [cp.x, cp.y, cp.z, 1];
     audio.place(spots);
     // 島上的環境音：鏡頭在陸地上（離岸二十幾公尺內漸漸淡掉）。港口那一帶是人住的地方，鳥叫蟲鳴小聲一點
-    const land = clamp(1 - off / 25, 0, 1) * (0.45 + 0.55 * clamp((Math.hypot(cp.x + 4, cp.z - 118) - 30) / 60, 0, 1));
+    const land = clamp(1 - off / 25, 0, 1) * (0.45 + 0.55 * clamp((Math.hypot(cp.x - QUAY_CENTER_W.x, cp.z - QUAY_CENTER_W.z) - 30) / 60, 0, 1));
     audio.ambient({
       birds: land * clamp(1 - night * 1.8, 0, 1) * clamp(1 - rainNow * 3, 0, 1),
       night: land * clamp((night - 0.45) / 0.35, 0, 1) * clamp(1 - rainNow * 2, 0, 1),
@@ -2936,7 +2949,7 @@ function drawFrame(dt) {
   // 倒影隔一幀重畫一次（偶數幀）；陰影平常每一幀都重畫，畫質「手機」只在奇數幀畫，兩個錯開
   const even = (drawCount++ & 1) === 0;
   // 地面是濕的、鏡頭在港口附近時，還要畫積水的倒影：跟海面倒影輪流，各自每四幀更新一次
-  const deckWet = gfx.wet && !under && WET.wet.value > 0.04 && cp.y > DECK_Y + 0.3 && Math.hypot(cp.x + 4, cp.z - 128) < 120;
+  const deckWet = gfx.wet && !under && WET.wet.value > 0.04 && cp.y > DECK_Y + 0.3 && Math.hypot(cp.x - HARBOR_CENTER_W.x, cp.z - HARBOR_CENTER_W.z) < 120;
   const deckTurn = deckWet && even && (drawCount & 2) !== 0;
   renderReflection(under, even && !deckTurn);
   if (deckTurn || (deckWet && !deckReady)) { renderDeckReflection(); deckReady = true; }
@@ -2978,7 +2991,7 @@ applyViewSettings();
 onResize();
 ocean.cacheBlock(boat.x, boat.z);
 boat.update(0.016, boatEnv);
-player.place(walkWorld, PLAYER_SPAWN.x, PLAYER_SPAWN.z);
+player.place(walkWorld, SPAWN_W.x, SPAWN_W.z);
 
 let frame = 0, last = performance.now();
 // 角落一直顯示每秒幾幀、平均一幀幾毫秒；網址加 ?fps 的話，後面再加上解析度、畫質、顯示晶片這些細節
@@ -3088,7 +3101,7 @@ window.__sim = {
   advance, drawFrame, get boat() { return boat; }, boats, addBoat, offer, refreshTags, nearBox, nearShelf, SHELF,
   get rodLv() { return rodLv; }, get rodBroken() { return rodBroken; },
   aimTarget, wheel, closeWheel, sitDown, standUp, offAt, audio, player, ocean, keys, view, bedAt, walkGround, walkWorld, shelterAt, nearHelm, interact, toggleFp,
-  fish, fishing, isWater, SELL, get money() { return money; },
+  fish, fishing, isWater, SELL: SELL_W, get money() { return money; },
   // 多人
   net, others, chat, boards, garage, enterRoom, applyWorld, myFishUids, takeHelm, releaseHelm, touch, setGfx, setPixelRatio,
   get gfxLv() { return presetOf(); }, get waterSplit() { return waterSplit; }, get pixelRatio() { return pixelRatio; }, gs, applyGfx, PRESETS, get gfx() { return gfx; }, diag,

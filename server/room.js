@@ -5,7 +5,7 @@
 //   釣魚：上鉤什麼魚、多大、值多少由這裡擲；收線太快、離落水點太遠、站在陸地卻說拋進深海，一律不認
 //   本房紀錄（看板）與聊天
 import { Sea, Climate, HOUR } from '../src/weather.js';
-import { BERTHS, berthPose, berthKinds, inHarbor, SELL, SHELF, SHELF_Z, BOARDS, BOARD_Z, PLAYER_SPAWN } from '../src/layout.js';
+import { BERTHS, berthPose, berthKinds, inHarbor, SELL_W, SHELF_W, BOARD_STAND_W, SPAWN_W } from '../src/layout.js';
 import { BOAT_TYPES, BOAT_ORDER, newKit, shopItem } from '../src/boatdata.js';
 import { SPECIES, rollCatch, minFightTime, biteDelay, castRange, money } from '../src/fishdata.js';
 import { dangerAt, isWater, fishingSpot } from './world.js';
@@ -231,7 +231,7 @@ export class Room {
         // 一下子移動太遠（不是被救回港口）：之後一小段時間不讓他拋竿
         if (p.pos && p.posAt) {
           const d = dist(s[0], s[2], p.pos[0], p.pos[2]), dt = Math.max(0.05, (now - p.posAt) / 1000);
-          if (d / dt > 30 && d > 15 && dist(s[0], s[2], PLAYER_SPAWN.x, PLAYER_SPAWN.z) > 4) p.suspect = now + 8000;
+          if (d / dt > 30 && d > 15 && dist(s[0], s[2], SPAWN_W.x, SPAWN_W.z) > 4) p.suspect = now + 8000;
         }
         p.pos = s; p.posAt = now; p.posDirty = true;
         if (p.fishing && dist(s[0], s[2], p.fishing.x, p.fishing.z) > 75) p.fishing = null;
@@ -277,7 +277,7 @@ export class Room {
       case 'swap': {   // 在停船位置牌前換一艘船出來
         const type = m.type;
         if (!kit.boats[type] || type === kit.active || !p.boat || p.boat.sunk) return;
-        if (!this.near(p, BOARDS.berth.x, BOARD_Z + 1.2, 4.5)) return this.send(p, { t: 'no', msg: '要到停船位置牌前面才能換船' });
+        if (!this.near(p, BOARD_STAND_W.x, BOARD_STAND_W.z, 4.5)) return this.send(p, { t: 'no', msg: '要到停船位置牌前面才能換船' });
         if (!inHarbor(p.boat.s[0], p.boat.s[1])) return this.send(p, { t: 'no', msg: '船不在港裡，要先開回來才能換' });
         p.stored[kit.active] = { fuel: p.boat.s[10], cracks: p.boat.cracks };   // 收進倉庫的那艘：油量、破洞記著，下次換出來照舊
         kit.active = type;
@@ -327,7 +327,7 @@ export class Room {
 
       // ---- 買賣 ----
       case 'sell': {
-        if (!Array.isArray(m.uids) || !this.near(p, SELL.button.x, SELL.button.z, 6)) return this.send(p, { t: 'no', msg: '要站在籃子旁邊才能賣' });
+        if (!Array.isArray(m.uids) || !this.near(p, SELL_W.button.x, SELL_W.button.z, 6)) return this.send(p, { t: 'no', msg: '要站在籃子旁邊才能賣' });
         let total = 0;
         const sold = [];
         for (const u of new Set(m.uids.slice(0, 250))) {
@@ -339,9 +339,9 @@ export class Room {
         return this.send(p, { t: 'sold', total, uids: sold, kit });
       }
       case 'buy': {
-        const it = SHELF.find((s) => s.id === m.id);
+        const it = SHELF_W.find((s) => s.id === m.id);
         if (!it) return;
-        if (!this.near(p, it.x, SHELF_Z + 1.3, 4) || (p.pos && p.pos[8])) return this.send(p, { t: 'no', msg: '要站在攤位前面才能買' });
+        if (!this.near(p, it.stand.x, it.stand.z, 4) || (p.pos && p.pos[8])) return this.send(p, { t: 'no', msg: '要站在攤位前面才能買' });
         const o = shopItem(it.id, kit);
         if (o.price === null) return this.send(p, { t: 'no', msg: '這樣東西現在買不了' });
         if (kit.money < o.price) return this.send(p, { t: 'no', msg: '錢不夠' });
