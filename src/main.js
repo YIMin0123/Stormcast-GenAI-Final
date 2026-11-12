@@ -12,7 +12,7 @@ import { fishLabel, FishWorld } from './fish.js';
 import { money as cash } from './fishdata.js';
 import { Fishing } from './fishing.js';
 import { EmoteWheel } from './emotes.js';
-import { TOUCH, TouchUI, touchText } from './touch.js';
+import { TOUCH, TouchUI, touchText, touchSet, canFullscreen, isFullscreen, setFullscreen } from './touch.js';
 import { REFL, addOutline, BULBS, softDisc } from './toon.js';   // 它會改掉內建材質的受光算法（改成手繪風）
 import { makeScenery } from './scenery.js';
 import { makeGroundDetail, makeGrassGeometry, WIND, SIGHT } from './foliage.js';
@@ -27,7 +27,7 @@ import { FXAAPass } from 'three/addons/postprocessing/FXAAPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { SunRaysPass } from './glow.js';
 import { ShadePass } from './ao.js';
-import { Net } from './net.js';
+import { Net, TEST } from './net.js';
 import { Others } from './others.js';
 import { Chat } from './chat.js';
 import { Boards } from './boards.js';
@@ -54,11 +54,26 @@ function fail(msg) {
 
 // ---- Renderer -------------------------------------------------------------
 const renderer = new THREE.WebGLRenderer({ antialias: false });   // 抗鋸齒改由後製的 FXAA 負責（內顯上比多重取樣省很多）
-// 解析度跟著螢幕的縮放比例走（筆電常見 1.25、1.5 倍），畫面才不會被放大而糊掉、出現鋸齒
-// 手機（TOUCH）的螢幕很密、顯示晶片弱：用螢幕的 1 倍去畫（設定裡可以自己調高），陰影、草、後製也都用比較省的那一套
+// 畫質由玩家自己在設定裡調，不會自動變，調過的記在瀏覽器裡（?test 分頁只記在那個分頁）：
+//   解析度：沒調過的話，電腦跟著螢幕的縮放比例走（筆電常見 1.25、1.5 倍，畫面才不會被放大而糊掉）；
+//           手機的螢幕很密、顯示晶片弱，用 1 倍
+//   畫質等級：低／中／高，管陰影的細緻度、草的數量、角落的暗影（AO）、濕地板的倒影。手機預設低，電腦預設高
+const prefStore = (() => { try { return TEST ? window.sessionStorage : window.localStorage; } catch { return null; } })();
+const getPref = (k) => { try { return prefStore ? prefStore.getItem(k) : null; } catch { return null; } };
+const setPref = (k, v) => { try { if (prefStore) prefStore.setItem(k, String(v)); } catch { /* 存不了就下次重調 */ } };
 const ratioFor = () => (TOUCH ? 1 : Math.round(clamp(window.devicePixelRatio || 1, 1, 1.5) * 10) / 10);
+const RATIO_MAX = Math.round(clamp(window.devicePixelRatio || 1, 1.5, 2) * 10) / 10;
 let BASE_RATIO = ratioFor();
-renderer.setPixelRatio(BASE_RATIO);
+let ratioSaved = parseFloat(getPref('stormcast.res')) >= 0.5;
+let pixelRatio = ratioSaved ? clamp(parseFloat(getPref('stormcast.res')), 0.5, RATIO_MAX) : BASE_RATIO;
+const GFX = [
+  { name: '低', shadow: 1536, grass: 6000, ao: false, wet: false },
+  { name: '中', shadow: 2048, grass: 10000, ao: true, wet: false },
+  { name: '高', shadow: 3072, grass: 14000, ao: true, wet: true },
+];
+let gfxLv = /^[012]$/.test(getPref('stormcast.gfx') || '') ? +getPref('stormcast.gfx') : TOUCH ? 0 : 2;
+let gfx = GFX[gfxLv];
+renderer.setPixelRatio(pixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.NeutralToneMapping;
 renderer.toneMappingExposure = 1.0;
@@ -350,7 +365,8 @@ scene.add(sun, sun.target, hemi);
 // 樹、石頭、船、人、港口的建築、山坡都會投影；地形用自己的著色器取樣這張貼圖。
 // 每隔一幀更新一次，跟水面倒影輪流畫，省一半的成本
 // 貼圖 3072：在 Iris Xe 上比 2048 每幀多 0.6 毫秒左右，4096 則要多 4.5 毫秒（量過），所以取 3072、範圍收到 54 公尺
-const SHADOW_HALF = 54, SHADOW_SIZE = TOUCH ? 1536 : 3072;
+const SHADOW_HALF = 54;
+let SHADOW_SIZE = gfx.shadow;   // 畫質「高」是 3072，中 2048，低 1536
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.autoUpdate = false;
 sun.castShadow = true;
@@ -400,7 +416,8 @@ terrain.castShadow = true;
 // 一塊 48 公尺見方的草皮跟著鏡頭走，上面一萬四千叢草；位置、高矮、顏色、隨風擺動都在顯示卡上算。
 // 只有鏡頭附近二十公尺左右有立體的草，更遠的地方靠地面的草葉紋理撐著
 const GRASS_T = 48;
-const grass = new THREE.Mesh(makeGrassGeometry(TOUCH ? 6000 : 14000, GRASS_T), new THREE.ShaderMaterial({
+let grassN = gfx.grass;   // 畫質「高」一萬四千叢，中一萬，低六千
+const grass = new THREE.Mesh(makeGrassGeometry(grassN, GRASS_T), new THREE.ShaderMaterial({
   vertexShader: grassVert, fragmentShader: grassFrag, side: THREE.DoubleSide,
   uniforms: { ...shared, uGrassT: { value: GRASS_T }, uGrassCam: { value: new THREE.Vector3() }, uWindT: WIND.t, uWindAmp: WIND.amp, uWindDir: WIND.dir },
 }));
@@ -535,7 +552,7 @@ let inGame = false;   // 已經進到房間裡（還在主選單、大廳時不�
 let landing = false;  // 剛把魚拉上來，等伺服器承認
 const toastState = { until: 0 };
 function toast(text) {
-  $('toast').textContent = touchText(text);
+  touchSet($('toast'), text);
   $('toast').style.display = 'block';
   toastState.until = performance.now() + 3200;
 }
@@ -1444,7 +1461,7 @@ function updatePrompt() {
   if (!inGame) text = '';
   if (text !== promptText) {
     promptText = text;
-    $('prompt').textContent = touchText(text);
+    touchSet($('prompt'), text);
     $('prompt').style.display = text ? 'block' : 'none';
   }
   touch.update({
@@ -1472,39 +1489,57 @@ function onResize() {
 }
 window.addEventListener('resize', onResize);
 
-// 畫質：滑桿設定解析度上限；實際解析度會依幀率自動在 0.5× 與上限之間調整
-let pixelRatio = BASE_RATIO, slowMs = 0, fastMs = 0, holdUntil = 0;
+// 畫質設定（解析度、低／中／高），見最上面 Renderer 那一段的說明
 function setPixelRatio(q) {
   pixelRatio = q;
   renderer.setPixelRatio(q);
   onResize();
-  const max = +$('quality').value;
-  $('vQuality').textContent = q < max - 0.01 ? `${q.toFixed(1)}×（自動）` : `${q.toFixed(1)}×`;
+  $('quality').value = q;
+  $('vQuality').textContent = `${q.toFixed(1)}×`;
 }
-function autoQuality(frameMs, now) {
-  if (document.hidden || frameMs > 150) { slowMs = fastMs = 0; return; } // 分頁在背景時幀率不準
-  const max = +$('quality').value;
-  slowMs = frameMs > 26 ? slowMs + frameMs : 0;
-  fastMs = frameMs < 18 ? fastMs + frameMs : 0;
-  if (slowMs > 1200 && pixelRatio > 0.5) {
-    setPixelRatio(Math.max(0.5, pixelRatio - 0.1));
-    slowMs = 0; holdUntil = now + 10000;
-  } else if (fastMs > 4000 && pixelRatio < max - 0.01 && now > holdUntil) {
-    setPixelRatio(Math.min(max, pixelRatio + 0.1));
-    fastMs = 0;
+$('quality').max = RATIO_MAX;
+$('quality').value = pixelRatio;
+$('vQuality').textContent = `${pixelRatio.toFixed(1)}×`;
+$('quality').addEventListener('input', () => { setPixelRatio(+$('quality').value); ratioSaved = true; setPref('stormcast.res', pixelRatio); });
+function setGfx(lv) {
+  gfxLv = lv; gfx = GFX[lv];
+  if (SHADOW_SIZE !== gfx.shadow) {
+    // 陰影貼圖換大小：舊的丟掉，下一幀會照新的大小重做一張
+    SHADOW_SIZE = gfx.shadow;
+    sun.shadow.mapSize.set(SHADOW_SIZE, SHADOW_SIZE);
+    if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
+    shared.uShadowMap.value = null; shared.uShadowOn.value = 0;
+    shared.uShadowTexel.value = 1 / SHADOW_SIZE;
   }
+  if (grassN !== gfx.grass) {
+    grassN = gfx.grass;
+    grass.geometry.dispose();
+    grass.geometry = makeGrassGeometry(grassN, GRASS_T);
+  }
+  for (const b of $('gfx').children) b.classList.toggle('on', +b.dataset.v === lv);
 }
-$('quality').addEventListener('input', () => setPixelRatio(+$('quality').value));
-$('quality').value = BASE_RATIO;
-$('vQuality').textContent = `${BASE_RATIO.toFixed(1)}×`;
+for (const b of $('gfx').children) {
+  b.classList.toggle('on', +b.dataset.v === gfxLv);
+  b.addEventListener('click', () => { b.blur(); setGfx(+b.dataset.v); setPref('stormcast.gfx', gfxLv); });
+}
+// 手機：設定裡的全螢幕開關（收掉瀏覽器上面那條網址列）；瀏覽器不給全螢幕的（iPhone）改成教人加到主畫面
+if (TOUCH && canFullscreen) {
+  $('fullRow').style.display = 'flex';
+  const show = () => { $('fullBtn').textContent = isFullscreen() ? '開' : '關'; $('fullBtn').classList.toggle('on', isFullscreen()); };
+  $('fullBtn').addEventListener('click', () => { $('fullBtn').blur(); setFullscreen(!isFullscreen()); });
+  document.addEventListener('fullscreenchange', show);
+  document.addEventListener('webkitfullscreenchange', show);
+  show();
+} else if (TOUCH && !window.navigator.standalone && !window.matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches) {
+  $('fullNote').style.display = 'block';
+}
 // 螢幕的縮放比例中途變了（視窗被縮放、拖到另一個螢幕、載入當下抓到的比例不對），解析度要跟著改；
-// 不然畫面是用較低的解析度畫好再放大，邊緣就會糊掉、出現鋸齒
+// 不然畫面是用較低的解析度畫好再放大，邊緣就會糊掉、出現鋸齒。玩家自己調過解析度的話就不動它
 function syncRatio() {
   const r = ratioFor();
   if (r === BASE_RATIO) return;
-  const max = +$('quality').value, untouched = max >= BASE_RATIO - 0.01;   // 使用者沒有自己把畫質調低
   BASE_RATIO = r;
-  if (untouched || max > r) { $('quality').value = r; setPixelRatio(r); }
+  if (!ratioSaved) setPixelRatio(r);
 }
 window.addEventListener('resize', syncRatio);
 window.setInterval(syncRatio, 2000);
@@ -2071,7 +2106,7 @@ function updateFishUi() {
     $('barFill').style.width = `${fishing.power * 100}%`;
     $('barFill').style.background = '#e2b21c';
     $('fishLabel').textContent = '拋竿力道';
-    $('fishHint').textContent = touchText('放開 F 拋出去');
+    touchSet($('fishHint'), '放開 F 拋出去');
     return;
   }
   $('barFill').style.width = '0';
@@ -2081,7 +2116,7 @@ function updateFishUi() {
   $('barMark').style.background = fishing.inZone ? '#fff' : '#ff8a70';
   $('progFill').style.width = `${clamp(fishing.progress, 0, 1) * 100}%`;
   $('fishLabel').textContent = `把白色指標維持在綠色區間內　還有 ${Math.max(fishing.dist, 0).toFixed(0)} 公尺`;
-  $('fishHint').textContent = touchText(strain > 0.5 ? '釣竿快斷了！放開 F！' : fishing.inZone ? '很好，保持住' : fishing.force < fishing.zone ? '力道不夠：按住 F' : '太用力了：放開 F');
+  touchSet($('fishHint'), strain > 0.5 ? '釣竿快斷了！放開 F！' : fishing.inZone ? '很好，保持住' : fishing.force < fishing.zone ? '力道不夠：按住 F' : '太用力了：放開 F');
 }
 
 // ---- 多人：跟伺服器對時、送出自己的狀態、照伺服器說的更新 -----------------------
@@ -2584,7 +2619,7 @@ function drawFrame(dt) {
   // 偶數幀重畫倒影，奇數幀重畫陰影
   const even = (drawCount++ & 1) === 0;
   // 地面是濕的、鏡頭在港口附近時，還要畫積水的倒影：跟海面倒影輪流，各自每四幀更新一次
-  const deckWet = !TOUCH && !under && WET.wet.value > 0.04 && cp.y > DECK_Y + 0.3 && Math.hypot(cp.x + 4, cp.z - 128) < 120;
+  const deckWet = gfx.wet && !under && WET.wet.value > 0.04 && cp.y > DECK_Y + 0.3 && Math.hypot(cp.x + 4, cp.z - 128) < 120;
   const deckTurn = deckWet && even && (drawCount & 2) !== 0;
   renderReflection(under, even && !deckTurn);
   if (deckTurn || (deckWet && !deckReady)) { renderDeckReflection(); deckReady = true; }
@@ -2601,7 +2636,7 @@ function drawFrame(dt) {
   const onFloor = !!player.boat || onDeck(player.x, player.z) || pontoonY(player.x, player.z) !== null, lift = clamp(1 - (player.h || 0) / 1.2, 0, 1);
   blob.visible = onFloor && !player.swim;
   shared.uBlob.value.set(player.x, player.z, onFloor || player.swim ? 0 : lift);
-  aoPass.enabled = !under && !TOUCH;   // 水裡一片混濁，不需要；手機上省掉
+  aoPass.enabled = !under && gfx.ao;   // 水裡一片混濁，不需要；畫質「低」也省掉
   // 擋在鏡頭和人之間的枝葉散開（只有走路時）。第三人稱：從鏡頭到人身上這條線周圍；第一人稱：只有貼著鏡頭的那一圈
   if (mode === 'walk' && inGame && !debugCam) {
     camera.updateMatrixWorld();
@@ -2630,12 +2665,11 @@ renderer.setAnimationLoop((ms) => {
   const rawMs = ms - last;
   const dt = Math.min(rawMs / 1000, 0.05);
   last = ms;
-  autoQuality(rawMs, ms);
   if (dt > 0) advance(dt);
   drawFrame(dt);
   if (frame++ % 6 === 0) { updatePrompt(); if (mapOpen) drawMap(); }
   if (fpsEl && ++fpsN && ms - fpsT >= 1000) {
-    fpsEl.textContent = `${Math.round(fpsN * 1000 / (ms - fpsT))} fps　${pixelRatio.toFixed(1)}×　${canvas.width}×${canvas.height}　${TOUCH ? '手機' : '電腦'}　${gpuName}`;
+    fpsEl.textContent = `${Math.round(fpsN * 1000 / (ms - fpsT))} fps　${pixelRatio.toFixed(1)}×　${canvas.width}×${canvas.height}　畫質${gfx.name}　${TOUCH ? '手機' : '電腦'}　${gpuName}`;
     fpsN = 0; fpsT = ms;
   }
 });
@@ -2647,7 +2681,8 @@ window.__sim = {
   aimTarget, wheel, closeWheel, sitDown, standUp, offAt, audio, player, ocean, keys, view, bedAt, walkGround, walkWorld, shelterAt, nearHelm, interact, toggleFp,
   fish, fishing, isWater, SELL, get money() { return money; },
   // 多人
-  net, others, chat, boards, garage, enterRoom, applyWorld, myFishUids, takeHelm, releaseHelm, touch,
+  net, others, chat, boards, garage, enterRoom, applyWorld, myFishUids, takeHelm, releaseHelm, touch, setGfx, setPixelRatio,
+  get gfxLv() { return gfxLv; }, get pixelRatio() { return pixelRatio; },
   get kit() { return kit; }, get myBoat() { return myBoat; }, get berth() { return berth; }, get room() { return room; }, get inGame() { return inGame; }, get time() { return time; },
   dev: (cmd, o = {}) => net.send({ t: 'dev', cmd, ...o }),   // 測試指令（伺服器開了開發模式才收）：event / calm / skip / money / fish
   sea, dangerAt, tsuAt, stormK, waterY, nearTank, nearCrack, get wrench() { return wrench; },
