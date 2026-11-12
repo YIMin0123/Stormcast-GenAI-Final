@@ -759,7 +759,7 @@ export class Boat {
         const fp = this.fpHelm, turnA = clamp(this.rudder * 2.6, fp ? -0.8 : -0.35, fp ? 0.8 : 0.35);
         for (const arm of arms) {
           const ang = arm.userData.side * (fp ? 1.05 : 2.4) + turnA;
-          this._d.set(P.wheelPos.x - P.helmsman.position.x - 0.03, P.wheelPos.y - S.deck + Math.cos(ang) * WHEEL_R, Math.sin(ang) * WHEEL_R).sub(arm.position);
+          this._d.set(P.wheelPos.x - P.helmsman.position.x - 0.03, P.wheelPos.y - S.deck + Math.cos(ang) * WHEEL_R, Math.sin(ang) * WHEEL_R).sub(arm.userData.base);
           const len = this._d.length();
           arm.quaternion.setFromUnitVectors(DOWN, this._d.divideScalar(len));
           arm.userData.stretch(len / ARM_LEN);

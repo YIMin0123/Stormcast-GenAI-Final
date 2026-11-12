@@ -9,6 +9,7 @@ import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
 export const ARM_LEN = 0.27;   // 肩膀到握東西的位置（整條手臂再長 0.03）；握舵時用它算手臂要拉長多少
 const SHOULDER_Y = 0.85, SHOULDER_Z = 0.165, HIP_Y = 0.44, HIP_Z = 0.1, NECK_Y = 1.0;
+const WAIST_Y = 0.7;   // 腰的關節：上半身（衣服、手臂、頭）掛在這裡，鞠躬、伸懶腰、躺下時彎這裡
 
 // ---- 像素雜點：每個面依它最朝向的軸，把物件自己的座標切成邊長 TEXEL 的方格，每格隨機亮一點或暗一點 ----
 const TEXEL = 0.022;
@@ -57,38 +58,58 @@ const mz = (pts) => pts.map(([x, y, z]) => [x, y, -z]);              // 左右�
 const shift = (pts, dx, dz) => pts.map(([x, y, z]) => [x + dx, y, z + dz]);
 
 // ---- 臉：一張 110×110 的小圖（一格 4 公釐），貼在臉的正前方，放大時不做平滑 ----
-// 圖的範圍：左右 ±0.22、上下 1.42 → 0.98；圖的左邊是人物的右手邊（+Z）
-let faceTex = null;
-function faceTexture() {
-  if (faceTex) return faceTex;
+// 圖的範圍：左右 ±0.22、上下 1.42 → 0.98；圖的左邊是人物的右手邊（+Z）。
+// 八種表情各一張（角色設定圖上那組）：普通、開心、驚訝、思考、閉眼、微笑、哭泣、眨眼
+export const FACES = ['normal', 'happy', 'surprised', 'thinking', 'closed', 'smile', 'cry', 'wink'];
+const faceTex = {};
+function faceTexture(id = 'normal') {
+  if (faceTex[id]) return faceTex[id];
   const cv = document.createElement('canvas');
   cv.width = 110; cv.height = 110;
   const g = cv.getContext('2d');
   const px = (c, x, y, w = 1, h = 1) => { g.fillStyle = c; g.fillRect(x, y, w, h); };
+  const EYE = '#362824', LINE = '#3a2622', BROW = '#5a3a2c', LIP = '#9c4a3a', MOUTH = '#c4524a';
   // 腮紅：眼睛外下方一小塊，邊緣淡一點（跟膚色混過，不用半透明）
   for (const x0 of [13, 84]) {
     px('#f6ae8e', x0, 84, 13, 11);
     px('#f6a085', x0 + 1, 85, 11, 9);
     px('#f59a80', x0 + 2, 86, 9, 7);
   }
-  // 眼睛：深咖啡色的直長方塊，四角各切一格，沒有亮點
-  for (const x0 of [20, 76]) {
-    px('#362824', x0 + 1, 56, 12, 29);
-    px('#362824', x0, 57, 14, 27);
-    px('#3d2b26', x0 + 2, 79, 10, 4);   // 下緣稍微淡一點
+  // 眼睛（x0 是左緣，寬 14、高 56–84）
+  const eyeOpen = (x0, top = 56) => { px(EYE, x0 + 1, top, 12, 85 - top); px(EYE, x0, top + 1, 14, 83 - top); px('#3d2b26', x0 + 2, 79, 10, 4); };
+  const arc = (x0, f, w = 3) => { for (let i = 0; i < 14; i++) px(LINE, x0 + i, f(Math.abs(i - 6.5)), 1, w); };
+  const happyEye = (x0) => arc(x0, (d) => 64 + Math.round(d * 0.9));            // ^
+  const closedEye = (x0) => arc(x0, (d) => 77 - Math.round(d * 0.55), 2);       // ‿（往下彎的一條）
+  const squeeze = (x0, dir) => {                                                 // > 或 <（用力閉著）
+    for (let i = 0; i < 9; i++) { const x = dir > 0 ? x0 + 2 + i : x0 + 11 - i; px(LINE, x, 62 + i, 2, 2); px(LINE, x, 78 - i, 2, 2); }
+  };
+  // 眉毛（左眼的從外到內、右眼的從內到外）；lift：整條往上幾格；tilt：內側往上幾格
+  const brows = (lift = 0, tilt = 0, only = 0) => {
+    if (only >= 0) for (let i = 0; i < 18; i++) px(BROW, 13 + i, 41 - lift - (i < 4 ? -1 : 0) - Math.round(tilt * i / 17), 1, 2);
+    if (only <= 0) for (let i = 0; i < 18; i++) px(BROW, 79 + i, 41 - lift - (i > 13 ? -1 : 0) - Math.round(tilt * (17 - i) / 17), 1, 2);
+  };
+  const smallO = () => { px(LIP, 54, 96, 3, 1); px(LIP, 53, 97, 1, 2); px(LIP, 57, 97, 1, 2); px(LIP, 54, 99, 3, 1); px('#c46e56', 54, 97, 3, 2); };
+  const smileMouth = () => { px(LIP, 51, 95, 1, 1); px(LIP, 52, 96, 1, 1); px(LIP, 53, 97, 5, 1); px(LIP, 58, 96, 1, 1); px(LIP, 59, 95, 1, 1); };
+  const openSmile = () => { px(LIP, 51, 95, 9, 1); px(MOUTH, 52, 96, 7, 3); px(LIP, 51, 96, 1, 2); px(LIP, 59, 96, 1, 2); px(LIP, 52, 98, 1, 1); px(LIP, 58, 98, 1, 1); px(LIP, 53, 99, 5, 1); px('#e07a6a', 54, 97, 3, 1); };
+  switch (id) {
+    case 'happy':     happyEye(20); happyEye(76); brows(2); openSmile(); break;
+    case 'surprised': eyeOpen(20, 54); eyeOpen(76, 54); brows(5);
+      px(LIP, 54, 95, 3, 1); px(LIP, 53, 96, 1, 4); px(LIP, 57, 96, 1, 4); px(LIP, 54, 100, 3, 1); px(MOUTH, 54, 96, 3, 4); break;
+    case 'thinking':  eyeOpen(22, 60); eyeOpen(78, 60); brows(0, 0, 1); brows(4, -2, -1); px(LIP, 55, 98, 5, 1); break;
+    case 'closed':    closedEye(20); closedEye(76); brows(); smileMouth(); break;
+    case 'smile':     eyeOpen(20); eyeOpen(76); brows(1); smileMouth(); break;
+    case 'cry':
+      squeeze(20, 1); squeeze(76, -1); brows(0, 4);
+      for (const x of [24, 82]) { px('#8fd0f5', x, 80, 4, 26); px('#c8ecff', x + 1, 82, 1, 20); }   // 兩道淚
+      px(LIP, 52, 97, 7, 1); px(MOUTH, 52, 98, 7, 2); px(LIP, 51, 98, 1, 2); px(LIP, 59, 98, 1, 2); px(LIP, 52, 100, 7, 1); break;
+    case 'wink':      eyeOpen(20); squeeze(76, -1); brows(1); openSmile(); break;
+    default:          eyeOpen(20); eyeOpen(76); brows(); smallO();
   }
-  // 眉毛：細細一條，微微拱起，外側稍微往下
-  const brow = (pts) => { for (const [x, y, w] of pts) px('#5a3a2c', x, y, w, 2); };
-  brow([[13, 41, 4], [17, 40, 14]]);
-  brow([[79, 40, 14], [93, 41, 4]]);
-  // 嘴：小小一個 o
-  px('#9c4a3a', 54, 96, 3, 1); px('#9c4a3a', 53, 97, 1, 2); px('#9c4a3a', 57, 97, 1, 2); px('#9c4a3a', 54, 99, 3, 1);
-  px('#c46e56', 54, 97, 3, 2);
-  faceTex = new THREE.CanvasTexture(cv);
-  faceTex.magFilter = faceTex.minFilter = THREE.NearestFilter;
-  faceTex.generateMipmaps = false;
-  faceTex.colorSpace = THREE.SRGBColorSpace;
-  return faceTex;
+  const t = new THREE.CanvasTexture(cv);
+  t.magFilter = t.minFilter = THREE.NearestFilter;
+  t.generateMipmaps = false;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return (faceTex[id] = t);
 }
 
 export function buildFigure() {
@@ -124,11 +145,17 @@ export function buildFigure() {
     return joint;
   });
 
+  // ---- 上半身：掛在腰的關節上 ----
+  const upper = new THREE.Group();
+  upper.position.y = WAIST_Y;
+  g.add(upper);
+
   // ---- 手臂：白色短袖（下緣張開）＋ 膚色手臂 ＋ 末端粗一點的方塊手 ----
   const arms = [-1, 1].map((s) => {
     const joint = new THREE.Group();
-    joint.position.set(-0.015, SHOULDER_Y, s * SHOULDER_Z);
-    g.add(joint);
+    joint.position.set(-0.015, SHOULDER_Y - WAIST_Y, s * SHOULDER_Z);
+    joint.userData.base = new THREE.Vector3(-0.015, SHOULDER_Y, s * SHOULDER_Z);   // 肩膀在整個人座標裡的位置（握舵時算手要伸多長）
+    upper.add(joint);
     const at = (pts) => pts.map(([x, y, z]) => [x, y - SHOULDER_Y, z]);
     const sleeve = solid(at(oct(0.885, 0.745, 0.064, 0.086)), shirt);                       // 袖子
     const hand = new THREE.Group();                                                          // 手（掛在手腕上）
@@ -145,10 +172,11 @@ export function buildFigure() {
     return joint;
   });
 
-  // ---- 身體：短短的白色水手服、深藍百褶裙、藍色水手領、紅領巾 ----
+  // ---- 身體：短短的白色水手服（上半身）、深藍百褶裙（跟著腿那半邊）、藍色水手領、紅領巾 ----
+  put(new THREE.Mesh(skirtGeometry(), skirt));
+  parent = upper; oy = WAIST_Y;
   add([...ring(0.69, -0.11, 0.125, 0.178, 0.05), ...ring(0.75, -0.105, 0.12, 0.172, 0.05), ...ring(0.86, -0.098, 0.112, 0.17, 0.05),
     ...ring(0.92, -0.085, 0.1, 0.13, 0.045), ...ring(0.975, -0.06, 0.07, 0.072, 0.03)], shirt);
-  put(new THREE.Mesh(skirtGeometry(), skirt));
   // 水手領：背後垂一片方領（上緣在脖子後面），從肩膀繞到胸前收成 V 字；邊上一條白線
   add([[-0.06, 1.0, 0.07], [-0.06, 1.0, -0.07], [-0.088, 0.975, 0.12], [-0.088, 0.975, -0.12], [-0.12, 0.86, 0.135], [-0.12, 0.86, -0.135],
     [-0.045, 1.0, 0.07], [-0.045, 1.0, -0.07], [-0.07, 0.97, 0.115], [-0.07, 0.97, -0.115], [-0.1, 0.86, 0.13], [-0.1, 0.86, -0.13]], navy);
@@ -173,10 +201,11 @@ export function buildFigure() {
 
   // ---- 頭：掛在脖子的關節上，可以轉頭、抬頭、低頭 ----
   const neck = solid(oct(1.05, 0.95, 0.045, 0.048), skin);
-  g.add(neck);
+  neck.position.y = -WAIST_Y;
+  upper.add(neck);
   const head = new THREE.Group();
-  head.position.y = NECK_Y;
-  g.add(head);
+  head.position.y = NECK_Y - WAIST_Y;
+  upper.add(head);
   parent = head; oy = NECK_Y;
   // 頭殼：正面是一整片平的臉（x = 0.205），下巴寬寬的、兩角切掉
   add([[0.205, 1.43, 0.2], [0.205, 1.43, -0.2], [0.205, 1.04, 0.2], [0.205, 1.04, -0.2], [0.205, 1.01, 0.175], [0.205, 1.01, -0.175],
@@ -244,7 +273,9 @@ export function buildFigure() {
 
   g.traverse((m) => { if (m.isMesh) m.userData.figure = true; });
   // fpHide：掌舵的第一人稱要藏起來的部分（脖子以上）；mats：這個人用到的所有材質
-  g.userData = { legs, arms, head, fpHide: [neck, head], torso, mats: [skin, hair, shirt, skirt, navy, red, boot, sole, trim, face] };
+  // setFace：換表情（FACES 裡的一個）
+  const setFace = (id) => { const t = faceTexture(FACES.includes(id) ? id : 'normal'); if (face.map !== t) face.map = t; };
+  g.userData = { legs, arms, head, upper, setFace, fpHide: [neck, head], torso, mats: [skin, hair, shirt, skirt, navy, red, boot, sole, trim, face] };
   return g;
 }
 

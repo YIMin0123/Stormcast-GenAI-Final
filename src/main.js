@@ -8,6 +8,7 @@ import { ShallowWater, SWE } from './shallow.js';
 import { makeHarbor, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SHOP, LIGHTHOUSE, SELL, setBoard, MOORING, BOLLARDS, MoorLine, SHELF, SHELF_X, SHELF_Z, setTag, PLAYER_SPAWN, onDeck, LAMPS, UNLIT, WET } from './harbor.js';
 import { SPECIES, pickSpecies, rollFish, fishValue, fishLabel, FishWorld } from './fish.js';
 import { Fishing } from './fishing.js';
+import { EmoteWheel } from './emotes.js';
 import { REFL, addOutline, BULBS, softDisc } from './toon.js';   // 它會改掉內建材質的受光算法（改成手繪風）
 import { makeScenery } from './scenery.js';
 import { makeGroundDetail, makeGrassGeometry, WIND, SIGHT } from './foliage.js';
@@ -1385,6 +1386,14 @@ $('sound').addEventListener('click', () => {
 // 用實體按鍵位置（e.code）判斷，開著注音輸入法也能操作
 const KEYMAP = { KeyW: 'w', KeyA: 'a', KeyS: 's', KeyD: 'd', ShiftLeft: 'shift', ShiftRight: 'shift', Space: 'space', KeyF: 'f' };
 const keys = { w: false, a: false, s: false, d: false, shift: false, space: false, f: false, mouse: false };
+// 動作與表情的輪盤：走路時按住 G 叫出來，移動滑鼠選，放開 G 播放
+const wheel = new EmoteWheel();
+function closeWheel(play) {
+  const pick = wheel.close();
+  if (!play || !pick) return;
+  if (pick.kind === 'face') player.setMood(pick.id);
+  else if (!player.playAction(pick.id)) toast('現在不能做這個動作（游泳、坐著、手上拿著東西時不行）');
+}
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return;
   const k = KEYMAP[e.code];
@@ -1396,14 +1405,16 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Escape' && mapOpen) toggleMap();
   if (e.code === 'KeyE') interact();
   if (e.code === 'KeyF') fishing.press();
+  if (e.code === 'KeyG' && mode === 'walk' && !mapOpen) wheel.open();
 });
 window.addEventListener('keyup', (e) => {
   const k = KEYMAP[e.code];
   if (k) keys[k] = false;
   if (e.code === 'KeyF') fishing.release();
+  if (e.code === 'KeyG') closeWheel(mode === 'walk');
   if (e.code === 'Space' && !(e.target instanceof HTMLInputElement)) e.preventDefault();
 });
-window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; closeWheel(false); });
 
 // 按住滑鼠拖曳轉視角；滾輪調整第三人稱的距離
 canvas.addEventListener('pointerdown', (e) => {
@@ -1431,6 +1442,7 @@ function lookJump(e) {
   return false;
 }
 canvas.addEventListener('pointermove', (e) => {
+  if (wheel.isOpen) { if (!lookJump(e)) wheel.move(e.movementX, e.movementY); return; }   // 輪盤開著：滑鼠拿來選，不轉視角
   const free = locked();   // 滑鼠鎖在畫面裡：不用按著也能轉
   if (!free && !(e.buttons & 1)) return;
   if (lookJump(e)) return;
@@ -2225,7 +2237,7 @@ renderer.setAnimationLoop((ms) => {
 window.__sim = {
   advance, drawFrame, get boat() { return boat; }, boats, addBoat, offer, refreshTags, setMoney, nearBox, nearShelf, SHELF,
   get rodLv() { return rodLv; }, set rodLv(v) { rodLv = v; }, get rodBroken() { return rodBroken; }, set rodBroken(v) { rodBroken = v; refreshTags(); },
-  aimTarget, sitDown, standUp, offAt, audio, player, ocean, keys, view, bedAt, walkGround, walkWorld, shelterAt, nearHelm, interact, toggleFp,
+  aimTarget, wheel, closeWheel, sitDown, standUp, offAt, audio, player, ocean, keys, view, bedAt, walkGround, walkWorld, shelterAt, nearHelm, interact, toggleFp,
   fish, fishing, pickFish, isWater, SELL, get money() { return money; },
   sea, dangerAt, tsuAt, stormK, waterY, nearTank, nearCrack, get wrench() { return wrench; }, set wrench(v) { wrench = v; },
   get wreck() { return wreck; }, climate, saveGame, loadGame, wipeSave, lightning, updateWeather, boatEnv, rain, bolt, spouts, SAVE_KEY,

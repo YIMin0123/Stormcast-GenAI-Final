@@ -2,6 +2,7 @@
 // 人直接走上船、走下船；站在船上時位置記在船身座標裡，船怎麼動人就跟著動。
 import * as THREE from 'three';
 import { buildFigure } from './boat.js';
+import { ACTION_BY_ID, MOOD_TIME } from './emotes.js';
 
 const WALK = 3.2, RUN = 6.0;
 const SWIM = 1.6, SWIM_FAST = 2.3;
@@ -35,6 +36,24 @@ export class Player {
     this.lookYaw = 0; this.lookPitch = 0;  // 鏡頭看的方向（頭會跟著轉）
     this.eyeH = 1.25;                      // 眼睛離腳多高（游泳時只剩頭露出水面）
     this.seat = null;                      // 坐在船上的哪個位子：{ boat, x, z, h 坐墊高度, yaw 面向（相對船首） }；沒坐是 null
+    // 動作與表情（輪盤選的）：act 正在播的動作、actT 播了幾秒；emoteW 動作接管身體的程度（0–1，淡入淡出）；
+    // mood 玩家選的表情、moodLeft 還剩幾秒
+    this.act = null; this.actT = 0; this.emoteW = 0; this.lastPose = null;
+    this.mood = null; this.moodLeft = 0;
+  }
+
+  // 播一個動作；現在不能做（游泳、坐在船上、拿著東西或釣竿、在空中）就回傳 false
+  playAction(id) {
+    const a = ACTION_BY_ID[id];
+    if (!a || this.swim || this.seat || this.carry || this.rod || this.h > 0) return false;
+    this.act = a; this.actT = 0;
+    return true;
+  }
+
+  // 換表情，維持 MOOD_TIME 秒（選「普通」就是馬上變回來）
+  setMood(id) {
+    this.mood = id === 'normal' ? null : id;
+    this.moodLeft = this.mood ? MOOD_TIME : 0;
   }
 
   // 第一人稱：整個人都不畫（低頭只看到地面，不會看到自己的大頭和肩膀），但影子照樣投在地上；
@@ -206,6 +225,11 @@ export class Player {
     // 跳起來：雙手往兩旁張開、腿前後分開；游泳：身體往前趴、雙手輪流划水；
     // 站著不動：重心輪流換腳、手輕輕晃、頭微微歪來歪去
     const air = this.h > 0;
+    // 動作：一走動、跳起來、下水、坐下、拿起東西就停；播一次的動作播完就停
+    if (this.act) {
+      this.actT += dt;
+      if (this.moving || air || swim || seat || this.carry || this.rod || (!this.act.loop && this.actT > this.act.dur)) this.act = null;
+    }
     const stroke = Math.sin(this.phase);
     const idle = !this.moving && !air && !swim;
     const T = (this.clock += dt);
@@ -247,11 +271,31 @@ export class Player {
     this.tilt += ((swim ? (this.moving ? 1.15 : 0.3) : 0) - this.tilt) * slow;
     this.eyeH += ((swim ? SUBMERGE + 0.25 : 1.25) - this.eyeH) * slow;
 
+    // 動作接管關節：照動作的角度蓋過上面平常的姿勢（淡入淡出；動作停了以後從最後那個姿勢慢慢回來）
+    const pose = this.act ? (this.lastPose = this.act.pose(this.actT)) : this.lastPose;
+    this.emoteW += ((this.act ? 1 : 0) - this.emoteW) * (1 - Math.exp(-dt * 10));
+    if (!this.act && this.emoteW < 0.002) { this.emoteW = 0; this.lastPose = null; }
+    const w = pose ? this.emoteW : 0, mix = (obj, k, v) => { if (v !== undefined) obj[k] += (v - obj[k]) * w; };
+    const { upper, setFace } = this.mesh.userData;
+    for (const jt of arms) jt.rotation.y += (0 - jt.rotation.y) * ease;   // 平常手臂不往內收（拍手、鞠躬時才收）
+    if (pose) {
+      [arms, legs].forEach((joints, j) => joints.forEach((jt, i) => {
+        const q = (j === 0 ? pose.arms : pose.legs)?.[i];
+        if (q) { mix(jt.rotation, 'x', q.x); mix(jt.rotation, 'y', q.y); mix(jt.rotation, 'z', q.z); }
+      }));
+      if (pose.head) { mix(head.rotation, 'x', pose.head.x); mix(head.rotation, 'z', pose.head.z); }
+    }
+    upper.rotation.z = (pose?.waist?.z ?? 0) * w;
+    upper.rotation.y = (pose?.waist?.y ?? 0) * w;
+    // 表情：玩家選的優先；沒選的話用動作附帶的表情
+    if (this.moodLeft > 0 && (this.moodLeft -= dt) <= 0) this.mood = null;
+    setFace(this.mood ?? (this.act && this.act.face) ?? 'normal');
+
     this.off.multiplyScalar(Math.exp(-dt * 14));
     this.pos.set(this.x + this.off.x, this.y + this.off.y, this.z + this.off.z);
     // 身體往前趴的時候整個人浮高一點，頭才不會埋進水裡
-    this.mesh.position.set(this.pos.x, this.pos.y + 0.36 * this.tilt + this.bob, this.pos.z);
-    this.mesh.rotation.set(this.roll, -this.yaw, -this.tilt - this.lean, 'YZX');
+    this.mesh.position.set(this.pos.x, this.pos.y + 0.36 * this.tilt + this.bob + (pose?.lift ?? 0) * w, this.pos.z);
+    this.mesh.rotation.set(this.roll + (pose?.roll ?? 0) * w, -this.yaw, -this.tilt - this.lean, 'YZX');
   }
 
   // 告訴角色鏡頭正在看哪裡，頭會跟著轉過去
