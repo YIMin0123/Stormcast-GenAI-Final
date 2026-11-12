@@ -1,6 +1,7 @@
 # 把 Tripo 生成的人物模型整理成遊戲用的 public/models/girl.glb、boy.glb（用 Blender 從命令列跑）：
 #   "C:/TOOL/blender/blender-5.2.2-windows-x64/blender.exe" -b --python tools/tripo_figure.py -- tools/src/girl_tripo.glb public/models/girl.glb [預覽圖路徑]
-#   男版：... -- tools/src/boy_tripo.glb public/models/boy.glb --shorts --eyes=0.106,1.156
+#   男版：先用 tools/tripo_bake.py 把 Tripo 拆分後的模型（刪掉眼睛、眉毛、嘴）烘上原本的貼圖 → tools/src/boy_baked.glb，
+#        再 ... -- tools/src/boy_baked.glb public/models/boy.glb --shorts --eyes=0.106,1.16
 # 做的事：
 #   1. 轉成遊戲的座標：面向前方（Blender +X，遊戲 +X）、身高 1.62、兩腳中間在原點
 #   2. 綁一副骨架，關節跟原本程式拼的人物一樣：root（髖）、upper（腰）、head（脖子）、arm.L/R（肩膀）、leg.L/R（髖關節）
@@ -190,7 +191,7 @@ img.update(); img.pack()
 # 眼睛：只看臉中間偏兩旁的暗點（避開嘴、瀏海邊緣），各取中位數；兩眼高度取平均（兩眼本來就同高）
 eR = [p for p in eye_pts if -0.17 < p.y < -0.03 and p.z > 1.05]; eL = [p for p in eye_pts if 0.03 < p.y < 0.17 and p.z > 1.05]
 med = lambda ps: Vector([sorted(p[i] for p in ps)[len(ps) // 2] for i in range(3)])
-eyeR, eyeL = med(eR), med(eL)
+eyeR, eyeL = (med(eR), med(eL)) if eR and eL else (Vector((0.15, -0.1, 1.15)), Vector((0.15, 0.1, 1.15)))   # 抓不到就等下面的 --eyes 給
 print('EYEPTS', len(eR), len(eL))
 eyeR.z = eyeL.z = (eyeR.z + eyeL.z) / 2
 # 偵測不準的（男版的眼睛是很小的深色島，抓到的點很少）可以直接給：--eyes=離中線距離,高度（從正交正視圖量）
