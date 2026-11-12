@@ -433,11 +433,11 @@ export class Sea {
 
   // 離最近的漩渦多遠：回傳 { r, s }（沒有漩渦時 r 是 Infinity）
   whirlNear(x, z) {
-    const out = { r: Infinity, s: 0 };
+    const out = { r: Infinity, s: 0, x: 0, z: 0 };
     for (const v of this.vortices) {
       if (v.kind !== 'whirl') continue;
       const r = Math.hypot(v.x - x, v.z - z);
-      if (r < out.r) { out.r = r; out.s = v.s; }
+      if (r < out.r) { out.r = r; out.s = v.s; out.x = v.x; out.z = v.z; }
     }
     return out;
   }

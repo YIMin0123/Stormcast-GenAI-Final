@@ -3,6 +3,9 @@
 //   按下「遊戲音效」之後才在背景載入。
 // 程式合成的聲音（濾過的雜訊）只當備用：哪一種聲音的錄音檔還沒有、或沒載到，那一種才用合成的頂著；
 //   錄音一載好，對應的合成聲就完全關掉（兩種疊在一起聽起來很怪）。
+// 有方位的聲音：引擎、海鷗、岸邊的浪、水龍捲、海嘯和漩渦的轟鳴、雷、浮標的水花，都從它們在世界裡的位置傳過來
+//   （戴耳機聽得出前後左右；喇叭則是左右）。每幀由外面用 listen() 告訴它耳朵（鏡頭）在哪、朝哪，用 place() 告訴它聲音在哪。
+//   遠近的大小聲照舊由外面算好的音量決定，這裡只管方向。雨、風、外海的浪、鳥叫蟲鳴是四面八方來的，不分方位。
 // 瀏覽器規定要使用者點擊後才能發聲，所以由按鈕呼叫 start()。
 
 // 會一直循環播放的錄音：[檔名, 從第幾秒, 到第幾秒, 接法]
@@ -49,9 +52,51 @@ const CLIPS = {
   stepGrass: one('steps-grass.mp3', 0.9, [0.0, 0.6], [0.95, 0.6], [1.95, 0.6], [2.85, 0.5], [7.35, 0.5], [8.35, 0.45], [9.3, 0.5], [10.05, 0.55]),
 };
 const THUNDER = ['thunder-1.mp3', 'thunder-2.mp3', 'thunder-3.mp3'];
+// 有方位的循環聲
+const SPOTS = ['engine', 'gulls', 'shore', 'spout', 'roar'];
 
 export class OceanAudio {
-  constructor() { this.ctx = null; this.on = false; this.buf = {}; this.loops = {}; this.real = 0; }
+  constructor() { this.ctx = null; this.on = false; this.buf = {}; this.loops = {}; this.real = 0; this.spots = {}; this.ear = [0, 0, 0]; }
+
+  // 一個有方位的出口：聲音進到 in，一部分經過定位（從某個方向來）、一部分直接出去（沒有方向）。
+  // 兩者的比例由「散開的程度」決定：聲音就在身邊、或本來就是一大片的時候，方向感要淡一點
+  _spot(x = 0, y = 0, z = 0, spread = 1) {
+    const ctx = this.ctx, inp = ctx.createGain(), pan = ctx.createPanner(), wet = ctx.createGain(), dry = ctx.createGain();
+    pan.panningModel = 'HRTF';
+    pan.distanceModel = 'inverse'; pan.rolloffFactor = 0;   // 遠近的音量由外面算，這裡不再衰減一次
+    pan.setPosition(x, y, z);
+    wet.gain.value = Math.cos(spread * Math.PI / 2); dry.gain.value = Math.sin(spread * Math.PI / 2);
+    inp.connect(pan).connect(wet).connect(this.master);
+    inp.connect(dry).connect(this.master);
+    return { in: inp, pan, wet, dry };
+  }
+
+  // 耳朵（鏡頭）的位置、朝向、頭頂的方向
+  listen(px, py, pz, fx, fy, fz, ux, uy, uz) {
+    if (!this.ctx) return;
+    const l = this.ctx.listener;
+    this.ear[0] = px; this.ear[1] = py; this.ear[2] = pz;
+    if (l.positionX) {
+      l.positionX.value = px; l.positionY.value = py; l.positionZ.value = pz;
+      l.forwardX.value = fx; l.forwardY.value = fy; l.forwardZ.value = fz;
+      l.upX.value = ux; l.upY.value = uy; l.upZ.value = uz;
+    } else { l.setPosition(px, py, pz); l.setOrientation(fx, fy, fz, ux, uy, uz); }
+  }
+
+  // 各個有方位的循環聲現在在哪：{ 名字: [x, y, z, 散開的程度 0–1] }（1 = 完全沒有方向）
+  place(o) {
+    if (!this.ctx || !this.on) return;
+    const t = this.ctx.currentTime;
+    for (const name in o) {
+      const S = this.spots[name], [x, y, z, spread] = o[name];
+      if (!S) continue;
+      if (S.pan.positionX) {
+        S.pan.positionX.setTargetAtTime(x, t, 0.08); S.pan.positionY.setTargetAtTime(y, t, 0.08); S.pan.positionZ.setTargetAtTime(z, t, 0.08);
+      } else S.pan.setPosition(x, y, z);
+      S.wet.gain.setTargetAtTime(Math.cos(spread * Math.PI / 2), t, 0.15);
+      S.dry.gain.setTargetAtTime(Math.sin(spread * Math.PI / 2), t, 0.15);
+    }
+  }
 
   // 在背景把錄音檔載進來（載不到的略過）
   _load() {
@@ -70,12 +115,12 @@ export class OceanAudio {
       if (file !== f || this.loops[name]) continue;
       const out = this.ctx.createGain();
       out.gain.value = 0;
-      if (name === 'spout') out.connect(this.spoutPan);            // 從水龍捲的方向傳過來
-      else if (name === 'roar') {                                  // 只留低頻的轟隆聲
+      const dest = this.spots[name] ? this.spots[name].in : this.master;   // 有方位的走定位的出口
+      if (name === 'roar') {                                               // 只留低頻的轟隆聲
         const lp = this.ctx.createBiquadFilter();
         lp.type = 'lowpass'; lp.frequency.value = 260;
-        out.connect(lp).connect(this.master);
-      } else out.connect(this.master);
+        out.connect(lp).connect(dest);
+      } else out.connect(dest);
       const buf = this.buf[f], a = t0, b = Math.min(t1, buf.duration);
       const L = this.loops[name] = { out, buf, a, b, x: join, next: this.ctx.currentTime + 0.05, rate: 1, srcs: [] };
       if (join === 'n') {
@@ -185,8 +230,8 @@ export class OceanAudio {
     src.connect(this.windHowlF).connect(this.windHowl).connect(this.master);
 
     // 水龍捲：低沉的呼嘯加上嘶嘶的水霧聲，從它所在的方向傳過來；越近越大聲，近了才聽得到嘶聲
-    this.spoutPan = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
-    this.spoutPan.connect(this.master);
+    for (const name of SPOTS) this.spots[name] = this._spot();
+    this.spoutPan = this.spots.spout.in;
     const sband = (type, freq, q) => {
       const f = ctx.createBiquadFilter();
       f.type = type; f.frequency.value = freq; f.Q.value = q;
@@ -226,8 +271,9 @@ export class OceanAudio {
     this.master.gain.value = 0.9;
   }
 
-  // 播一個短音效（拋竿、落水、斷竿、開關……）。還沒有載入那個聲音就不播
-  play(name, vol = 1) {
+  // 播一個短音效（拋竿、落水、斷竿、開關……）。還沒有載入那個聲音就不播。
+  // pos：聲音在世界裡的位置（有給就從那個方向傳過來；離耳朵三公尺內方向感漸漸淡掉）
+  play(name, vol = 1, pos = null) {
     const list = CLIPS[name];
     if (!this.ctx || !this.on || !list) return;
     const [file, at, dur, k] = list[Math.floor(Math.random() * list.length)], buf = this.buf[file];
@@ -238,7 +284,12 @@ export class OceanAudio {
     g.gain.setValueAtTime(vol * k, t);
     g.gain.setValueAtTime(vol * k, t + Math.max(0.05, dur - 0.08));
     g.gain.linearRampToValueAtTime(0, t + dur);              // 尾巴收掉，不會「啪」一聲斷
-    src.connect(g).connect(this.master);
+    let dest = this.master;
+    if (pos) {
+      const d = Math.hypot(pos.x - this.ear[0], pos.y - this.ear[1], pos.z - this.ear[2]);
+      dest = this._spot(pos.x, pos.y, pos.z, Math.min(1, Math.max(0.1, 1 - d / 3))).in;
+    }
+    src.connect(g).connect(dest);
     src.start(t, at, dur);
   }
 
@@ -252,8 +303,10 @@ export class OceanAudio {
   // 聲音每秒走 343 公尺，所以先看到閃、過幾秒才聽到。
   // 近的：先是「啪」一聲撕裂般的爆響，接著隆隆聲滾好幾秒（閃電有一公里長，各段的聲音陸續傳到，所以會拖很久、中間還有幾下重的）；
   // 遠的：高音在路上被吃掉了，只剩低沉、拖得更長的悶響
-  thunder(dist = 800) {
+  // pos：閃電在哪（有給的話雷聲從那個方向滾過來；雷聲本來就是一大片，所以方向感只給一部分）
+  thunder(dist = 800, pos = null) {
     if (!this.ctx || !this.on) return;
+    const out = pos ? this._spot(pos.x, pos.y, pos.z, 0.4).in : this.master;
     const ctx = this.ctx, t = ctx.currentTime + dist / 343;
     const near = Math.min(1, Math.max(0, 1 - dist / 1500));
     // 有雷聲的錄音就用錄音：隨機挑一段，遠的小聲、高音被吃掉；近處落雷那一下撕裂聲還是用合成的疊上去
@@ -264,7 +317,7 @@ export class OceanAudio {
       src.playbackRate.value = 0.85 + 0.3 * Math.random();
       lp.type = 'lowpass'; lp.frequency.value = 220 + 9000 * near * near;
       g.gain.value = (0.35 + 1.6 * near * near) * Math.min(1, Math.max(0.3, 1.25 - dist / 4500));
-      src.connect(lp).connect(g).connect(this.master);
+      src.connect(lp).connect(g).connect(out);
       src.start(t);
     }
     if (recs.length) return;               // 有錄音就不用合成的雷聲
@@ -286,7 +339,7 @@ export class OceanAudio {
     const g = ctx.createGain();
     g.gain.setValueAtTime(0, t);
     g.gain.setValueCurveAtTime(curve, t + 0.001, dur);
-    src.connect(lp).connect(g).connect(this.master);
+    src.connect(lp).connect(g).connect(out);
     src.start(t, Math.random() * 2); src.stop(t + dur + 0.1);
     if (near > 0.5) {
       // 近處落雷的爆裂聲：很短、很亮的一聲，後面跟著兩三下碎裂的尾巴
@@ -301,13 +354,13 @@ export class OceanAudio {
       cg.gain.exponentialRampToValueAtTime(0.25 * k + 0.001, t + 0.2);
       cg.gain.linearRampToValueAtTime(0.7 * k, t + 0.24);
       cg.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
-      c.connect(bp).connect(cg).connect(this.master);
+      c.connect(bp).connect(cg).connect(out);
       c.start(t, Math.random() * 2); c.stop(t + 0.65);
     }
   }
 
   // wave：風浪強度 0–2.5；roar：附近激流的程度 0–1；under：鏡頭是否在水下；throttle、speed：0–1；rain：雨勢 0–1
-  // spout：最近的水龍捲有多近 0–1；spoutPan：它在左邊（-1）還是右邊（+1）；wind：風有多大（0 微風、1 颱風、陣風時超過 1）
+  // spout：最近的水龍捲有多近 0–1；spoutPan：沒在用了（方向改由 place() 給）；wind：風有多大（0 微風、1 颱風、陣風時超過 1）
   set(wave, roar, under, throttle = 0, speed = 0, rain = 0, spout = 0, spoutPan = 0, wind = 0) {
     if (!this.ctx || !this.on) return;
     const t = this.ctx.currentTime, k = 0.25, L = this.loops, dry = under ? 0.3 : 1;
@@ -316,7 +369,6 @@ export class OceanAudio {
     this.spoutRoar.gain.setTargetAtTime(1.5 * spout * synSpout, t, k);
     this.spoutFlut.gain.setTargetAtTime(0.4 * spout * synSpout, t, k);
     this.spoutHiss.gain.setTargetAtTime(0.5 * spout * spout * spout * synSpout, t, k);
-    if (this.spoutPan.pan) this.spoutPan.pan.setTargetAtTime(spoutPan, t, 0.15);
     this._vol('spout', 1.3 * spout * dry); this._rate('spout', 0.62 + 0.12 * spout);
     this.rainG.gain.setTargetAtTime(0.09 * rain * synRain, t, k);
     this.rainLow.gain.setTargetAtTime(0.07 * rain * rain * synRain, t, k);

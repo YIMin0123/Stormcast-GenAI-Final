@@ -524,7 +524,7 @@ const fishing = new Fishing({
   canFish: () => mode === 'walk' && !fish.held && !player.swim,
   rodLv: () => rodLv,
   broken: () => rodBroken,
-  sound: (name, vol) => audio.play(name, vol),
+  sound: (name, vol) => audio.play(name, vol, name === 'plop' || name === 'bite' || name === 'hook' || name === 'land' ? fishing.bob.position : null),   // 水花聲從浮標那裡傳過來
   // 爆桿：魚跑了，釣竿斷了，要拿回商店的攤位花錢修
   onSnap() {
     rodBroken = true;
@@ -1447,7 +1447,7 @@ canvas.addEventListener('wheel', (e) => {
 
 // ---- 主迴圈 ---------------------------------------------------------------
 const RAYS = 0.34;   // 太陽光束的強度
-const _rv = new THREE.Vector3(), _rf = new THREE.Vector3();
+const _rv = new THREE.Vector3(), _rf = new THREE.Vector3(), _sp = new THREE.Vector3();
 let time = 0;
 // 閃電：三種——
 //   雲裡的閃電（看不到閃電本身，只有那一片雲從裡面亮起來閃幾下，雷聲是遠遠的悶響）
@@ -1465,7 +1465,8 @@ function lightning(kind) {
     const a = Math.random() * Math.PI * 2, el = 0.35 + Math.random() * 0.5;
     flashAt.set(Math.cos(a) * Math.cos(el), Math.sin(el), Math.sin(a) * Math.cos(el));
     sheetLeft = 0.25 + Math.random() * 0.45;
-    audio.thunder(1500 + Math.random() * 2500);
+    d = 1500 + Math.random() * 2500;
+    audio.thunder(d, _sp.copy(flashAt).multiplyScalar(d).add(camera.position));
     return;
   }
   if (kind === 'hit') {
@@ -1481,7 +1482,7 @@ function lightning(kind) {
   bolt.strike(x, z, Math.max(0, bedAt(x, z)));
   d = Math.hypot(x - camera.position.x, z - camera.position.z);
   boltK = clamp(1.15 - d / 2600, 0.3, 1);          // 遠的閃電照過來沒那麼亮
-  audio.thunder(d);
+  audio.thunder(d, _sp.set(x, 200, z));
   if (d < 900) thunderDue.push({ at: time + d / 343, k: (1 - d / 900) ** 2 });
 }
 
@@ -2062,12 +2063,14 @@ function drawFrame(dt) {
 
   // 最近的水龍捲：呼嘯聲的大小與方向；靠得很近時鏡頭被風吹得發抖
   let spoutNear = 0, spoutPan = 0, shake = 0;
+  const spots = {};   // 有方位的聲音各自在哪：[x, y, z, 散開的程度]
   for (const m of spouts) {
     if (!m.group.visible) continue;
     const dx = m.group.position.x - cp.x, dz = m.group.position.z - cp.z, d = Math.hypot(dx, dz);
     const k = (0.25 * m.u.uFade.value + 0.75 * m.touch) * clamp(1 - d / 1100, 0, 1) ** 2;
     if (k > spoutNear) {
       spoutNear = k;
+      spots.spout = [m.group.position.x, cp.y + 25, m.group.position.z, clamp(1 - d / 160, 0.1, 0.7)];
       camera.getWorldDirection(_rf);
       spoutPan = clamp((dx * -_rf.z + dz * _rf.x) / Math.max(d, 1), -1, 1) * 0.8;
     }
@@ -2078,6 +2081,7 @@ function drawFrame(dt) {
   if (sea.tsu.on) {
     const c = sea.crestNear(cp.x, cp.z), big = Math.min(c.k, 1.1) * Math.sqrt(tsuKAt(cp.x, cp.z));   // 在岸上也聽得到、感覺得到
     crestRoar = big * clamp(1 - Math.abs(c.q) / (c.q > 0 ? 650 : 280), 0, 1) ** 2;
+    spots.roar = [cp.x - c.q * sea.tsu.dx, cp.y, cp.z - c.q * sea.tsu.dz, clamp(1 - Math.abs(c.q) / 120, 0.2, 1)];   // 浪牆離這裡最近的那一點
     shake = Math.max(shake, 0.9 * big * clamp(1 - Math.abs(c.q) / 150, 0, 1) ** 1.5);
   }
   // 大漩渦：幾百公尺外就聽得到水在轟隆隆地轉，越靠近越響；被拉到漏斗邊上時鏡頭跟著抖
@@ -2085,6 +2089,7 @@ function drawFrame(dt) {
   if (sea.vortices.length) {
     const w = sea.whirlNear(cp.x, cp.z);
     whirlRoar = w.s * clamp(1 - w.r / 520, 0, 1) ** 2;
+    if (1.3 * whirlRoar > 1.5 * crestRoar) spots.roar = [w.x, 0, w.z, clamp(1 - w.r / 150, 0.2, 0.9)];
     shake = Math.max(shake, 0.7 * w.s * clamp(1 - w.r / 110, 0, 1) ** 1.5);
   }
   const galeHere = gale.v * windK(cp.x, cp.z);
@@ -2121,6 +2126,21 @@ function drawFrame(dt) {
   // 實地錄音的那一層：外海的浪、岸邊的小浪、港口的海鷗、雨、引擎、捲線器、腳步
   {
     const off = offAt(cp.x, cp.z), helm = mode === 'helm';
+    // ---- 聲音的方位 ----
+    camera.getWorldDirection(_rf);
+    _sp.set(0, 1, 0).applyQuaternion(camera.quaternion);
+    audio.listen(cp.x, cp.y, cp.z, _rf.x, _rf.y, _rf.z, _sp.x, _sp.y, _sp.z);
+    if (!spots.roar || sea.rumble * 0.6 > Math.max(1.5 * crestRoar, 1.3 * whirlRoar)) spots.roar = [cp.x, cp.y, cp.z, 1];   // 說不出從哪來的隆隆聲
+    // 引擎：在船尾油箱那一帶
+    const tk = boat.parts.tank;
+    _sp.set(tk ? tk.x : -2, 0.5, tk ? tk.z : 0).applyMatrix4(boat.mesh.matrixWorld);
+    spots.engine = [_sp.x, _sp.y, _sp.z, 0.3];
+    // 海鷗：在港口上空盤旋；人就在港口裡的時候是頭頂一大片
+    spots.gulls = [-4, 22, 118, clamp(1 - Math.hypot(cp.x + 4, cp.z - 118) / 70, 0, 0.75)];
+    // 岸邊的浪：從最近的岸那個方向來（看離岸距離往哪邊變小）；人在岸上、或緊貼著岸，就是四周都有
+    const gx = offAt(cp.x + 6, cp.z) - offAt(cp.x - 6, cp.z), gz = offAt(cp.x, cp.z + 6) - offAt(cp.x, cp.z - 6), gl = Math.hypot(gx, gz);
+    spots.shore = gl > 1 && off > 2 ? [cp.x - gx / gl * Math.max(off, 5), 0, cp.z - gz / gl * Math.max(off, 5), clamp(1 - (off - 3) / 30, 0.3, 1)] : [cp.x, cp.y, cp.z, 1];
+    audio.place(spots);
     // 島上的環境音：鏡頭在陸地上（離岸二十幾公尺內漸漸淡掉）。港口那一帶是人住的地方，鳥叫蟲鳴小聲一點
     const land = clamp(1 - off / 25, 0, 1) * (0.45 + 0.55 * clamp((Math.hypot(cp.x + 4, cp.z - 118) - 30) / 60, 0, 1));
     audio.ambient({
