@@ -1,6 +1,6 @@
 # 把 Tripo 生成的人物模型整理成遊戲用的 public/models/girl.glb、boy.glb（用 Blender 從命令列跑）：
 #   "C:/TOOL/blender/blender-5.2.2-windows-x64/blender.exe" -b --python tools/tripo_figure.py -- tools/src/girl_tripo.glb public/models/girl.glb [預覽圖路徑]
-#   男版：先用 tools/tripo_bake.py 把 Tripo 拆分後的模型（刪掉眼睛、眉毛、嘴）烘上原本的貼圖 → tools/src/boy_baked.glb，
+#   男版：先用 tools/tripo_bake.py 把 Tripo 拆分後的模型（刪掉眼睛、眉毛、嘴零件；頭的零件 tripo_part_1 塗成膚色）烘上原本的貼圖 → tools/src/boy_baked.glb，
 #        再 ... -- tools/src/boy_baked.glb public/models/boy.glb --shorts --eyes=0.106,1.16
 # 做的事：
 #   1. 轉成遊戲的座標：面向前方（Blender +X，遊戲 +X）、身高 1.62、兩腳中間在原點
