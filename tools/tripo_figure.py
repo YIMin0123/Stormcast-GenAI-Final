@@ -116,7 +116,12 @@ for v in body.data.vertices:
     k, (x, y, z) = vkind[v.index], v.co
     side = 'L' if y > 0 else 'R'
     if (k == 'brown' and z > 0.8) or (k == 'red' and z > 1.25) or z > NECK + 0.05: c, ws = 'head', {'head': 1}
-    elif not SHORTS and k == 'navy' and z < 0.84: c, ws = 'skirt', {'root': 1}
+    elif not SHORTS and (k == 'navy' and z < 0.84 or 0.38 < z < 0.6 and abs(y) < 0.25 and min(math.hypot(x, y - HIP_Z), math.hypot(x, y + HIP_Z)) > 0.072):
+        # （裙襬底下有幾個頂點貼圖混到膚色，不能只看顏色：裙襬高度裡、在腿的粗細以外的都算裙子）
+        # 裙子跟著身體；但裙襬那段要分一點給腿（越靠近裙襬越多、左右兩邊各跟同側的腿），
+        # 不然走路時腿往後擺，大腿會從裙子後面穿出來，看起來像裙子被扯開
+        t = 0.3 * clamp((0.6 - z) / 0.17); sl = clamp(0.5 + y / 0.42)   # 左右漸變要寬：太陡的話兩腳一前一後，裙子中間會裂開
+        c, ws = 'skirt', {'root': 1 - t, 'leg.L': t * sl, 'leg.R': t * (1 - sl)}
     elif SHORTS and z < WAIST - 0.03 and abs(y) < 0.2:
         t = clamp((0.62 - z) / 0.08); c, ws = ('leg' if t > 0.99 else 'shorts'), {'leg.' + side: t, 'root': 1 - t}
     elif z < 0.53: c, ws = 'leg', {'leg.' + side: 1}
