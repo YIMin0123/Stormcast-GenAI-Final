@@ -578,6 +578,8 @@ uniform vec3 uSlopeVar;
 uniform float uPixelAngle;
 uniform float uHs;
 uniform vec4 uWake[16];   // (x, z, 產生時間, 強度)
+uniform vec4 uRip[24];    // 游泳的人推出來的波紋：(x, z, 產生時間, 強度)（swimfx.js）
+uniform vec4 uSwimmer[4]; // 水裡的人：(x, z, 游的速度, 有沒有人)
 uniform sampler2D uReflTex;
 uniform mat4 uReflMat;
 uniform float uReflOn;
@@ -740,6 +742,41 @@ void main() {
   if (uSwell > 0.01) sl += swellK(dangerAt(vP0), shelterAt(vP0)) * longSwell(vP0).yz;   // 颱風的長浪
   // 船在水上晃，從船身往外推出一圈一圈的小漣漪，兩三公尺外就散掉了
   if (hd < 4.0) sl += hDir * 0.05 * sin(hd * 7.0 - uTime * 4.2 + 3.0 * shNoise(vWorld.xz * 0.4)) * exp(-max(hd, 0.0) / 1.3) * smoothstep(-0.2, 0.2, hd);
+  // 游泳的人推出來的波紋：從那一點往外擴散的細浪。不畫白線——看得出來是因為倒影和反光被它扭歪了；
+  // 圈被既有的小浪扭得不正，越擴越淡。波紋擴散得比人游得慢（約 0.55 公尺／秒），
+  // 一邊游一邊留下的圈疊起來，外緣就是身後那道窄窄的 V 字。遠到浪比像素還細就不畫（不然會閃）
+  float ripFoam = 0.0;
+  float ripFine = clamp(0.35 * max(V.y, 0.06) / (dist * uPixelAngle) - 0.5, 0.0, 1.0);
+  if (dist < 70.0) {
+    for (int i = 0; i < 24; i++) {
+      vec4 rp = uRip[i];
+      float age = uTime - rp.z;
+      if (rp.w <= 0.0 || age < 0.0 || age > 3.5) continue;
+      vec2 dd = vWorld.xz - rp.xy;
+      float r = length(dd);
+      float front = 0.15 + age * 0.55 + 0.16 * (shNoise(vWorld.xz * 1.6 + rp.xy) - 0.5);
+      if (r > front + 0.5) continue;
+      float x = front - r;                                   // 在波前後面多遠（0 = 最外面那圈）
+      float pk = exp(-x * x / (0.03 + 0.05 * age));
+      float fade = rp.w * exp(-age / 1.2) / (1.0 + 2.0 * r);
+      sl += dd / max(r, 0.05) * (0.85 * fade * pk * sin(x * 14.0) * ripFine);
+      // 手拍下去那一下：零零碎碎的一小撮泡沫，一下子就散掉
+      ripFoam += rp.w * exp(-age / 0.35) * exp(-r * r / (0.03 + 0.15 * age)) * 0.55 * (0.3 + 0.7 * shNoise(vWorld.xz * 6.0 + rp.z));
+    }
+    // 人身邊：游的時候頭前面推起一小片碎白（越快越明顯）；不論動不動，身體一上一下推出細細的波
+    for (int i = 0; i < 4; i++) {
+      vec4 sw4 = uSwimmer[i];
+      if (sw4.w <= 0.0) continue;
+      vec2 dd = vWorld.xz - sw4.xy;
+      float r = length(dd);
+      if (r > 2.0) continue;
+      vec2 fw = vec2(cos(sw4.w - 1.0), sin(sw4.w - 1.0));
+      float along = dot(dd, fw), side = dot(dd, vec2(-fw.y, fw.x));
+      float bow = smoothstep(0.5, 0.15, length(vec2(along - 0.3, side * 1.5))) * smoothstep(0.35, 0.75, shNoise(vWorld.xz * 5.0 + uTime * vec2(1.3, -0.9)));
+      ripFoam += 0.35 * sw4.z * bow;
+      sl += dd / max(r, 0.05) * 0.07 * sin(r * 12.0 - uTime * 4.0) * exp(-r / 0.5) * ripFine;
+    }
+  }
   // 漩渦的漏斗與旋臂、水龍捲腳下的白沫
   float vcov = 0.0, wHole = 0.0, wBoil = 0.0, wCalm = 0.0;   // wHole：這裡在大漩渦的漏斗裡陷下去多深；wBoil：漏斗底那鍋白沫的陰影；wCalm：風浪的白沫被壓掉幾成
   for (int i = 0; i < 3; i++) {
@@ -1011,6 +1048,7 @@ void main() {
     float r = 1.8 + age * 0.9;
     cov += wk.w * exp(-dot(dd, dd) / (r * r)) * exp(-age / 4.5) * 0.4;
   }
+  cov += ripFoam * smoothstep(0.02, 0.2, depth);   // 游泳的人身邊、手拍下去的地方的白沫
   // 水線：水貼著船身、岸壁的地方有一圈細碎的白沫，隨著水一進一退；有的地方濃、有的地方斷掉，不是一條等寬的線
   float wl = min(hd, qd);
   if (wl < 0.8) {
