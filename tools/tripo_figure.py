@@ -1,5 +1,6 @@
-# 把 Tripo 生成的人物模型整理成遊戲用的 public/models/girl.glb（用 Blender 從命令列跑）：
+# 把 Tripo 生成的人物模型整理成遊戲用的 public/models/girl.glb、boy.glb（用 Blender 從命令列跑）：
 #   "C:/TOOL/blender/blender-5.2.2-windows-x64/blender.exe" -b --python tools/tripo_figure.py -- tools/src/girl_tripo.glb public/models/girl.glb [預覽圖路徑]
+#   男版：... -- tools/src/boy_tripo.glb public/models/boy.glb --shorts --eyes=0.106,1.156
 # 做的事：
 #   1. 轉成遊戲的座標：面向前方（Blender +X，遊戲 +X）、身高 1.62、兩腳中間在原點
 #   2. 綁一副骨架，關節跟原本程式拼的人物一樣：root（髖）、upper（腰）、head（脖子）、arm.L/R（肩膀）、leg.L/R（髖關節）
@@ -10,8 +11,11 @@ import bpy, bmesh, sys, math
 from mathutils import Vector, Matrix
 
 argv = sys.argv[sys.argv.index('--') + 1:]
+FLAGS = {a for a in argv if a.startswith('--')}
+argv = [a for a in argv if not a.startswith('--')]
 SRC, DST = argv[0], argv[1]
 PREVIEW = argv[2] if len(argv) > 2 else None
+SHORTS = '--shorts' in FLAGS   # 穿短褲的（男版）：沒有裙子；腰以下、腿以上的褲子歸身體，往下漸變到腿
 
 H = 1.62                      # 身高
 X0, Y0 = -0.033, -0.04        # 原檔裡兩腳中間的位置（量出來的）
@@ -34,6 +38,9 @@ body = bpy.context.view_layer.objects.active
 body.name = 'body'
 bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
 zmax = max(v.co.z for v in body.data.vertices)
+if SHORTS:   # 兩腳中間的位置直接從腳底的頂點算（女版沿用原本量的數字，輸出才不會變）
+    low = [v.co for v in body.data.vertices if v.co.z < 0.03]
+    X0, Y0 = sum(c.x for c in low) / len(low), sum(c.y for c in low) / len(low)
 body.data.transform(Matrix.Scale(H / zmax, 4) @ Matrix.Rotation(math.radians(90), 4, 'Z') @ Matrix.Translation((-X0, -Y0, 0)))
 body.data.update()
 
@@ -56,7 +63,7 @@ def kind(c):
     return 'other'
 uv = body.data.uv_layers[0].data
 vcol = [[0, 0, 0, 0] for _ in body.data.vertices]
-pcol = []
+pcol, pavg = [], []
 for p in body.data.polygons:
     acc = [0, 0, 0]
     for li in p.loop_indices:
@@ -65,7 +72,8 @@ for p in body.data.polygons:
         vi = body.data.loops[li].vertex_index
         for k in range(3): vcol[vi][k] += c[k]
         vcol[vi][3] += 1
-    pcol.append(kind([a / len(p.loop_indices) for a in acc]))
+    pavg.append([a / len(p.loop_indices) for a in acc])
+    pcol.append(kind(pavg[-1]))
 vkind = [kind([c[k] / max(1, c[3]) for k in range(3)]) for c in vcol]
 
 # ---- 骨架 ----
@@ -107,7 +115,9 @@ for v in body.data.vertices:
     k, (x, y, z) = vkind[v.index], v.co
     side = 'L' if y > 0 else 'R'
     if (k == 'brown' and z > 0.8) or (k == 'red' and z > 1.25) or z > NECK + 0.05: c, ws = 'head', {'head': 1}
-    elif k == 'navy' and z < 0.84: c, ws = 'skirt', {'root': 1}
+    elif not SHORTS and k == 'navy' and z < 0.84: c, ws = 'skirt', {'root': 1}
+    elif SHORTS and z < WAIST - 0.03 and abs(y) < 0.2:
+        t = clamp((0.62 - z) / 0.08); c, ws = ('leg' if t > 0.99 else 'shorts'), {'leg.' + side: t, 'root': 1 - t}
     elif z < 0.53: c, ws = 'leg', {'leg.' + side: 1}
     elif z > NECK - 0.02:
         t = clamp((z - (NECK - 0.02)) / 0.07); c, ws = 'neck', {'head': t, 'upper': 1 - t}
@@ -122,7 +132,10 @@ print('WEIGHTS', count)
 # 臉的面：朝前、在下巴到額頭之間、在臉的輪廓裡（兩旁的側髮不算）；
 # 再排除瀏海——瀏海是浮在臉前面的另一層，同一個位置後面還有臉的面（往後 8 公釐以上）的就是瀏海
 cand = [p for p in body.data.polygons if p.normal.x > 0.45 and NECK + 0.03 < p.center.z < 1.34 and abs(p.center.y) < 0.165]
-cand = [p for p in cand if not any(abs(q.center.y - p.center.y) < 0.025 and abs(q.center.z - p.center.z) < 0.025
+# 男版 Tripo 把眼睛做成凸出臉的一層（後面也有臉的面），顏色又是深棕，跟瀏海一樣：
+# 在眼睛的範圍裡（離中線 4–16 公分、瀏海尖端以下）、顏色不像頭髮那麼紅的那些面是眼睛，留著
+eyeish = lambda p: SHORTS and pavg[p.index][0] - pavg[p.index][2] < 75 and 0.04 < abs(p.center.y) < 0.16 and p.center.z < 1.23   # 頭髮偏紅（紅減藍約 100）
+cand = [p for p in cand if eyeish(p) or not any(abs(q.center.y - p.center.y) < 0.025 and abs(q.center.z - p.center.z) < 0.025
                                    and q.center.x < p.center.x - 0.008 for q in cand)]
 # 1. 找眼睛（臉上最暗的那些像素）的三維位置；2. 把這些面在貼圖上的範圍抹成膚色（棕色的像素是瀏海，不抹）
 skin_samples, eye_pts, paint = [], [], []
@@ -151,7 +164,7 @@ for p in cand:
             c = [pix[i + k] ** (1 / 2.2) * 255 for k in range(3)]
             paint.append(i)
             if kind(c) == 'skin': skin_samples.append(c)
-            elif sum(c) < 260 and c[0] - c[2] < 70: eye_pts.append(cos[0] * w[0] + cos[1] * w[1] + cos[2] * w[2])
+            elif (sum(c) < 205) if SHORTS else (sum(c) < 260 and c[0] - c[2] < 70): eye_pts.append(cos[0] * w[0] + cos[1] * w[1] + cos[2] * w[2])
 print('FACEPOLYS', len(face_polys), len(skin_samples), len(eye_pts))
 skin = [sorted(s[k] for s in skin_samples)[len(skin_samples) // 2] for k in range(3)]
 lin = [(v / 255) ** 2.2 for v in skin]
@@ -180,6 +193,11 @@ med = lambda ps: Vector([sorted(p[i] for p in ps)[len(ps) // 2] for i in range(3
 eyeR, eyeL = med(eR), med(eL)
 print('EYEPTS', len(eR), len(eL))
 eyeR.z = eyeL.z = (eyeR.z + eyeL.z) / 2
+# 偵測不準的（男版的眼睛是很小的深色島，抓到的點很少）可以直接給：--eyes=離中線距離,高度（從正交正視圖量）
+for f in FLAGS:
+    if f.startswith('--eyes='):
+        ey, ez = map(float, f[7:].split(','))
+        eyeR.y, eyeL.y, eyeR.z, eyeL.z = -ey, ey, ez, ez
 print('EYES', len(eye_pts), tuple(round(v, 3) for v in eyeR), tuple(round(v, 3) for v in eyeL), 'skin', [round(v) for v in skin])
 
 # 臉的薄片：複製臉那些面、沿法線往外推 5 公釐、UV 對到表情圖

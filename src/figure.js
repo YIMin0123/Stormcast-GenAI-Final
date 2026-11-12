@@ -12,7 +12,9 @@ const SHOULDER_Y = 0.923, SHOULDER_Z = 0.219, HAND_Y = 0.6, HAND_Z = 0.373;
 const A_POSE = Math.atan2(HAND_Z - SHOULDER_Z, SHOULDER_Y - HAND_Y);   // 模型的手往外張開幾度
 export const ARM_LEN = Math.hypot(HAND_Z - SHOULDER_Z, SHOULDER_Y - HAND_Y) + 0.02;   // 肩膀到握東西的位置；握舵時用它算手臂要拉長多少
 
-const gltf = await new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}models/girl.glb`);
+// 網址加 ?boy 換成男版（開發測試用；之後換角色／換裝再做正式的選擇）
+const MODEL = new URLSearchParams(location.search).has('boy') ? 'boy' : 'girl';
+const gltf = await new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}models/${MODEL}.glb`);
 const SRC = {};
 gltf.scene.traverse((m) => { if (m.isSkinnedMesh) SRC[m.name.startsWith('face') ? 'face' : 'body'] = m; });
 
