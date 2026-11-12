@@ -72,17 +72,41 @@ const RATIO_MAX = Math.round(clamp(window.devicePixelRatio || 1, 1.5, 2) * 10) /
 let BASE_RATIO = ratioFor();
 let ratioSaved = parseFloat(getPref('stormcast.res')) >= 0.5;
 let pixelRatio = ratioSaved ? clamp(parseFloat(getPref('stormcast.res')), 0.5, RATIO_MAX) : BASE_RATIO;
-const GFX = [
-  { name: '手機', shadow: 1024, shadowHalf: 40, grass: 3000, ao: false, wet: false, post: false, lite: true, haze: 1.9, far: 520 },
-  { name: '低', shadow: 1536, shadowHalf: 54, grass: 6000, ao: false, wet: false, post: true, lite: false, haze: 1, far: 820 },
-  { name: '中', shadow: 2048, shadowHalf: 54, grass: 10000, ao: true, wet: false, post: true, lite: false, haze: 1, far: 820 },
-  { name: '高', shadow: 3072, shadowHalf: 54, grass: 14000, ao: true, wet: true, post: true, lite: false, haze: 1, far: 820 },
+// 畫質的每一項都能在設定的「畫質」頁單獨調；四個快速選項（手機／低／中／高）是一整組的預設值，
+// 調過任何一項就變成「自訂」。整組記在瀏覽器（stormcast.gfx3）
+//   shadow 陰影：0 關、1 低（1024、取樣點減半）、2 中（2048）、3 高（3072）
+//   shRange 陰影範圍：0 近（40 公尺）、1 中（54）、2 遠（72）——同一張貼圖蓋越大，影子越粗
+//   view 可視距離：0 近（霧濃、520 公尺外的島不畫樹石）、1 中、2 遠
+//   fov 第三人稱的鏡頭視角（度；第一人稱再寬 18 度）
+//   grass 草：0 關、1 少、2 中、3 多
+const SHADOW_SIZES = [0, 1024, 2048, 3072], SHADOW_HALVES = [40, 54, 72], GRASS_N = [0, 3000, 8000, 14000];
+const VIEW_HAZE = [1.9, 1.35, 1], VIEW_FAR = [520, 680, 820];
+const PRESETS = [
+  { name: '手機', shadow: 1, shRange: 0, ao: false, view: 0, fov: 50, bloom: false, rays: false, refl: true, wet: false, grass: 1 },
+  { name: '低', shadow: 2, shRange: 1, ao: false, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: false, grass: 2 },
+  { name: '中', shadow: 2, shRange: 1, ao: true, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: false, grass: 2 },
+  { name: '高', shadow: 3, shRange: 1, ao: true, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: true, grass: 3 },
 ];
-// 以前只有低中高三檔（0–2，存在 stormcast.gfx），現在前面多了「手機」，舊的設定往後挪一格
-const oldGfx = getPref('stormcast.gfx'), newGfx = getPref('stormcast.gfx2');
-let gfxSaved = /^[0-3]$/.test(newGfx || '') || /^[012]$/.test(oldGfx || '');
-let gfxLv = /^[0-3]$/.test(newGfx || '') ? +newGfx : /^[012]$/.test(oldGfx || '') ? +oldGfx + 1 : TOUCH ? 1 : 3;
-let gfx = GFX[gfxLv];
+const GS_KEYS = Object.keys(PRESETS[0]).filter((k) => k !== 'name');
+// 舊的設定：只有等級（stormcast.gfx2 是 0–3；更早的 stormcast.gfx 是低中高 0–2）
+const gs = (() => {
+  try { const o = JSON.parse(getPref('stormcast.gfx3') || 'null'); if (o && GS_KEYS.every((k) => k in o)) return o; } catch { /* 壞掉就用預設 */ }
+  const oldGfx = getPref('stormcast.gfx'), newGfx = getPref('stormcast.gfx2');
+  const lv = /^[0-3]$/.test(newGfx || '') ? +newGfx : /^[012]$/.test(oldGfx || '') ? +oldGfx + 1 : TOUCH ? 1 : 3;
+  return { ...PRESETS[lv] };
+})();
+delete gs.name;
+let gfxSaved = !!(getPref('stormcast.gfx3') || getPref('stormcast.gfx2') || getPref('stormcast.gfx'));
+// 現在這組設定是哪個快速選項（都不像就是 -1：自訂）
+const presetOf = () => PRESETS.findIndex((p) => GS_KEYS.every((k) => p[k] === gs[k]));
+// 其他地方用的是換算好的數值
+const deriveGfx = () => ({
+  name: presetOf() >= 0 ? PRESETS[presetOf()].name : '自訂',
+  shadowOn: gs.shadow > 0, shadow: SHADOW_SIZES[gs.shadow] || 1024, shadowHalf: SHADOW_HALVES[gs.shRange], lite: gs.shadow === 1,
+  grass: GRASS_N[gs.grass], ao: gs.ao, wet: gs.wet, bloom: gs.bloom, rays: gs.rays, refl: gs.refl,
+  haze: VIEW_HAZE[gs.view], far: VIEW_FAR[gs.view], fov: gs.fov,
+});
+let gfx = deriveGfx();
 renderer.setPixelRatio(pixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.NeutralToneMapping;
@@ -367,6 +391,8 @@ const waterFlag = new THREE.Mesh(water.geometry, new THREE.ShaderMaterial({
 waterFlag.frustumCulled = false;
 waterFlag.renderOrder = 2.1;
 water.add(waterFlag);   // 跟著海面一起顯示、隱藏（畫倒影時海面是藏起來的）
+// 測試（?wlod0）：海面頂點不用縮小版的浪高圖，查手機上遠處海面翹起來的問題
+if (new URLSearchParams(window.location.search).has('wlod0')) for (const m of [water.material, waterFlag.material]) m.defines.WLOD0 = 1;
 scene.add(water);
 DECKS.slice(0, 3).forEach((r, i) => shared.uQuay.value[i].set(r.x0, r.z0, r.x1, r.z1));   // 岸壁、防波堤的位置：海面要在牆腳畫水線
 
@@ -690,7 +716,7 @@ const BIAS = new THREE.Matrix4().set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 
 let reflTick = 0, drawCount = 0;
 function renderReflection(under, turn = true) {
   const alt = camera.position.y;
-  const on = !under && alt > 0.3 && alt < 700;
+  const on = !under && alt > 0.3 && alt < 700 && gfx.refl;   // 設定裡可以關掉海面倒影
   if (!on) { shared.uReflOn.value = 0; reflTick = 0; return; }
   // 隔一幀才重畫一次倒影；沒重畫的那幀沿用上一幀的貼圖與投影矩陣
   if (!turn && reflTick > 0) return;
@@ -740,7 +766,7 @@ function renderReflection(under, turn = true) {
   water.visible = true; sky.visible = true; spray.points.visible = true;
   rain.lines.visible = rainOn; spindrift.mesh.visible = driftOn;
   scenery.update(camera.position, false, gfx.far);
-  grass.visible = true;
+  grass.visible = gfx.grass > 0;
 }
 
 // ---- 積水的倒影 -------------------------------------------------------------
@@ -791,7 +817,7 @@ function renderDeckReflection() {
   water.visible = true; sky.visible = true; spray.points.visible = true;
   rain.lines.visible = rainOn; spindrift.mesh.visible = driftOn;
   scenery.update(camera.position, false, gfx.far);
-  grass.visible = true;
+  grass.visible = gfx.grass > 0;
 }
 let deckReady = false;
 
@@ -814,7 +840,7 @@ const X_AXIS = new THREE.Vector3(1, 0, 0);
 function applyViewSettings() {
   const v = view[mode];
   camera.near = v.fp ? 0.25 : 1;
-  camera.fov = v.fp ? 68 : 50;
+  camera.fov = v.fp ? gfx.fov + 18 : gfx.fov;   // 鏡頭視角在設定的「畫質」頁調（預設 50，第一人稱寬 18 度）
   player.mesh.visible = mode === 'walk';
   player.setFirstPerson(mode === 'walk' && v.fp);
   myBoat.setManned(mode === 'helm', v.fp);
@@ -1567,7 +1593,7 @@ $('quality').max = RATIO_MAX;
 $('quality').value = pixelRatio;
 $('vQuality').textContent = `${pixelRatio.toFixed(1)}×`;
 $('quality').addEventListener('input', () => { setPixelRatio(+$('quality').value); ratioSaved = true; setPref('stormcast.res', pixelRatio); });
-// 畫質「手機」：海面、地形、草的陰影取樣點減半（著色器裡的 LITE），要重新編譯這幾個材質
+// 陰影「低」：海面、地形、草的陰影取樣點減半（著色器裡的 LITE），要重新編譯這幾個材質
 function applyLite() {
   scene.traverse((o) => {
     const m = o.material;
@@ -1577,12 +1603,19 @@ function applyLite() {
     m.needsUpdate = true;
   });
 }
-function setGfx(lv) {
-  gfxLv = lv; gfx = GFX[lv];
+// 照 gs 套用到畫面上（只動有變的部分）。viewReady：鏡頭、人物都建好之後才能動鏡頭視角
+let viewReady = false;
+function applyGfx() {
+  gfx = deriveGfx();
   if (SHADOW_HALF !== gfx.shadowHalf) {
     SHADOW_HALF = gfx.shadowHalf;
     Object.assign(sun.shadow.camera, { left: -SHADOW_HALF, right: SHADOW_HALF, top: SHADOW_HALF, bottom: -SHADOW_HALF });
     sun.shadow.camera.updateProjectionMatrix();
+  }
+  if (sun.castShadow !== gfx.shadowOn) {
+    // 陰影整個關掉：太陽不投影（內建材質會自己換一份不算影子的程式），自己寫的著色器也不取樣
+    sun.castShadow = gfx.shadowOn;
+    if (!gfx.shadowOn) { shared.uShadowOn.value = 0; shared.uShadowMap.value = null; }
   }
   if (SHADOW_SIZE !== gfx.shadow) {
     // 陰影貼圖換大小：舊的丟掉，下一幀會照新的大小重做一張
@@ -1592,21 +1625,85 @@ function setGfx(lv) {
     shared.uShadowMap.value = null; shared.uShadowOn.value = 0;
     shared.uShadowTexel.value = 1 / SHADOW_SIZE;
   }
-  if (grassN !== gfx.grass) {
+  if (gfx.grass > 0 && grassN !== gfx.grass) {
     grassN = gfx.grass;
     grass.geometry.dispose();
     grass.geometry = makeGrassGeometry(grassN, GRASS_T);
   }
   applyLite();
   shared.uHazeK.value = gfx.haze;
-  for (const b of $('gfx').children) b.classList.toggle('on', +b.dataset.v === lv);
+  if (viewReady) { applyViewSettings(); onResize(); }
+  syncGfxUi();
 }
-for (const b of $('gfx').children) {
-  b.classList.toggle('on', +b.dataset.v === gfxLv);
-  b.addEventListener('click', () => { b.blur(); setGfx(+b.dataset.v); setPref('stormcast.gfx2', gfxLv); gfxSaved = true; });
+function saveGfx() { setPref('stormcast.gfx3', JSON.stringify(gs)); gfxSaved = true; }
+// 套用一整組快速選項（0 手機、1 低、2 中、3 高）
+function setGfx(lv) {
+  const p = { ...PRESETS[lv] };
+  delete p.name;
+  Object.assign(gs, p);
+  applyGfx();
 }
-applyLite();
-shared.uHazeK.value = gfx.haze;
+
+// ---- 設定裡的「畫質」頁 ----
+// 每一列：[欄位, 標題, 種類, 選項]。seg 是一排按鈕、sw 是開關、range 是滑桿
+const GFX_ROWS = [
+  ['光影'],
+  ['shadow', '陰影', 'seg', ['關', '低', '中', '高']],
+  ['shRange', '陰影範圍', 'seg', ['近', '中', '遠']],
+  ['ao', '角落暗影', 'sw'],
+  ['視野'],
+  ['view', '可視距離', 'seg', ['近', '中', '遠']],
+  ['fov', '鏡頭視角', 'range', [40, 70]],
+  ['特效'],
+  ['bloom', '光暈', 'sw'],
+  ['rays', '陽光光束', 'sw'],
+  ['refl', '海面倒影', 'sw'],
+  ['wet', '積水倒影', 'sw'],
+  ['grass', '草', 'seg', ['關', '少', '中', '多']],
+];
+const gfxCtl = {};
+{
+  const page = $('gfxPage'), body = $('gfxRows');
+  let sec = null;
+  for (const [key, label, kind, opt] of GFX_ROWS) {
+    if (!label) { sec = body.appendChild(Object.assign(document.createElement('div'), { className: 'sec' })); sec.appendChild(Object.assign(document.createElement('h4'), { textContent: key })); continue; }
+    const line = sec.appendChild(Object.assign(document.createElement('div'), { className: kind === 'range' ? 'row' : 'line' }));
+    if (kind === 'range') {
+      const lab = line.appendChild(Object.assign(document.createElement('label'), { textContent: `${label} ` }));
+      const val = lab.appendChild(document.createElement('b'));
+      const inp = line.appendChild(Object.assign(document.createElement('input'), { type: 'range', min: opt[0], max: opt[1], step: 1 }));
+      inp.addEventListener('input', () => { gs[key] = +inp.value; applyGfx(); saveGfx(); });
+      gfxCtl[key] = () => { inp.value = gs[key]; val.textContent = `${gs[key]}°`; };
+    } else if (kind === 'sw') {
+      line.appendChild(Object.assign(document.createElement('span'), { textContent: label }));
+      const b = line.appendChild(Object.assign(document.createElement('button'), { className: 'sw' }));
+      b.addEventListener('click', () => { b.blur(); gs[key] = !gs[key]; applyGfx(); saveGfx(); });
+      gfxCtl[key] = () => { b.textContent = gs[key] ? '開' : '關'; b.classList.toggle('on', gs[key]); };
+    } else {
+      line.appendChild(Object.assign(document.createElement('span'), { textContent: label }));
+      const seg = line.appendChild(Object.assign(document.createElement('div'), { className: 'seg' }));
+      const btns = opt.map((t, i) => {
+        const b = seg.appendChild(Object.assign(document.createElement('button'), { textContent: t }));
+        b.addEventListener('click', () => { b.blur(); gs[key] = i; applyGfx(); saveGfx(); });
+        return b;
+      });
+      gfxCtl[key] = () => btns.forEach((b, i) => b.classList.toggle('on', i === gs[key]));
+    }
+  }
+  // 打開、返回：畫質頁蓋掉設定的其他區塊
+  $('gfxOpen').addEventListener('click', () => { $('gfxOpen').blur(); $('panel').classList.add('gfx'); $('panel').scrollTop = 0; });
+  $('gfxBack').addEventListener('click', () => { $('gfxBack').blur(); $('panel').classList.remove('gfx'); });
+  $('panel').addEventListener('toggle', () => { if (!$('panel').open) $('panel').classList.remove('gfx'); });
+  void page;
+}
+function syncGfxUi() {
+  const p = presetOf();
+  for (const b of $('gfx').children) b.classList.toggle('on', +b.dataset.v === p);
+  $('gfxName').textContent = gfx.name;
+  for (const k in gfxCtl) gfxCtl[k]();
+}
+for (const b of $('gfx').children) b.addEventListener('click', () => { b.blur(); setGfx(+b.dataset.v); saveGfx(); });
+applyGfx();
 // 設定裡換角色：記下來、重新載入（伺服器 30 秒內認得回來的人，會直接接回原本的房間）
 for (const b of $('lookSet').children) {
   b.classList.toggle('on', b.dataset.look === myLook());
@@ -2737,7 +2834,7 @@ function drawFrame(dt) {
   camera.getWorldDirection(_gd);
   _gd.y = 0;
   grass.material.uniforms.uGrassCam.value.copy(cp).addScaledVector(_gd.normalize(), 13);
-  grass.visible = true;
+  grass.visible = gfx.grass > 0;
   updateBoatShadow();
   // 倒影隔一幀重畫一次；陰影每一幀都重畫
   const even = (drawCount++ & 1) === 0;
@@ -2748,8 +2845,10 @@ function drawFrame(dt) {
   if (deckTurn || (deckWet && !deckReady)) { renderDeckReflection(); deckReady = true; }
   if (!deckWet) deckReady = false;
   WET.reflOn.value = deckWet ? 1 : 0;
-  placeSun(target);
-  if (sun.shadow.map) { shared.uShadowMap.value = sun.shadow.map.depthTexture; shared.uShadowOn.value = 1; }
+  if (gfx.shadowOn) {
+    placeSun(target);
+    if (sun.shadow.map) { shared.uShadowMap.value = sun.shadow.map.depthTexture; shared.uShadowOn.value = 1; }
+  }
   // 太陽（月亮）在畫面上的位置；背對著它、或人在水裡時沒有光束
   _rv.copy(camera.position).addScaledVector(sunDir, 1000).project(camera);
   rays.sun.set(_rv.x * 0.5 + 0.5, _rv.y * 0.5 + 0.5);
@@ -2761,7 +2860,7 @@ function drawFrame(dt) {
   shared.uBlob.value.set(player.x, player.z, onFloor || player.swim ? 0 : lift);
   aoPass.enabled = !under && gfx.ao;   // 水裡一片混濁，不需要；畫質「低」也省掉
   waterFlag.visible = aoPass.enabled;    // 海面的記號只有角落暗影要用：沒開就不必再把整片海面的網格畫一次
-  rays.enabled = bloom.enabled = gfx.post;   // 畫質「手機」沒有光暈和陽光光束
+  rays.enabled = gfx.rays; bloom.enabled = gfx.bloom;   // 設定裡可以各自關掉
   // 擋在鏡頭和人之間的枝葉散開（只有走路時）。第三人稱：從鏡頭到人身上這條線周圍；第一人稱：只有貼著鏡頭的那一圈
   if (mode === 'walk' && inGame && !debugCam) {
     camera.updateMatrixWorld();
@@ -2774,7 +2873,9 @@ function drawFrame(dt) {
   composer.render();
 }
 
+viewReady = true;
 applyViewSettings();
+onResize();
 ocean.cacheBlock(boat.x, boat.z);
 boat.update(0.016, boatEnv);
 player.place(walkWorld, PLAYER_SPAWN.x, PLAYER_SPAWN.z);
@@ -2797,8 +2898,8 @@ function probeGfx(ms, rawMs) {
   probe.n++; probe.sum += rawMs;
   if (ms - probe.t0 < 8000) return;
   const avg = probe.sum / probe.n;
-  if (avg > 40 && gfxLv > 0) { setGfx(0); toast('畫面有點卡，畫質自動換成「手機」（可在設定裡改回來）'); }
-  setPref('stormcast.gfx2', gfxLv); gfxSaved = true;
+  if (avg > 40 && presetOf() !== 0) { setGfx(0); toast('畫面有點卡，畫質自動換成「手機」（可在設定裡改回來）'); }
+  saveGfx();
   probe = null;
 }
 // ?diag：診斷手機上的海面。每秒在顯示晶片上算一次「人前方 12 公尺」那一點的海床、避浪、離岸距離、岸邊浪高、FFT 浪高，
@@ -2808,14 +2909,14 @@ const diag = new URLSearchParams(window.location.search).has('diag') ? (() => {
   const gpu = String(info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)).slice(0, 70);
   const vp = gl.getShaderPrecisionFormat(gl.VERTEX_SHADER, gl.HIGH_FLOAT), fp = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT);
   const ext = ['EXT_color_buffer_float', 'EXT_color_buffer_half_float', 'OES_texture_float_linear'].map((n) => `${n.replace(/^(EXT|OES)_/, '')}:${gl.getSupportedExtensions().includes(n) ? '有' : '無'}`).join(' ');
-  const rt = new THREE.WebGLRenderTarget(3, 1, { type: ocean.floatRT ? THREE.FloatType : THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+  const rt = new THREE.WebGLRenderTarget(4, 1, { type: ocean.floatRT ? THREE.FloatType : THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
   const u = { ...shared, uDiagP: { value: new THREE.Vector2() } };
   const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({ vertexShader: diagVert, fragmentShader: diagFrag, uniforms: u, depthTest: false, depthWrite: false }));
   quad.frustumCulled = false;
   const dScene = new THREE.Scene(); dScene.add(quad);
   const el = document.body.appendChild(Object.assign(document.createElement('pre'), { id: 'diag' }));
   Object.assign(el.style, { position: 'fixed', left: '8px', top: '60px', zIndex: 99, margin: 0, padding: '6px 8px', font: '12px/1.35 monospace', color: '#fff', background: 'rgba(0,0,0,0.72)', whiteSpace: 'pre', pointerEvents: 'none' });
-  const out = new Float32Array(12), hb = new Uint16Array(12), f = (v) => (Number.isFinite(v) ? v.toFixed(2) : String(v));
+  const out = new Float32Array(16), hb = new Uint16Array(16), f = (v) => (Number.isFinite(v) ? v.toFixed(2) : String(v));
   let t = 0;
   return (ms) => {
     if (ms - t < 1000) return;
@@ -2825,8 +2926,8 @@ const diag = new URLSearchParams(window.location.search).has('diag') ? (() => {
     u.uDiagP.value.set(px, pz);
     const prev = renderer.getRenderTarget();
     renderer.setRenderTarget(rt); renderer.render(dScene, ocean.cam); 
-    if (rt.texture.type === THREE.FloatType) gl.readPixels(0, 0, 3, 1, gl.RGBA, gl.FLOAT, out);
-    else { gl.readPixels(0, 0, 3, 1, gl.RGBA, gl.HALF_FLOAT, hb); for (let i = 0; i < 12; i++) out[i] = THREE.DataUtils.fromHalfFloat(hb[i]); }
+    if (rt.texture.type === THREE.FloatType) gl.readPixels(0, 0, 4, 1, gl.RGBA, gl.FLOAT, out);
+    else { gl.readPixels(0, 0, 4, 1, gl.RGBA, gl.HALF_FLOAT, hb); for (let i = 0; i < 16; i++) out[i] = THREE.DataUtils.fromHalfFloat(hb[i]); }
     renderer.setRenderTarget(prev);
     el.textContent = [
       `${gpu}`, `高精度 頂點:${vp.precision} 像素:${fp.precision}  ${ext}`,
@@ -2838,6 +2939,7 @@ const diag = new URLSearchParams(window.location.search).has('diag') ? (() => {
       `離岸   GPU ${f(out[3])}`,
       `沖岸 ${f(out[4])}  岸浪 ${f(out[5])}  FFT浪 ${f(out[6])}  淺水 ${f(out[7])}`,
       `expo ${f(out[8])}  ph ${f(out[9])}  浪強 ${f(out[10])}  衰減 ${f(out[11])}`,
+      `縮小版浪高 L2 ${f(out[12])}  L4 ${f(out[13])}  L6 ${f(out[14])}  第二層L4 ${f(out[15])}${water.material.defines.WLOD0 ? '  (wlod0)' : ''}`,
       `浮力讀回 ${f(ocean.sampleHeight(px, pz))}`,
     ].join(String.fromCharCode(10));
   };
@@ -2867,7 +2969,7 @@ window.__sim = {
   fish, fishing, isWater, SELL, get money() { return money; },
   // 多人
   net, others, chat, boards, garage, enterRoom, applyWorld, myFishUids, takeHelm, releaseHelm, touch, setGfx, setPixelRatio,
-  get gfxLv() { return gfxLv; }, get pixelRatio() { return pixelRatio; }, GFX, get gfx() { return gfx; }, diag,
+  get gfxLv() { return presetOf(); }, get pixelRatio() { return pixelRatio; }, gs, applyGfx, PRESETS, get gfx() { return gfx; }, diag,
   get kit() { return kit; }, get myBoat() { return myBoat; }, get berth() { return berth; }, get room() { return room; }, get inGame() { return inGame; }, get time() { return time; },
   dev: (cmd, o = {}) => net.send({ t: 'dev', cmd, ...o }),   // 測試指令（伺服器開了開發模式才收）：event / calm / skip / money / fish
   sea, dangerAt, tsuAt, stormK, waterY, nearTank, nearCrack, get wrench() { return wrench; },

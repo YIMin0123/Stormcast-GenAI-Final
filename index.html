@@ -47,6 +47,14 @@
     .seg button { padding: 4px 13px; border-radius: 0; margin-left: -1px; }
     .seg button:first-child { border-radius: 999px 0 0 999px; margin-left: 0; }
     .seg button:last-child { border-radius: 0 999px 999px 0; }
+    /* 設定裡的「畫質」頁：打開時蓋掉其他區塊 */
+    #gfxPage { display: none; }
+    #panel.gfx #gfxPage { display: block; }
+    #panel.gfx .sec.main { display: none !important; }
+    #gfxPage .back { border-radius: 999px; padding: 4px 12px; }
+    #gfxPage .row { margin-top: 8px; }
+    #gfxPage .row label { display: block; color: #dccba6; margin-bottom: 4px; }
+    #gfxPage .line + .line { margin-top: 7px; }
     .seg button.on { background: #e2b21c; border-color: #e2b21c; color: #2e1e10; font-weight: 600; }
     /* 小圖示（見 src/icons.js） */
     .ic { width: 1.3em; height: 1.3em; vertical-align: -0.28em; }
@@ -215,22 +223,33 @@
   <div id="fade"></div>
   <details id="panel" class="card">
     <summary><span class="gear">⚙</span>設定<span class="x">收起</span></summary>
-    <div class="sec"><h4>畫面</h4>
-      <div class="line"><span>畫質</span><div id="gfx" class="seg"><button data-v="0">手機</button><button data-v="1">低</button><button data-v="2">中</button><button data-v="3">高</button></div></div>
-      <div class="row" style="margin-top: 9px"><label>解析度 <b id="vQuality"></b></label>
-        <input id="quality" type="range" min="0.5" max="1.5" step="0.1" value="1" /></div>
-      <p class="note">畫面會卡就調低；兩個都不會自己變，調過會記住</p>
+    <div id="gfxPage">
+      <div class="sec"><button id="gfxBack" class="back">‹ 返回</button></div>
+      <div class="sec"><h4>快速套用</h4>
+        <div class="line"><span>畫質</span><div id="gfx" class="seg"><button data-v="0">手機</button><button data-v="1">低</button><button data-v="2">中</button><button data-v="3">高</button></div></div>
+        <p class="note">按一下套用整組；下面任何一項調過就變成「自訂」。都會記住</p>
+      </div>
+      <div id="gfxRows"></div>
+      <div class="sec"><h4>解析度</h4>
+        <div class="row"><label>解析度 <b id="vQuality"></b></label>
+          <input id="quality" type="range" min="0.5" max="1.5" step="0.1" value="1" /></div>
+        <p class="note">調低最省，但畫面會變糊</p>
+      </div>
+    </div>
+    <div class="sec main"><h4>畫面</h4>
+      <div class="line"><span>畫質</span><button id="gfxOpen" class="sw"><span id="gfxName"></span> ›</button></div>
+      <p class="note">光影、視野、特效、解析度都在這裡調</p>
       <div class="line" id="fullRow" style="display: none; margin-top: 9px"><span>全螢幕</span><button id="fullBtn" class="sw">關</button></div>
       <p class="note" id="fullNote" style="display: none">想收掉上面的網址列：用 Safari 的「分享 → 加入主畫面」，再從主畫面打開</p>
     </div>
-    <div class="sec"><h4>角色</h4>
+    <div class="sec main"><h4>角色</h4>
       <div class="line"><span>外觀</span><div id="lookSet" class="seg"><button data-look="girl">♀ 女生</button><button data-look="boy">♂ 男生</button></div></div>
       <p class="note">換角色會重新載入一次（自動回到原本的房間）</p>
     </div>
-    <div class="sec"><h4>聲音</h4>
+    <div class="sec main"><h4>聲音</h4>
       <div class="line"><span>遊戲音效</span><button id="sound">關</button></div>
     </div>
-    <details id="keys" class="sec">
+    <details id="keys" class="sec main">
       <summary>操作說明</summary>
       <h5>走路</h5>
       <dl>
@@ -257,7 +276,7 @@
         <dt><kbd>M</kbd></dt><dd>地圖</dd>
       </dl>
     </details>
-    <div id="touchHelp" class="sec"><h4>操作說明</h4>
+    <div id="touchHelp" class="sec main"><h4>操作說明</h4>
       <p class="note">左半邊畫面：按住拖曳就是搖桿，輕推走路、推到底跑步；開船時往前後是油門、左右是方向盤</p>
       <p class="note">其他地方：滑動轉視角，兩指捏合調鏡頭遠近</p>
       <p class="note"><i data-ic="hand"></i> 互動：把畫面中央的準心對準東西再按（拿起、放下、掌舵、加油、修船、坐下、買東西…）；手上有東西時變成 <i data-ic="drop"></i> 放下，掌舵、坐著時變成 <i data-ic="leave"></i> 離開</p>
@@ -265,7 +284,7 @@
       <p class="note"><i data-ic="jump"></i> 跳</p>
       <p class="note">右上角：<i data-ic="map"></i> 地圖　<i data-ic="chat"></i> 聊天　<i data-ic="emote"></i> 表情（點一格就播放）　<i data-ic="view"></i> 切換第一／第三人稱　<i data-ic="full"></i> 全螢幕</p>
     </div>
-    <div class="sec"><button id="reset">離開房間（回到大廳）</button><p class="note">離開後進度會清空，下次進房從頭開始</p></div>
+    <div class="sec main"><button id="reset">離開房間（回到大廳）</button><p class="note">離開後進度會清空，下次進房從頭開始</p></div>
   </details>
   <div id="hud" class="card"><span id="hRoom"></span><span id="hClock"></span><b id="hMoney" title="金錢">$0</b><span id="hShip"><i data-ic="boat" title="船的耐久"></i><b id="hHp">100%</b>　<i data-ic="fuel" title="燃油"></i><b id="hFuel">0</b></span><span id="hSpeed"><i data-ic="speed" title="船速"></i><b id="hBoat">0.0 節</b></span></div>
   <div id="fishui" class="card"><div id="fishLabel"></div><div id="bar"><div id="barSafe"></div><div id="barFill"></div><div id="barMark"></div></div><div id="prog"><div id="progFill"></div></div><div id="strain">釣竿負荷<div id="strainBar"><div id="strainFill"></div></div></div><div id="fishHint"></div></div>

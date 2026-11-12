@@ -460,6 +460,9 @@ void main() {
   float spacing = 0.024 * length(position.xz) + 0.3;
   float lod0 = log2(max(spacing * 1.6 * uTexN / uPatch.x, 1.0));
   float lod1 = log2(max(spacing * 1.6 * uTexN / uPatch.y, 1.0));
+#ifdef WLOD0
+  lod0 = 0.0; lod1 = 0.0;   // 測試（?wlod0）：不用縮小版的浪高圖
+#endif
   // 淺水模擬管得到的地方：最大那一層 FFT 的浪交給模擬去算（它會自己變陡、破碎、沖上岸）
   vec2 suv;
   float win = sweWin(xz, suv);
@@ -1459,6 +1462,8 @@ void main() {
   vec2 suv;
   float win = sweWin(xz, suv);
   int i = int(gl_FragCoord.x);
-  gl_FragColor = i == 0 ? vec4(bedH, shel, dg, sd) : i == 1 ? vec4(lift, sw, d.y, win) : vec4(expo, ph, uWaveScale, depthFade);
+  vec2 q0 = xz / uPatch.x;
+  gl_FragColor = i == 0 ? vec4(bedH, shel, dg, sd) : i == 1 ? vec4(lift, sw, d.y, win) : i == 2 ? vec4(expo, ph, uWaveScale, depthFade)
+    : vec4(textureLod(uDisp0, q0, 2.0).y, textureLod(uDisp0, q0, 4.0).y, textureLod(uDisp0, q0, 6.0).y, textureLod(uDisp1, xz / uPatch.y, 4.0).y);   // 浪高圖的縮小版（第 2、4、6 層；第二層浪的第 4 層）
 }
 `;
