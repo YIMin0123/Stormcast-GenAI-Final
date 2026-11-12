@@ -6,17 +6,27 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-// 關節位置（要跟 tools/tripo_figure.py 裡的一致：權重是照這些位置分的）
-const HIP_Y = 0.486, HIP_Z = 0.151, WAIST_Y = 0.76, NECK_Y = 0.97;
-const SHOULDER_Y = 0.923, SHOULDER_Z = 0.219, HAND_Y = 0.6, HAND_Z = 0.373;
-const A_POSE = Math.atan2(HAND_Z - SHOULDER_Z, SHOULDER_Y - HAND_Y);   // 模型的手往外張開幾度
-export const ARM_LEN = Math.hypot(HAND_Z - SHOULDER_Z, SHOULDER_Y - HAND_Y) + 0.02;   // 肩膀到握東西的位置；握舵時用它算手臂要拉長多少
-
 // 網址加 ?boy 換成男版（開發測試用；之後換角色／換裝再做正式的選擇）
 const MODEL = new URLSearchParams(location.search).has('boy') ? 'boy' : 'girl';
 const gltf = await new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}models/${MODEL}.glb`);
 const SRC = {};
+// 關節位置：男女版比例不同，各自存在模型裡（tools/tripo_figure.py 寫進骨架的 extras.joints；權重是照這些位置分的）
+let J = null;
+gltf.scene.traverse((m) => { if (m.userData.joints) J = m.userData.joints; });
+J ??= { NECK: 0.97, SHOULDER: 0.923, SHOULDER_Z: 0.219, WAIST: 0.76, HIP: 0.486, HIP_Z: 0.151, HAND: 0.6, HAND_Z: 0.373 };
+const HIP_Y = J.HIP, HIP_Z = J.HIP_Z, WAIST_Y = J.WAIST, NECK_Y = J.NECK;
+const SHOULDER_Y = J.SHOULDER, SHOULDER_Z = J.SHOULDER_Z, HAND_Y = J.HAND, HAND_Z = J.HAND_Z;
+const A_POSE = Math.atan2(HAND_Z - SHOULDER_Z, SHOULDER_Y - HAND_Y);   // 模型的手往外張開幾度
+export const ARM_LEN = Math.hypot(HAND_Z - SHOULDER_Z, SHOULDER_Y - HAND_Y) + 0.02;   // 肩膀到握東西的位置；握舵時用它算手臂要拉長多少
 gltf.scene.traverse((m) => { if (m.isSkinnedMesh) SRC[m.name.startsWith('face') ? 'face' : 'body'] = m; });
+// 頂點顏色的紅色 = 這裡用平滑著色（頭部的膚色；見 tools/tripo_figure.py）。拿出來改成 smoothK，顏色本身不用
+{
+  const geo = SRC.body.geometry, col = geo.getAttribute('color');
+  const k = new Float32Array(geo.getAttribute('position').count);
+  if (col) for (let i = 0; i < k.length; i++) k[i] = col.getX(i);
+  geo.setAttribute('smoothK', new THREE.BufferAttribute(k, 1));
+  geo.deleteAttribute('color');
+}
 
 // ---- 像素雜點：每個面依它最朝向的軸，把物件自己的座標切成邊長 TEXEL 的方格，每格隨機亮一點或暗一點 ----
 const TEXEL = 0.035;   // 方格大一點、明暗差多一點，才看得出一格一格的色塊
@@ -28,21 +38,39 @@ function figFlag(sh) {
 	gl_FragColor.a = ${FIG_ALPHA.toFixed(1)};`);
 }
 
+// 臉（k = 1 的地方）的打光：
+//   明暗過渡放寬、背光面不壓那麼暗：卡通打光的交界很短，落在臉頰上時會沿著大三角形的邊切出一塊階梯狀的暗區，像黑漬
+//   影子只吃四成：瀏海投在臉上的影子形狀碎、邊緣糊，也像黑漬；整個人站到屋簷下時臉還是會跟著暗一點
+function softFace(sh, k) {
+  sh.fragmentShader = sh.fragmentShader
+    .replace('#include <lights_lambert_pars_fragment>', THREE.ShaderChunk.lights_lambert_pars_fragment.replace(
+      'smoothstep( -0.04, 0.26, rawNL )', `mix( smoothstep( -0.04, 0.26, rawNL ), 0.62 + 0.38 * smoothstep( -0.5, 0.6, rawNL ), ${k} )`))
+    .replace('#include <lights_fragment_begin>', THREE.ShaderChunk.lights_fragment_begin.replace(
+      /directLight\.color \*= (\( directLight\.visible[^;]*);/g, `directLight.color *= mix( ( $1 ), 1.0, 0.6 * ${k} );`));
+}
+
+// 著色：平常是平面著色（每個面一個亮度，看得到稜角）；頂點有 smoothK 的地方（頭部膚色）漸漸換成平滑的法線，
+// 不然臉在側光下一格一格的很明顯
 function pixelMat(color, { amp = 0.09, ...extra } = {}) {
-  const m = new THREE.MeshLambertMaterial({ color, flatShading: true, ...extra });
+  const m = new THREE.MeshLambertMaterial({ color, ...extra });
   m.onBeforeCompile = (sh) => {
-    sh.vertexShader = 'varying vec3 vPix;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvPix = position;');
-    sh.fragmentShader = 'varying vec3 vPix;\n' + sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+    sh.vertexShader = 'attribute float smoothK;\nvarying float vSmooth;\nvarying vec3 vPix;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvPix = position;\n\tvSmooth = smoothK;');
+    sh.fragmentShader = 'varying float vSmooth;\nvarying vec3 vPix;\n' + sh.fragmentShader.replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
+	{
+		vec3 flatN = normalize( cross( dFdx( vViewPosition ), dFdy( vViewPosition ) ) );
+		normal = normalize( mix( flatN, normal, vSmooth ) );
+	}`).replace('#include <color_fragment>', `#include <color_fragment>
 	{
 		vec3 fa = abs( cross( dFdx( vPix ), dFdy( vPix ) ) );
 		vec3 c = floor( vPix / ${TEXEL.toFixed(4)} );
 		vec2 g = fa.x > fa.y && fa.x > fa.z ? c.yz + 17.0 : ( fa.y > fa.z ? c.xz + 41.0 : c.xy + 83.0 );
 		float h = fract( sin( dot( g, vec2( 12.9898, 78.233 ) ) ) * 43758.5453 );
-		diffuseColor.rgb *= 1.0 + ( h - 0.5 ) * ${amp.toFixed(3)};
+		diffuseColor.rgb *= 1.0 + ( h - 0.5 ) * ${amp.toFixed(3)} * ( 1.0 - 0.8 * vSmooth );   // 臉上（平滑著色的地方）雜點淡一點，不然一格一格的
 	}`);
+    softFace(sh, 'vSmooth');
     figFlag(sh);
   };
-  m.customProgramCacheKey = () => 'pix' + amp;
+  m.customProgramCacheKey = () => 'pix4' + amp;
   return m;
 }
 
@@ -78,20 +106,23 @@ function faceTexture(id = 'normal') {
     if (only >= 0) for (let i = 0; i < 18; i++) px(BROW, 13 + i, 47 - lift - (i < 4 ? -1 : 0) - Math.round(tilt * i / 17), 1, 2);
     if (only <= 0) for (let i = 0; i < 18; i++) px(BROW, 79 + i, 47 - lift - (i > 13 ? -1 : 0) - Math.round(tilt * (17 - i) / 17), 1, 2);
   };
-  const smallO = () => { px(LIP, 54, 96, 3, 1); px(LIP, 53, 97, 1, 2); px(LIP, 57, 97, 1, 2); px(LIP, 54, 99, 3, 1); px('#c46e56', 54, 97, 3, 2); };
-  const smileMouth = () => { px(LIP, 51, 95, 1, 1); px(LIP, 52, 96, 1, 1); px(LIP, 53, 97, 5, 1); px(LIP, 58, 96, 1, 1); px(LIP, 59, 95, 1, 1); };
-  const openSmile = () => { px(LIP, 51, 95, 9, 1); px(MOUTH, 52, 96, 7, 3); px(LIP, 51, 96, 1, 2); px(LIP, 59, 96, 1, 2); px(LIP, 52, 98, 1, 1); px(LIP, 58, 98, 1, 1); px(LIP, 53, 99, 5, 1); px('#e07a6a', 54, 97, 3, 1); };
+  // 嘴：M 是嘴的上緣那一列。新的模型下巴短，嘴太低會落在下巴轉彎的地方被拉歪，所以比眼睛低 3 公分多一點就好
+  const M = 91;
+  // 普通的小嘴：輪廓清楚的小圓口（太小、顏色太暗的話遠看像一點髒污）
+  const smallO = () => { px(LIP, 54, M, 4, 1); px(LIP, 53, M + 1, 1, 3); px(LIP, 58, M + 1, 1, 3); px(LIP, 54, M + 4, 4, 1); px('#a8463a', 54, M + 1, 4, 2); px('#e2857a', 54, M + 3, 4, 1); };
+  const smileMouth = () => { px(LIP, 50, M, 1, 1); px(LIP, 51, M + 1, 1, 1); px(LIP, 52, M + 2, 7, 1); px(LIP, 59, M + 1, 1, 1); px(LIP, 60, M, 1, 1); };
+  const openSmile = () => { px(LIP, 51, M, 9, 1); px(MOUTH, 52, M + 1, 7, 3); px(LIP, 51, M + 1, 1, 2); px(LIP, 59, M + 1, 1, 2); px(LIP, 52, M + 3, 1, 1); px(LIP, 58, M + 3, 1, 1); px(LIP, 53, M + 4, 5, 1); px('#e07a6a', 54, M + 3, 3, 1); };
   switch (id) {
     case 'happy':     happyEye(20); happyEye(76); brows(2); openSmile(); break;
     case 'surprised': eyeOpen(20, 56); eyeOpen(76, 56); brows(5);
-      px(LIP, 54, 95, 3, 1); px(LIP, 53, 96, 1, 4); px(LIP, 57, 96, 1, 4); px(LIP, 54, 100, 3, 1); px(MOUTH, 54, 96, 3, 4); break;
-    case 'thinking':  eyeOpen(22, 63); eyeOpen(78, 63); brows(0, 0, 1); brows(4, -2, -1); px(LIP, 55, 98, 5, 1); break;
+      px(LIP, 54, M, 4, 1); px(LIP, 53, M + 1, 1, 5); px(LIP, 58, M + 1, 1, 5); px(LIP, 54, M + 6, 4, 1); px('#a8463a', 54, M + 1, 4, 5); break;
+    case 'thinking':  eyeOpen(22, 63); eyeOpen(78, 63); brows(0, 0, 1); brows(4, -2, -1); px(LIP, 55, M + 2, 6, 1); break;
     case 'closed':    closedEye(20); closedEye(76); brows(); smileMouth(); break;
     case 'smile':     eyeOpen(20); eyeOpen(76); brows(1); smileMouth(); break;
     case 'cry':
       squeeze(20, 1); squeeze(76, -1); brows(0, 4);
       for (const x of [24, 82]) { px('#8fd0f5', x, 80, 4, 26); px('#c8ecff', x + 1, 82, 1, 20); }   // 兩道淚
-      px(LIP, 52, 97, 7, 1); px(MOUTH, 52, 98, 7, 2); px(LIP, 51, 98, 1, 2); px(LIP, 59, 98, 1, 2); px(LIP, 52, 100, 7, 1); break;
+      px(LIP, 52, M + 1, 7, 1); px(MOUTH, 52, M + 2, 7, 2); px(LIP, 51, M + 2, 1, 2); px(LIP, 59, M + 2, 1, 2); px(LIP, 52, M + 4, 7, 1); break;
     case 'wink':      eyeOpen(20); squeeze(76, -1); brows(1); openSmile(); break;
     default:          eyeOpen(20); eyeOpen(76); brows(); smallO();
   }
@@ -131,8 +162,8 @@ export function buildFigure() {
 
   const bodyMat = pixelMat(0xffffff, { map: SRC.body.material.map, amp: 0.1 });
   const face = new THREE.MeshLambertMaterial({ map: faceTexture(), alphaTest: 0.5, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });   // 鏤空靠 alphaTest，不用半透明混色（alpha 要拿來當記號）
-  face.onBeforeCompile = figFlag;
-  face.customProgramCacheKey = () => 'figface';
+  face.onBeforeCompile = (sh) => { figFlag(sh); softFace(sh, '1.0'); };   // 表情薄片貼在臉上，打光要跟臉一樣，不然腮紅裡會切出一塊暗三角
+  face.customProgramCacheKey = () => 'figface2';
   // 綁定：在模型原本的姿勢（手 A 字張開）下算好每根骨頭的反矩陣，綁好以後再把手轉回垂直
   g.updateMatrixWorld(true);
   const skin = (src, mat) => {
