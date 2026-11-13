@@ -230,7 +230,60 @@ function armGeometry(M) {
   const isArm = (v) => { let best = 0, bw = -1; for (let k = 0; k < 4; k++) if (sw.getComponent(v, k) > bw) { bw = sw.getComponent(v, k); best = si.getComponent(v, k); } return names[best].startsWith('arm'); };
   const out = [];
   for (let i = 0; i < idx.length; i += 3) if (isArm(idx[i]) && isArm(idx[i + 1]) && isArm(idx[i + 2])) out.push(idx[i], idx[i + 1], idx[i + 2]);
-  M.armGeo = src.clone();
-  M.armGeo.setIndex(out);
+  M.armGeo = capHoles(src, out);
   return M.armGeo;
+}
+
+// 只挑出手臂的面，肩膀那端是開口：低頭看會看到空心的管子。把開口封起來——
+// 只被一個三角形用到的邊就是開口的邊，串成一圈一圈；每圈複製一份頂點（蒙皮權重照原本的，跟著手臂動），
+// uv 全用這圈第一點的（封口一個顏色，不會拉到貼圖別處），法線用整圈算（Newell），扇形三角補起來，繞向跟原本共用那條邊的三角形相反
+function capHoles(src, tris) {
+  const geo = src.clone();
+  const pos = geo.attributes.position, key = (a, b) => a + ',' + b;
+  // 同一個位置可能有好幾個頂點（uv 接縫）：先把位置一樣的併成同一個編號再找邊
+  const weld = new Map(), id = new Int32Array(pos.count);
+  for (let v = 0; v < pos.count; v++) {
+    const k = `${pos.getX(v).toFixed(5)},${pos.getY(v).toFixed(5)},${pos.getZ(v).toFixed(5)}`;
+    if (!weld.has(k)) weld.set(k, v);
+    id[v] = weld.get(k);
+  }
+  const edges = new Map();   // 有向邊 a→b（合併後的編號）
+  for (let i = 0; i < tris.length; i += 3) for (let j = 0; j < 3; j++) { const a = id[tris[i + j]], b = id[tris[i + (j + 1) % 3]]; edges.set(key(a, b), [a, b]); }
+  const next = new Map();   // 開口的邊：反方向那條不存在。封口要反著走：b→a
+  for (const [a, b] of edges.values()) if (!edges.has(key(b, a))) next.set(b, a);
+  const attrs = Object.keys(geo.attributes), data = Object.fromEntries(attrs.map((n) => [n, Array.from(geo.attributes[n].array)]));
+  const add = (v, nrm, uvFrom) => {
+    const n = data.position.length / 3;
+    for (const a of attrs) {
+      const sz = geo.attributes[a].itemSize, from = a === 'uv' ? uvFrom : a === 'normal' ? -1 : v;
+      for (let k = 0; k < sz; k++) data[a].push(from < 0 ? nrm[k] : geo.attributes[a].array[from * sz + k]);
+    }
+    return n;
+  };
+  const out = tris.slice(), seen = new Set();
+  for (const start of next.keys()) {
+    if (seen.has(start)) continue;
+    const loop = [];
+    for (let v = start; v !== undefined && !seen.has(v); v = next.get(v)) { seen.add(v); loop.push(v); }
+    if (loop.length < 3 || next.get(loop[loop.length - 1]) !== start) continue;   // 沒繞回來就不是完整的一圈
+    const nrm = [0, 0, 0], c = [0, 0, 0];
+    for (let i = 0; i < loop.length; i++) {
+      const a = loop[i], b = loop[(i + 1) % loop.length];
+      nrm[0] += (pos.getY(a) - pos.getY(b)) * (pos.getZ(a) + pos.getZ(b));
+      nrm[1] += (pos.getZ(a) - pos.getZ(b)) * (pos.getX(a) + pos.getX(b));
+      nrm[2] += (pos.getX(a) - pos.getX(b)) * (pos.getY(a) + pos.getY(b));
+      c[0] += pos.getX(a); c[1] += pos.getY(a); c[2] += pos.getZ(a);
+    }
+    const l = Math.hypot(...nrm) || 1;
+    for (let k = 0; k < 3; k++) nrm[k] /= l;
+    const vs = loop.map((v) => add(v, nrm, loop[0]));
+    // 中心點：位置是平均、其他照第一點
+    const ci = add(loop[0], nrm, loop[0]);
+    for (let k = 0; k < 3; k++) data.position[ci * 3 + k] = c[k] / loop.length;
+    for (let i = 0; i < vs.length; i++) out.push(vs[i], vs[(i + 1) % vs.length], ci);
+  }
+  for (const a of attrs) { const A = geo.attributes[a]; geo.setAttribute(a, new THREE.BufferAttribute(new A.array.constructor(data[a]), A.itemSize, A.normalized)); }
+  geo.setIndex(out);
+  geo.userData.caps = seen.size;
+  return geo;
 }
