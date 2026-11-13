@@ -129,6 +129,9 @@ export class FftOcean {
     this.chop = opts.chop ?? 0.85;
     const windAngle = opts.windAngle ?? Math.PI / 2 + 0.3;
     const hsTarget = this.hs = opts.hs ?? 2.2;
+    // lite（手機版的海面）：顯示晶片不算 FFT，畫面直接用背景執行緒算好的那兩層（見 _pump 與 renderShaders.js 的 liteWaterVert）
+    this.lite = !!opts.lite;
+    this.foamScale = 1;
     // floatRT：顯示晶片能不能畫進 32 位元浮點貼圖（不少手機只能畫 16 位元的）。不能的話 FFT 整個改用 16 位元算
     this.floatRT = renderer.extensions.has('EXT_color_buffer_float');
     const fftType = this.floatRT && !opts.fft16 ? THREE.FloatType : THREE.HalfFloatType;
@@ -312,8 +315,10 @@ export class FftOcean {
   // hsOpen：外海現在的示性波高（公尺）——決定浪峰多長（小浪短而碎、大浪又長又慢）
   update(t, dt, scale, foamScale = scale, hsOpen = 99) {
     this.scale = scale;
+    this.foamScale = foamScale;
     const N = this.N;
     if (hsOpen !== this._hsOpen) { this._hsOpen = hsOpen; this.shape = this.seaShape(hsOpen); }
+    if (this.lite) { this._pump(t); return; }
     this.mSpec.uniforms.uShape.value.set(this.shape.x, this.shape.A);
     // 頻譜與逆 FFT：三層並排一起算
     this.mSpec.uniforms.uTime.value = t % 2048;
@@ -381,13 +386,34 @@ export class FftOcean {
           }
           const w = new Worker(new URL('./oceanWorker.js', import.meta.url), { type: 'module' });
           const st = { w, busy: false, cost: 0.05, sent: 0, id: 0, want: 0, snaps: [], spare: [], a: null, b: null, k: 1, step: [0.16, 0.08][ci], jobs: 0 };
-          w.postMessage({ init: { N: M, chop: this.chop, patch: [this.patches[ci]], h0: [h0] } });
+          if (this.lite) {
+            // 手機版：每張浪配一組貼圖（位移、斜率＋白浪）。四組輪流用
+            const tex = () => {
+              const t = new THREE.DataTexture(new Uint16Array(M * M * 4), M, M, THREE.RGBAFormat, THREE.HalfFloatType);
+              t.wrapS = t.wrapT = THREE.RepeatWrapping;
+              t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.generateMipmaps = true;
+              t.needsUpdate = true;
+              return t;
+            };
+            st.pool = Array.from({ length: 4 }, () => ({ d: tex(), s: tex() }));
+            st.spareH = [];
+            st.ta = st.tb = st.pool[0];
+          }
+          w.postMessage({ init: { N: M, chop: this.chop, patch: [this.patches[ci]], h0: [h0], lite: this.lite ? { bias: [0.95, 0.93][ci], tau: [5.5, 2.2][ci] } : null } });
           w.onmessage = (e) => {
             st.busy = false; st.jobs++;
             st.cost = 0.8 * st.cost + 0.2 * (performance.now() - st.sent) / 1000;   // 算一張要多久（秒）
+            if (e.data.half) st.spareH.push(e.data.half);
             if (e.data.id !== st.id) { st.spare.push(e.data.bufs[0]); return; }      // 重來之前送出去的：不要了
-            st.snaps.push({ t: st.want, data: e.data.bufs[0] });
-            while (st.snaps.length > 3) st.spare.push(st.snaps.shift().data);
+            const snap = { t: st.want, data: e.data.bufs[0], tex: null };
+            if (e.data.half) {
+              // 抄進這張浪專用的貼圖（16 位元的那份馬上可以還給背景執行緒再利用）
+              snap.tex = st.pool.pop();
+              snap.tex.d.image.data.set(e.data.half[0]); snap.tex.d.needsUpdate = true;
+              snap.tex.s.image.data.set(e.data.half[1]); snap.tex.s.needsUpdate = true;
+            }
+            st.snaps.push(snap);
+            while (st.snaps.length > 3) { const old = st.snaps.shift(); st.spare.push(old.data); if (old.tex) st.pool.unshift(old.tex); }
           };
           w.onerror = () => { this._workers = null; };
           return st;
@@ -396,14 +422,15 @@ export class FftOcean {
     }
     if (!this._workers) return;
     for (const st of this._workers) {
-      if (reset) { st.id++; for (const s of st.snaps) st.spare.push(s.data); st.snaps.length = 0; st.a = st.b = null; }
+      if (reset) { st.id++; for (const s of st.snaps) { st.spare.push(s.data); if (s.tex) st.pool.unshift(s.tex); } st.snaps.length = 0; st.a = st.b = null; }
       const last = st.snaps[st.snaps.length - 1];
       // 手上最新的那張快要用完了（扣掉算一張要花的時間）才請下一張
       if (!st.busy && (!last || now + st.cost * 1.6 + 0.05 >= last.t)) {
         st.busy = true; st.sent = performance.now();
         st.want = !last ? now : (last.t + st.step > now + st.cost ? last.t + st.step : now + st.cost * 1.3 + 0.03);
-        const buf = st.spare.pop();
-        st.w.postMessage({ t: st.want % 2048, id: st.id, shape: [this.shape.x, this.shape.A], bufs: buf ? [buf] : undefined }, buf ? [buf.buffer] : []);
+        const buf = st.spare.pop(), half = this.lite ? st.spareH.pop() : undefined;
+        st.w.postMessage({ t: st.want % 2048, id: st.id, shape: [this.shape.x, this.shape.A], foam: this.foamScale, bufs: buf ? [buf] : undefined, half },
+          [...(buf ? [buf.buffer] : []), ...(half ? [half[0].buffer, half[1].buffer] : [])]);
       }
       // 現在落在哪兩張之間
       const n = st.snaps.length;
@@ -412,6 +439,7 @@ export class FftOcean {
       while (i < n - 1 && st.snaps[i + 1].t <= now) i++;
       const A = st.snaps[i], B = st.snaps[Math.min(i + 1, n - 1)];
       st.a = A.data; st.b = B.data;
+      if (A.tex) { st.ta = A.tex; st.tb = B.tex; }
       st.k = B.t > A.t ? Math.min(1, Math.max(0, (now - A.t) / (B.t - A.t))) : 0;
     }
   }

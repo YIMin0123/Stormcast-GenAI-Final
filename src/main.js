@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { makeTerrain, computeShelter, computeShoreDist, ISLANDS } from './terrain.js';
-import { waterVert, waterFrag, terrainVert, terrainFrag, grassVert, grassFrag, skyVert, skyFrag, diagVert, diagFrag, diagPtFrag, HAZE, RAIN_HAZE } from './renderShaders.js';
+import { waterVert, waterFrag, liteWaterVert, liteWaterFrag, terrainVert, terrainFrag, grassVert, grassFrag, skyVert, skyFrag, diagVert, diagFrag, diagPtFrag, HAZE, RAIN_HAZE } from './renderShaders.js';
 import { FftOcean, makeFoamTexture } from './ocean.js';
 import { Boat, BOAT_TYPES, BOX_CAP } from './boat.js';
 import { BOAT_ORDER, CAN, newKit, shopItem } from './boatdata.js';
@@ -316,10 +316,45 @@ function makePolarGeometry(nA = 384, nR = 420, r0 = 0.8, rMax = 34000, rFull = 1
   return g;
 }
 
+// 手機版海面用的海床高度：16 位元浮點、可以線性取樣（原本那張是 32 位元的，手機不一定能線性取樣，要自己取四格內插）
+function makeBed16() {
+  const t = new THREE.DataTexture(Uint16Array.from(bedData, (v) => THREE.DataUtils.toHalfFloat(v)), NF, NF, THREE.RedFormat, THREE.HalfFloatType);
+  t.minFilter = t.magFilter = THREE.LinearFilter;
+  t.needsUpdate = true;
+  return t;
+}
+// 手機版海面的細碎波紋：一張可以無縫拼接的圖，存的是坡度（紅 = x、綠 = z）。二十幾道方向、長短不一的小波疊起來
+function makeRippleTexture(size = 128) {
+  let seed = 7331;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const waves = Array.from({ length: 26 }, () => {
+    const kx = Math.round((rnd() - 0.5) * 22), kz = Math.round((rnd() - 0.5) * 22), k = Math.hypot(kx, kz) || 1;
+    return { kx, kz, a: 1 / (2 + k), p: rnd() * Math.PI * 2 };
+  });
+  const sx = new Float32Array(size * size), sz = new Float32Array(size * size);
+  let mx = 1e-6;
+  for (let j = 0; j < size; j++) for (let i = 0; i < size; i++) {
+    let x = 0, z = 0;
+    for (const w of waves) { const c = w.a * Math.cos(2 * Math.PI * (w.kx * i + w.kz * j) / size + w.p); x += c * w.kx; z += c * w.kz; }
+    sx[j * size + i] = x; sz[j * size + i] = z;
+    mx = Math.max(mx, Math.abs(x), Math.abs(z));
+  }
+  const data = new Uint8Array(size * size * 4);
+  for (let k = 0; k < size * size; k++) { data[k * 4] = Math.round((sx[k] / mx * 0.5 + 0.5) * 255); data[k * 4 + 1] = Math.round((sz[k] / mx * 0.5 + 0.5) * 255); data[k * 4 + 3] = 255; }
+  const t = new THREE.DataTexture(data, size, size, THREE.RGBAFormat, THREE.UnsignedByteType);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.generateMipmaps = true;
+  t.needsUpdate = true;
+  return t;
+}
+
 // 手機：海浪的 FFT 用 16 位元算（每幀要搬的資料少一半，手機的記憶體頻寬吃不消 32 位元；浪高的誤差在毫米等級）。
 // ?fft16 / ?fft32：強制用哪一種，比較用
 const FFT16 = /[?&]fft16/.test(location.search) || (TOUCH && !/[?&]fft32/.test(location.search));
-const ocean = new FftOcean(renderer, { hs: HS, windAngle: WAVE_ANGLE, fft16: FFT16 });
+// 手機版的海面（另一套便宜很多的畫法，浪還是同一片；見 renderShaders.js 的 liteWaterVert）。
+// 手機一律用它；?litesea 在電腦上也用（測試）、?fullsea 讓手機用回電腦版（比較用）
+const LITE_SEA = /[?&]litesea/.test(location.search) || (TOUCH && !/[?&]fullsea/.test(location.search));
+const ocean = new FftOcean(renderer, { hs: HS, windAngle: WAVE_ANGLE, fft16: FFT16, lite: LITE_SEA });
 // 太陽的水平方向跟著港口轉：港座標裡太陽在西南方，店面與碼頭是向陽面，轉過去之後光照關係不變
 const homeSun = (x, y, z) => [x * Math.cos(HOME_YAW) + z * Math.sin(HOME_YAW), y, -x * Math.sin(HOME_YAW) + z * Math.cos(HOME_YAW)];
 const sunDir = new THREE.Vector3(...homeSun(-0.5, 0.52, 0.6)).normalize();
@@ -373,6 +408,11 @@ const shared = {
   uPatch: { value: new THREE.Vector3(...ocean.patches) }, uTexN: { value: ocean.N },
   uSlopeVar: { value: new THREE.Vector3(...ocean.cascades.map((c) => c.slopeVar)) },
   uFoamTex: { value: makeFoamTexture() }, uHs: { value: HS },
+  // 手機版的海面用的：兩層浪各有前後兩張（位移、斜率＋白浪），海床高度的 16 位元版，細碎波紋的貼圖
+  uLD0A: { value: null }, uLD0B: { value: null }, uLD1A: { value: null }, uLD1B: { value: null },
+  uLS0A: { value: null }, uLS0B: { value: null }, uLS1A: { value: null }, uLS1B: { value: null },
+  uLK: { value: new THREE.Vector2() }, uLOff: { value: 0.5 / 128 - 0.5 / ocean.N }, uVortexOn: { value: 0 },
+  uBed16: { value: LITE_SEA ? makeBed16() : null }, uRipTex: { value: LITE_SEA ? makeRippleTexture() : null },
   uDetail: { value: groundDetail.detail }, uDetailN: { value: groundDetail.normal },
   uWindT: WIND.t, uWindAmp: WIND.amp, uWindDir: WIND.dir,
   uUnder: { value: 0 }, uCamDepth: { value: 0 },
@@ -424,8 +464,8 @@ const terrain = new THREE.Group();
 }
 scene.add(terrain);
 
-const water = new THREE.Mesh(makePolarGeometry(), new THREE.ShaderMaterial({
-  vertexShader: waterVert, fragmentShader: waterFrag, uniforms: shared, transparent: true,
+const water = new THREE.Mesh(LITE_SEA ? makePolarGeometry(160, 150) : makePolarGeometry(), new THREE.ShaderMaterial({
+  vertexShader: LITE_SEA ? liteWaterVert : waterVert, fragmentShader: LITE_SEA ? liteWaterFrag : waterFrag, uniforms: shared, transparent: true,
   blending: THREE.CustomBlending, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneMinusSrcAlphaFactor, // 畫面的 alpha 是「這裡是不是天空」的記號（光暈用）：海面要把它蓋成 1。
   // 以前海面不動 alpha，底下沒有海床模型的深海就被當成天空加亮，有海床的地方沒有，結果把每座島在水面下的輪廓描了出來
   blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
@@ -436,7 +476,7 @@ water.renderOrder = 2;
 // 海面的記號：海面畫完之後，同一張網格再畫一次，只把畫面的 alpha 寫成 3（顏色不動、只蓋在看得到海面的像素上）。
 // 環境光遮蔽靠這個記號跳過海面：它是從深度反推表面的，貼著海面往遠處看時會誤判，在海上壓出一塊塊有直線邊的暗影
 const waterFlag = new THREE.Mesh(water.geometry, new THREE.ShaderMaterial({
-  vertexShader: waterVert, fragmentShader: 'void main() { gl_FragColor = vec4(0.0, 0.0, 0.0, 3.0); }', uniforms: shared, transparent: true,
+  vertexShader: LITE_SEA ? liteWaterVert : waterVert, fragmentShader: 'void main() { gl_FragColor = vec4(0.0, 0.0, 0.0, 3.0); }', uniforms: shared, transparent: true,
   blending: THREE.CustomBlending, blendSrc: THREE.ZeroFactor, blendDst: THREE.OneFactor, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.ZeroFactor,
   depthWrite: false, depthFunc: THREE.LessEqualDepth, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2, side: THREE.DoubleSide,
 }));
@@ -838,7 +878,7 @@ const BIAS = new THREE.Matrix4().set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 
 let reflTick = 0, drawCount = 0;
 function renderReflection(under, turn = true) {
   const alt = camera.position.y;
-  const on = !under && alt > 0.3 && alt < 700 && gfx.refl;   // 設定裡可以關掉海面倒影
+  const on = !under && alt > 0.3 && alt < 700 && gfx.refl && !LITE_SEA;   // 設定裡可以關掉海面倒影；手機版的海面不映倒影（整個場景少畫一遍）
   if (!on) { shared.uReflOn.value = 0; reflTick = 0; return; }
   // 隔一幀才重畫一次倒影；沒重畫的那幀沿用上一幀的貼圖與投影矩陣
   if (!turn && reflTick > 0) return;
@@ -2198,6 +2238,13 @@ function updateOcean(dt) {
   shared.uSlopeVar.value.set(...ocean.shape.slopeVar);
   shared.uDisp0.value = ocean.cascades[0].disp[ocean.cascades[0].cur].texture;
   shared.uDisp1.value = ocean.cascades[1].disp[ocean.cascades[1].cur].texture;
+  if (LITE_SEA && ocean._workers) {
+    const [w0, w1] = ocean._workers;
+    shared.uLD0A.value = w0.ta.d; shared.uLD0B.value = w0.tb.d; shared.uLS0A.value = w0.ta.s; shared.uLS0B.value = w0.tb.s;
+    shared.uLD1A.value = w1.ta.d; shared.uLD1B.value = w1.tb.d; shared.uLS1A.value = w1.ta.s; shared.uLS1B.value = w1.tb.s;
+    shared.uLK.value.set(w0.k, w1.k);
+    shared.uVortexOn.value = sea.vortices.length ? 1 : 0;
+  }
 
   sweEnv.disp0 = shared.uDisp0.value; sweEnv.time = shared.uTime.value;
   sweEnv.waveScale = shared.uWaveScale.value; sweEnv.storm = shared.uStorm.value; sweEnv.surge = shared.uSurge.value;

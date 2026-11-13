@@ -431,22 +431,7 @@ float tsuPull(vec2 xz) {
 }
 `;
 
-export const waterVert = /* glsl */ `
-#ifdef DIAG
-varying vec4 vDiagOut;
-#endif
-${bed}
-${waveDecl}
-${shore}
-${swe}
-uniform vec2 uCenter;
-uniform vec2 uMeshRot;   // 海面的網格轉了多少（cos, sin）：遠處只鋪鏡頭看得到的那個方向，整張網格轉過去對準
-uniform float uTime;
-
-varying vec3 vWorld;
-varying vec2 vP0;
-varying float vWaveH;
-
+const vortexFn = /* glsl */ `
 // 漩渦讓水面凹成漏斗，水龍捲腳下的水面隆起（數字與 weather.js 的 VORTEX 相同）
 // 回傳 (高度, 風浪在這裡剩幾成)：漏斗裡的水被捲著走，風浪被拉平
 vec2 vortexY(vec2 xz) {
@@ -463,7 +448,25 @@ vec2 vortexY(vec2 xz) {
   }
   return h;
 }
+`;
 
+export const waterVert = /* glsl */ `
+#ifdef DIAG
+varying vec4 vDiagOut;
+#endif
+${bed}
+${waveDecl}
+${shore}
+${swe}
+uniform vec2 uCenter;
+uniform vec2 uMeshRot;   // 海面的網格轉了多少（cos, sin）：遠處只鋪鏡頭看得到的那個方向，整張網格轉過去對準
+uniform float uTime;
+
+varying vec3 vWorld;
+varying vec2 vP0;
+varying float vWaveH;
+
+${vortexFn}
 // 手機（Adreno）的驅動程式連結不了完整版的海面頂點程式（太複雜，連結失敗、海面整片畫不出來）。
 // 那種機器改用拆開的兩版（WATER_SPLIT）：平常沒有巨浪的程式；巨浪來的時候（TSU_ON）換成有巨浪、但岸邊不捲浪也不沖上沙灘的程式（反正都被巨浪淹過去了）
 #if !defined(WATER_SPLIT) || defined(TSU_ON)
@@ -1545,5 +1548,231 @@ void main() {
   vec2 q0 = xz / uPatch.x;
   gl_FragColor = i == 0 ? vec4(bedH, shel, dg, sd) : i == 1 ? vec4(lift, sw, d.y, win) : i == 2 ? vec4(expo, ph, uWaveScale, depthFade)
     : vec4(textureLod(uDisp0, q0, 2.0).y, textureLod(uDisp0, q0, 4.0).y, textureLod(uDisp0, q0, 6.0).y, textureLod(uDisp1, xz / uPatch.y, 4.0).y);   // 浪高圖的縮小版（第 2、4、6 層；第二層浪的第 4 層）
+}
+`;
+
+// ---- 手機版的海面 -----------------------------------------------------------
+// 同一片海（浪高、浪向、巨浪、漩渦、潮汐都跟電腦版一樣，別人的船才會浮在你看到的水面上），但畫法便宜很多：
+//   浪：不讓顯示晶片每幀算 FFT，直接拿背景執行緒替船算好的那兩層（ocean.js 的 lite），前後兩張之間內插
+//   網格：頂點只有電腦版的七分之一
+//   上色：卡通式的——幾個平塗的水色、天空只映漸層、白沫是簡單的色塊；沒有倒影貼圖、影子、岸邊捲浪的細節
+const LITE_GRID = 0.07;   // 手機版網格的間距（公尺）大約是離中心距離的幾倍（見 main.js 的 makePolarGeometry(160, 150)）
+const liteDecl = /* glsl */ `
+uniform sampler2D uBed16;   // 海床高度（16 位元浮點、可以直接線性取樣：一次就拿到，不用自己取四格內插）
+uniform vec2 uLK;           // 前後兩張浪之間，現在落在哪（兩層各一個 0–1）
+uniform float uLOff;        // 背景執行緒的格子跟畫面貼圖差的那半格
+float bedLite(vec2 xz) { return textureLod(uBed16, clamp(xz / uL + 0.5, 0.0, 1.0), 0.0).r; }
+`;
+export const liteWaterVert = /* glsl */ `
+${bed}
+${waveDecl}
+${shore}
+${liteDecl}
+${vortexFn}
+uniform sampler2D uLD0A, uLD0B, uLD1A, uLD1B;   // 兩層浪的位移 (Dx, h, Dz)，各有前後兩張
+uniform vec2 uCenter;
+uniform vec2 uMeshRot;
+uniform float uTime;
+varying vec3 vWorld;
+varying vec2 vP0;
+varying vec4 vInfo;   // (這裡的浪剩幾成, 這裡的浪高倍率, 風浪的高度, 避浪係數)
+varying vec3 vBig;    // (水位：巨浪＋潮汐, 大形狀的斜率 x, z：巨浪、長浪)
+varying vec2 vFx;     // (巨浪浪頭的白沫, 在漩渦的漏斗裡陷下去多深)
+void main() {
+  vec2 xz = vec2(position.x * uMeshRot.x - position.z * uMeshRot.y, position.x * uMeshRot.y + position.z * uMeshRot.x) + uCenter;
+  for (int i = 0; i < 3; i++) {
+    vec4 v = uVortex[i];
+    if (v.z <= 0.0 || v.w > 1.5) continue;
+    vec2 dd = xz - v.xy;
+    xz = v.xy + dd * (1.0 - 0.62 * exp(-length(dd) / 70.0));
+  }
+  vec2 vY = vortexY(xz);
+  float bedH = bedLite(xz), shel = shelterAt(xz), danger = dangerAt(xz);
+  float ws = waveScale(danger, shel);
+  float amp = smoothstep(0.3, 8.0, -bedH) * ws * shel * vY.y;
+  float spacing = ${LITE_GRID.toFixed(3)} * length(position.xz) + 0.3;
+  float lod0 = log2(max(spacing * 1.6 * 128.0 / uPatch.x, 1.0));
+  float lod1 = log2(max(spacing * 1.6 * 128.0 / uPatch.y, 1.0));
+  vec2 wq = toWave(xz), u0 = wq / uPatch.x + uLOff, u1 = wq / uPatch.y + uLOff;
+  vec3 d = mix(textureLod(uLD0A, u0, lod0).xyz, textureLod(uLD0B, u0, lod0).xyz, uLK.x)
+         + mix(textureLod(uLD1A, u1, lod1).xyz, textureLod(uLD1B, u1, lod1).xyz, uLK.y);
+  d *= amp;
+  d.xz = fromWave(d.xz);
+  vec3 big = vec3(uTide, 0.0, 0.0);
+  float swY = 0.0, crest = 0.0;
+  if (uSwell > 0.01) {
+    vec3 s = swellK(danger, shel) * longSwell(xz);
+    swY = s.x * smoothstep(70.0, 25.0, spacing);
+    big.yz += s.yz;
+  }
+  if (uTsu.w > 0.0) {
+    float tK = tsuKAt(xz), hk = tsuHK(tK);
+    vec4 ti;
+    vec3 tw = tsuWave(xz, spacing * 1.5, ti) * hk;
+    tw.x += tsuEbb(xz, tK, uTsu);
+    big += tw;
+    // 浪頂翻白：靠近島、堆高了的那一段才有；背面拖著一片碎白沫
+    float strong = min(ti.w * hk / ${f3(TSU_H.peak)}, 1.0);
+    crest = strong * (smoothstep(0.55, 0.95, ti.y) * (0.35 + 0.65 * tsuBreak(dot(xz, vec2(uTsu.y, -uTsu.x)), ti.z, tK, uTime))
+                    + 0.8 * step(ti.x, 0.0) * exp(0.85 * ti.x) * smoothstep(0.85, 0.45, tK));
+  }
+  float ph = shorePhase(xz, uTime), expo = shoreExpo(shel, SHORE_SEA);
+  float lift = runup(ph, expo) * (1.0 - smoothstep(0.0, 2.5, -bedH));
+  vec3 pos = vec3(xz.x + d.x, d.y + big.x + vY.x + swY + lift, xz.y + d.z);
+  vP0 = xz;
+  vInfo = vec4(amp, ws, d.y, shel);
+  vBig = big;
+  vFx = vec2(crest, -vY.x);
+  vWorld = pos;
+  vTsu = vec3(0.0); vCurlN = vec3(0.0, 1.0, 0.0); vCurl = vec2(0.0);
+  gl_Position = projectionMatrix * viewMatrix * vec4(pos, 1.0);
+}
+`;
+
+export const liteWaterFrag = /* glsl */ `
+${common}
+${bed}
+${waveDecl}
+${shore}
+${liteDecl}
+uniform sampler2D uLS0A, uLS0B, uLS1A, uLS1B;   // 兩層浪的 (斜率 x, 斜率 z, 白浪)，各有前後兩張
+uniform sampler2D uFoamTex;
+uniform sampler2D uRipTex;   // 細碎的波紋（固定的一張圖，兩份錯開著流動）
+uniform float uPixelAngle;
+uniform float uHs;
+uniform vec4 uWake[16];
+uniform vec4 uWakeBox;
+uniform vec3 uLamp[8];
+uniform float uLampOn;
+uniform float uVortexOn;
+varying vec3 vWorld;
+varying vec2 vP0;
+varying vec4 vInfo;
+varying vec3 vBig;
+varying vec2 vFx;
+void main() {
+  float bedH = bedLite(vWorld.xz);
+  float sd = shoreDist(vWorld.xz);
+  float shel = vInfo.w, amp = vInfo.x, ws = vInfo.y;
+  float ph = shorePhase(vWorld.xz, uTime), expo = shoreExpo(shel, SHORE_SEA);
+  float depth = runup(ph, expo) * (1.0 - smoothstep(0.0, 2.5, -bedH)) - bedH + vBig.x;
+  if (depth < 0.004) discard;
+  vec3 toCam = cameraPosition - vWorld;
+  float dist = length(toCam);
+  vec3 V = toCam / dist;
+  float fp = dist * uPixelAngle / max(V.y, 0.06);
+  float texFade = clamp(1.2 / fp, 0.0, 1.0);
+
+  // ---- 水面的坡度：兩層浪（前後兩張內插）＋巨浪、長浪的大形狀＋細碎的波紋 ----
+  vec2 wq = toWave(vP0);
+  vec2 u0 = wq / uPatch.x + uLOff, u1 = wq / uPatch.y + uLOff;
+  vec4 s0 = mix(texture2D(uLS0A, u0), texture2D(uLS0B, u0), uLK.x);
+  vec4 s1 = mix(texture2D(uLS1A, u1), texture2D(uLS1B, u1), uLK.y);
+  vec2 rp = texture2D(uRipTex, vP0 * 0.115 + uTime * vec2(0.021, 0.013)).rg + texture2D(uRipTex, vP0 * 0.047 - uTime * vec2(0.011, 0.017)).rg - 1.0;
+  float ripK = (0.05 + 0.09 * min(ws, 1.6) * max(shel, 0.45)) * smoothstep(0.0, 1.0, depth) * texFade;
+  vec2 sl = fromWave((s0.rg + s1.rg) * amp) + vBig.yz + rp * ripK;
+  vec3 N = normalize(vec3(-sl.x, 1.0, -sl.y));
+  float ndv = max(dot(N, V), 0.0);
+  float sunUp = max(uSunDir.y, 0.0);
+  float lv = max(uSunCol.r, max(uSunCol.g, uSunCol.b));
+
+  // ---- 映著天空（只有漸層，沒有雲和倒影貼圖）----
+  float F = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
+  F *= mix(mix(0.42, 0.72, uGloom), 1.0, smoothstep(120.0, 700.0, dist));
+  vec3 R = reflect(-V, N);
+  R.y = abs(R.y) + 0.02;
+  vec3 refl = skyGradient(normalize(R));
+  float glow = uDusk * (1.0 - uGloom);
+  F = max(F, glow * 0.45 * pow(1.0 - ndv, 1.5));
+
+  // ---- 水體顏色：淺灘土耳其綠 → 青藍 → 深海鈷藍 ----
+  vec3 shallow = mix(vec3(0.10, 0.74, 0.64), vec3(0.11, 0.36, 0.37), 0.8 * uGloom);
+  vec3 midsea = mix(vec3(0.015, 0.42, 0.64), vec3(0.02, 0.17, 0.29), 0.8 * uGloom);
+  vec3 deep = mix(vec3(0.006, 0.12, 0.42), vec3(0.006, 0.075, 0.22), 0.6 * uGloom);
+  float dcol = min(depth, 0.35 + 0.17 * sd);
+  float dz = 1.0 - exp(-dcol * (0.20 + 0.30 * uGloom));
+  vec3 scatter = mix(mix(shallow, midsea, smoothstep(0.0, 0.5, dz)), deep, smoothstep(0.4, 0.95, dz));
+  float hole = exp(-vFx.y / 13.0);   // 漩渦的漏斗裡越深越暗
+  scatter *= (0.40 * uAmbient + 0.75 * sunUp * mix(vec3(lv), uSunCol, 0.6)) * (1.0 - 0.40 * glow) * mix(1.0, hole, 0.6);
+  // 浪頭透出青綠色
+  float h01 = clamp(vInfo.z / max(uHs * ws * 0.55, 0.3), 0.0, 1.3);
+  scatter += vec3(0.0, 0.50, 0.38) * h01 * 0.28 * min(amp, 1.0) * (0.3 + 0.9 * sunUp) * max(lv, uAmbient.g * 0.6);
+
+  // ---- 太陽的反光：一顆一顆清楚的亮點 ----
+  vec3 Hh = normalize(V + uSunDir);
+  float ndh = max(dot(N, Hh), 0.0);
+  vec3 spec = SUN_COL * smoothstep(0.55, 0.75, pow(ndh, 260.0 - 180.0 * glow)) * (1.5 + 1.5 * glow) * texFade;
+
+  float T = exp(-1.15 * dcol - 0.5 * max(depth - dcol, 0.0) - dist / 110.0);
+  float alpha = 1.0 - (1.0 - F) * T;
+  vec3 col = (F * refl * mix(1.0, hole, 0.9) + spec + (1.0 - F) * (1.0 - T) * scatter) / max(alpha, 1e-3);
+  // 朝太陽的小波面亮一階、背著的暗一階
+  float facet = clamp(dot(N.xz, normalize(uSunDir.xz + 1e-4)) / max(N.y, 0.3) * 9.0, -1.0, 1.0) * clamp(0.3 / fp, 0.0, 1.0);
+  col *= 1.0 + 0.10 * facet;
+  alpha *= smoothstep(0.0, 0.10, depth) * (0.5 + 0.5 * smoothstep(0.0, 0.5, depth));
+
+  // ---- 白沫 ----
+  float ft = texture2D(uFoamTex, vP0 * 0.045 + uTime * vec2(0.004, 0.002)).r;
+  ft = mix(0.55, ft, texFade);
+  float cov = (s0.b * 1.1 + s1.b * 0.8) * min(amp * 1.4, 1.0);                         // 風浪的白浪
+  float gale = smoothstep(0.75, 1.55, uStorm);
+  if (gale > 0.0) col = mix(col, vec3(dot(col, vec3(0.30, 0.50, 0.20))) * vec3(0.76, 0.97, 1.0), 0.45 * gale);   // 風暴裡的水偏灰綠
+  // 岸邊：一道一道往岸上推的白線，最前緣一圈碎泡沫
+  if (sd < 46.0) {
+    float th = (shK(sd) + ph) / 6.2832, f = fract(th);
+    float calm = smoothstep(0.12, 0.6, expo);
+    float line = smoothstep(0.38, 0.5, f) * smoothstep(0.66, 0.5, f) * smoothstep(46.0, 26.0, sd) * smoothstep(13.0, 7.0, sd) * (0.35 + 0.65 * shHash(floor(th)));
+    float trail = smoothstep(0.5, 0.62, f) * (1.0 - smoothstep(0.62, 1.0, f)) * smoothstep(12.0, 5.0, sd) * 0.6;
+    cov += calm * (0.9 * line + trail) * (0.6 + 0.4 * ft);
+    cov += smoothstep(0.30, 0.02, depth) * (0.35 + 0.6 * ft) * (0.5 + 0.5 * calm) * (1.0 - 0.6 * smoothstep(0.3, 0.9, swashAge(ph)));
+  }
+  cov += vFx.x * (0.75 + 0.5 * ft);                                                    // 巨浪的浪頭、背面的白水
+  if (uVortexOn > 0.5) {
+    for (int i = 0; i < 3; i++) {
+      vec4 v = uVortex[i];
+      if (v.z <= 0.0) continue;
+      vec2 dd = vWorld.xz - v.xy;
+      float r = length(dd), th = atan(dd.y, dd.x), lr = log(r + 20.0);
+      // 順著水流（風）繞的幾道白沫，越靠近中心越密
+      float arm = smoothstep(0.35, 0.85, sin(3.0 * th + 9.0 * lr + uTime * (v.w < 1.5 ? 0.9 : 1.5)));
+      float near = v.w < 1.5 ? smoothstep(330.0, 40.0, r) : smoothstep(480.0, 60.0, r);
+      cov += v.z * near * (0.25 + 0.75 * arm) * (0.5 + 0.6 * ft) + v.z * smoothstep(v.w < 1.5 ? 30.0 : 90.0, 10.0, r) * 0.6;
+    }
+  }
+  vec2 wkd = vWorld.xz - uWakeBox.xy;
+  if (uWakeBox.w > 0.5 && dot(wkd, wkd) < uWakeBox.z * uWakeBox.z)
+  for (int i = 0; i < 16; i++) {                                                       // 船的航跡
+    vec4 wk = uWake[i];
+    float age = uTime - wk.z;
+    if (wk.w <= 0.0 || age < 0.0 || age > 30.0) continue;
+    vec2 dd = vWorld.xz - wk.xy;
+    float r = 1.8 + age * 0.9;
+    cov += wk.w * exp(-dot(dd, dd) / (r * r)) * exp(-age / 4.5) * 0.4;
+  }
+  cov = clamp(cov, 0.0, 1.2);
+  float fraw = smoothstep(0.0, 0.35, cov - (1.0 - ft) * 1.05) * smoothstep(0.0, 0.07, depth);
+  fraw = max(fraw, smoothstep(0.75, 1.15, cov) * 0.85);
+  float foam = smoothstep(0.24, 0.52, fraw);
+  float lace = smoothstep(0.02, 0.26, fraw) * (1.0 - foam);
+  vec3 foamCol = vec3(0.99) * (0.60 * uAmbient + (0.34 + 0.22 * sunUp) * lv) * mix(1.0, hole, 0.55);
+  col = mix(col, foamCol * vec3(0.84, 0.96, 1.0), lace * 0.40);
+  col = mix(col, foamCol, foam * 0.93);
+  alpha = max(alpha, max(foam, lace * 0.55));
+  // 晚上燈光照在水面上
+  if (uLampOn > 0.0)
+  for (int i = 0; i < 8; i++) {
+    if (uLamp[i].z <= 0.0) continue;
+    vec2 ld = vWorld.xz - uLamp[i].xy;
+    col += vec3(1.0, 0.70, 0.36) * uLamp[i].z * exp(-dot(ld, ld) / 70.0) * (0.22 + 0.45 * foam);
+  }
+  col += vec3(1.0, 0.93, 0.70) * beamSweep(vWorld.xz) * (0.16 + 0.24 * foam);
+  if (uUnder > 0.5) {
+    // 從水下往上看：正上方透著天光，斜著看是水的顏色
+    col = applyUnderFog(mix(underFogCol() * 1.35, skyGradient(vec3(0.0, 1.0, 0.0)) * vec3(0.78, 0.96, 1.0), smoothstep(0.55, 0.9, abs(V.y))) * (1.0 - 0.55 * foam), vWorld);
+    alpha = 1.0;
+  } else col = applyFog(col, vWorld);
+  gl_FragColor = vec4(col, alpha);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
 }
 `;

@@ -10,9 +10,42 @@
 let N = 0, chop = 1, H0 = [], PATCH = [], W = [], KX = [], KZ = [], K2 = [], stages = 0;
 let a0, a1, b0, b1;   // FFT 用的兩組（實部、虛部交錯）工作區：A = h + i·Dx、B = Dz
 let tw = [];          // 每個階段的旋轉因子與索引
+// 手機版的海面直接拿這裡算好的浪當貼圖畫（lite）：除了位移，還要斜率和白浪，一起轉成 16 位元浮點
+let lite = null;      // { bias, tau, foam: Float32Array, last }
+const f32 = new Float32Array(1), u32 = new Uint32Array(f32.buffer);
+function toHalf(v) {
+  f32[0] = v;
+  const x = u32[0], s = (x >> 16) & 0x8000, m = x & 0x7fffff;
+  const ex = ((x >> 23) & 0xff) - 112;
+  if (ex <= 0) return ex < -10 ? s : s | (((m | 0x800000) >> (1 - ex)) + 0x1000 >> 13);
+  if (ex >= 31) return s | 0x7c00;
+  return s | (ex << 10) + ((m + 0x1000) >> 13);
+}
+// out：(Dx, h, Dz, 0)。dh：位移的 16 位元版；sh：(斜率 x, 斜率 z, 白浪, 0)。
+// 白浪：浪頭摺起來的地方（水平位移把水面擠到重疊）冒出來，之後慢慢消掉——跟電腦版顯示晶片上累積的做法一樣
+function pack(out, dh, sh, t, foamScale) {
+  const k = 1 / (2 * PATCH[0] / N), mask = N - 1, L = lite;
+  let dt = t - L.last;
+  if (dt < 0) dt += 2048;
+  const decay = dt > 0 && dt < 5 ? Math.exp(-dt / L.tau) : 0;
+  L.last = t;
+  for (let j = 0; j < N; j++) {
+    const jp = ((j + 1) & mask) * N, jm = ((j - 1) & mask) * N, jr = j * N;
+    for (let i = 0; i < N; i++) {
+      const p = (jr + i) * 4, xp = (jr + ((i + 1) & mask)) * 4, xm = (jr + ((i - 1) & mask)) * 4, zp = (jp + i) * 4, zm = (jm + i) * 4;
+      const kk = k * foamScale;
+      const J = (1 + kk * (out[xp] - out[xm])) * (1 + kk * (out[zp + 2] - out[zm + 2])) - kk * (out[zp] - out[zm]) * kk * (out[xp + 2] - out[xm + 2]);
+      const f = Math.max(L.foam[jr + i] * decay, Math.min(1, Math.max(0, (L.bias - J) * 3)));
+      L.foam[jr + i] = f;
+      dh[p] = toHalf(out[p]); dh[p + 1] = toHalf(out[p + 1]); dh[p + 2] = toHalf(out[p + 2]); dh[p + 3] = 0;
+      sh[p] = toHalf(k * (out[xp + 1] - out[xm + 1])); sh[p + 1] = toHalf(k * (out[zp + 1] - out[zm + 1])); sh[p + 2] = toHalf(f); sh[p + 3] = 0;
+    }
+  }
+}
 
 function init(o) {
   N = o.N; chop = o.chop; H0 = o.h0; PATCH = o.patch;
+  lite = o.lite ? { bias: o.lite.bias, tau: o.lite.tau, foam: new Float32Array(o.N * o.N), last: 0 } : null;
   stages = Math.round(Math.log2(N));
   const n = N * N;
   a0 = new Float64Array(2 * n); a1 = new Float64Array(2 * n);
@@ -107,5 +140,11 @@ self.onmessage = (e) => {
   if (d.init) { init(d.init); return; }
   const bufs = d.bufs || H0.map(() => new Float32Array(N * N * 4));
   for (let ci = 0; ci < H0.length; ci++) cascade(ci, d.t, d.shape, bufs[ci]);
+  if (lite) {
+    const half = d.half || [new Uint16Array(N * N * 4), new Uint16Array(N * N * 4)];
+    pack(bufs[0], half[0], half[1], d.t, d.foam || 0);
+    self.postMessage({ t: d.t, id: d.id, bufs, half }, [bufs[0].buffer, half[0].buffer, half[1].buffer]);
+    return;
+  }
   self.postMessage({ t: d.t, id: d.id, bufs }, bufs.map((b) => b.buffer));
 };
