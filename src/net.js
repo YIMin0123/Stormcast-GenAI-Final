@@ -14,7 +14,7 @@ function serverUrl() {
   return PROD_SERVER;
 }
 
-// 名字和認人用的代碼記在瀏覽器裡（關掉分頁再打開，30 秒內還接得回去）。
+// 名字和認人用的代碼記在瀏覽器裡：關掉分頁再打開，30 秒內接得回原本的位置；錢、船、裝備、魚跟著代碼存在伺服器，到定時刷新才清。
 // ?test 分頁記在這個分頁自己（sessionStorage）：每個測試分頁都是不同的玩家，也不會動到正式的身分
 const store = (() => {
   try { return TEST ? window.sessionStorage : window.localStorage; } catch { return null; }
@@ -59,7 +59,7 @@ export class Net {
     });
   }
 
-  // 離開房間（進度清空）
+  // 離開房間（進度伺服器存著，下次進房從港口出發）
   leave() { this.leaving = true; this._raw({ t: 'leave' }); }
 
   _connect() {

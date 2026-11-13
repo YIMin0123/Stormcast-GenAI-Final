@@ -44,6 +44,9 @@ export class Daily {
     return rank < 200 ? rank : -1;
   }
 
+  // 定時刷新：今日紀錄也一起清空
+  clear() { this.list = []; this.dirty = true; this.save(); }
+
   top() { return this.list.slice(0, 10).map(pub); }
 
   save() {
