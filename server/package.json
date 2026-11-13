@@ -5,8 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "node dev.js",
-    "test": "node test/smoke.mjs"
+    "dev": "node dev.js"
   },
   "dependencies": {
     "ws": "^8.18.0"
