@@ -617,7 +617,9 @@ export class Boat {
     this.throttle += (thrust - this.throttle) * (1 - Math.exp(-dt * 3));
     // 引擎吃油：油門開多大吃多少；沒油了只能慢慢漂
     if (this.fuel > 0) this.fuel = Math.max(0, this.fuel - S.burn * Math.abs(this.throttle) * dt);
-    const target = afloat ? thrust * (this.fuel > 0 ? this.maxSpeed : DRIFT) : 0;
+    // 浪大的時候開不快（船一直在爬坡、砸進浪裡）：小船受的影響比大船大
+    const slow = env.slow ? Math.min(0.6, env.slow(this.x, this.z) * Math.min(1.4, 13 / S.len)) : 0;
+    const target = afloat ? thrust * (this.fuel > 0 ? this.maxSpeed : DRIFT) * (1 - slow) : 0;
     this.speed += (target - this.speed) * (1 - Math.exp(-dt * (afloat ? 0.5 * (1 + 0.2 * this.engineLv) : 3)));
 
     // 方向盤：按著就打過去，放開自動回正；船越短轉得越靈活

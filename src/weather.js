@@ -7,6 +7,32 @@
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
+// ---- 浪有多大 ---------------------------------------------------------------
+// 浪高一律用「倍率」表示：倍率 1 = 示性波高 2.2 公尺（main.js 的 HS）。瀏覽器、著色器、伺服器都用這裡的式子。
+//   far：外海比島邊大幾成；storm：風暴強度 1 讓外海多幾倍；cap：上限（約 8 公尺）
+//   shore、shoreStorm：岸邊拍上來的浪跟著今天的浪、颱風變大多少
+export const SEA_LV = { far: 0.8, storm: 1.5, cap: 3.6, shore: 3.0, shoreStorm: 1.6 };
+// 每天的風浪強度（0.5 平靜、1.2 普通、1.9 大風）→ 島邊的浪高倍率。
+// 外海的示性波高：平靜的日子三四十公分、普通的日子一公尺多、大風天兩公尺半；再大就是風暴了
+export const windWave = (wind) => 0.25 * Math.max(wind, 0) ** 1.4;
+// 這裡的浪高倍率。base：今天島邊的倍率；d：離陸地多遠（0–1，computeDanger）；
+// open：這裡是不是迎著風浪的開闊水面（0–1，見 openOf）——迎風面的浪一路打到岸邊，只有背風面和港內才小。
+// 風暴是「加上去」的（不是把今天的浪乘幾倍）：平靜的日子來風暴一樣很大，而且一定比沒有風暴的大風天大
+export function seaLevel(base, storm, surge, d, open = 0) {
+  return Math.min(base * (1 + SEA_LV.far * Math.max(d, open)) + SEA_LV.storm * storm * (d + (1 - d) * surge), SEA_LV.cap);
+}
+export const seaOpen = (base, storm) => seaLevel(base, storm, 0, 1, 1);   // 外海
+export const openOf = (shelter) => smooth(0.8, 0.98, shelter);            // 避浪係數 → 迎風的程度
+export const shoreSea = (base, storm, surge) => SEA_LV.shore * base + SEA_LV.shoreStorm * storm * surge;
+// 風速（公尺／秒）：跟浪對得上——平靜的日子兩三公尺、普通的日子六七公尺、大風天十一公尺；風暴二十幾、颱風四十
+export function windSpeed(wind, storm) {
+  const sg = clamp(storm, 0, 1.8);
+  return 2 + 6.5 * clamp(wind - 0.5, 0, 3) + 8 * sg + 7 * sg * sg;
+}
+// 潮汐：一天漲退兩次（12.4 小時一個週期），上下各三十公分
+export const TIDE = { amp: 0.3, period: 12.4 };
+export const tideAt = (day, hour) => TIDE.amp * Math.sin(2 * Math.PI * ((day || 0) * 24 + hour) / TIDE.period);
+
 // 巨浪的形狀：三道三十公尺上下的水牆，前緣陡、背面緩，浪腳前面的海面先陷下去。shader 與這裡用同一組數字
 export const TSU = {
   gap: 260,                 // 浪與浪的間距（公尺）
@@ -33,6 +59,14 @@ export const CURL = {
 };
 // 海嘯到之前岸邊的海水先退下去：深度（佔浪高的比例）；第一道浪前面從多遠開始退、退到底；
 // 浪頭前面多近開始漲回來；後面兩道浪之間退到幾成
+// 海嘯在外海只是一道又長又矮的隆起（船翻得過去），靠近陸地、水變淺了才堆高成水牆，破掉之後沖上岸。
+// 浪高佔 H 的比例：far 外海、peak 最高的地方（at：computeTsuK 那張圖的值，大約離岸一兩百公尺）、岸邊就是那張圖本身
+export const TSU_H = { far: 0.07, peak: 0.42, at: 0.5, shore: 0.16 };
+export function tsuHK(p) {
+  if (p <= TSU_H.shore) return p;
+  if (p <= TSU_H.at) return TSU_H.shore + (TSU_H.peak - TSU_H.shore) * smooth(TSU_H.shore, TSU_H.at, p);
+  return TSU_H.peak + (TSU_H.far - TSU_H.peak) * smooth(TSU_H.at, 0.92, p);
+}
 export const EBB = { depth: 0.075, far: 1000, full: 350, n0: 40, n1: 110, g0: 240, g1: 170, between: 0.8, k0: 0.6, k1: 0.25 };
 
 // 颱風的長浪（湧）：風在幾百公里的海面上吹出來的、又長又高的浪，颱風還沒到它就先到了。
@@ -188,7 +222,7 @@ function curlA(q, B, wf, wb) {
   return 0.5 * (lo + hi);
 }
 
-const CALM = { storm: 0, gloom: 0, lull: 1, rumble: 0, rain: 0, surge: 0, thunder: 0, swell: 0 };
+const CALM = { storm: 0, gloom: 0, lull: 1, rumble: 0, rain: 0, surge: 0, thunder: 0, swell: 0, veer: 0 };
 
 // 海上的事件。平常是 calm，偶爾隨機發生一種：
 //   storm 風暴、thunder 雷暴雨、omen → waves 巨浪、whirl 漩渦、brew → typhoon 颱風
@@ -208,6 +242,7 @@ export class Sea {
     this.surge = 0;                  // 颱風時連島邊的浪也變大（0–1）
     this.thunder = 0;                // 打雷的頻繁程度（0–1）
     this.swell = 0;
+    this.veer = 0;                   // 風向被這場風暴帶偏了幾弧度（颱風經過時風向會一路轉）
     this.goal = { ...CALM };
     this.slow = 1;                   // 變化放慢的倍數（颱風來之前要醞釀很久）
     this.tsu = { on: false, dx: 0, dz: 1, front: 0, H: 0, seed: 0 };
@@ -224,7 +259,7 @@ export class Sea {
     if (kind === 'storm' || kind === 'spout') {
       this.phase = 'storm';
       this.dur = rand(170, 230);
-      this.goal = { ...CALM, storm: rand(0.9, 1.3), gloom: 0.9, rumble: 0.35, rain: 0.7, thunder: 0.35, swell: 0.3 };
+      this.goal = { ...CALM, storm: rand(0.9, 1.3), gloom: 0.9, rumble: 0.35, rain: 0.7, thunder: 0.35, swell: 0.3, veer: rand(-0.3, 0.3) };
       this.spoutLeft = kind === 'spout' || Math.random() < 0.6 ? 1 : 0;
       this.spoutIn = kind === 'spout' ? 6 : rand(50, 110);
     } else if (kind === 'thunder') {
@@ -237,7 +272,7 @@ export class Sea {
       // 先醞釀七分鐘：風浪一點一點變大、天色越來越沉，然後才是最猛的五分鐘
       this.phase = 'brew';
       this.dur = 420; this.slow = 5;
-      this.goal = { ...CALM, storm: 0.6, gloom: 0.7, lull: 1.2, rumble: 0.3, rain: 0.4, surge: 0.35, swell: 0.5 };
+      this.goal = { ...CALM, storm: 0.6, gloom: 0.7, lull: 1.2, rumble: 0.3, rain: 0.4, surge: 0.35, swell: 0.5, veer: -0.35 };
       this.typhoonIn = rand(5400, 9000);
     } else if (kind === 'whirl') {
       if (!this._spawn('whirl', env)) return false;
@@ -246,7 +281,7 @@ export class Sea {
     } else {
       this.phase = 'omen';
       this.dur = 45;
-      this.goal = { ...CALM, gloom: 0.65, lull: 0.3, rumble: 0.5 };
+      this.goal = { ...CALM, gloom: 0.65, rumble: 0.5 };
       const a = rand(0, Math.PI * 2);
       this.tsu = { on: false, dx: Math.cos(a), dz: Math.sin(a), front: -TSU.reach, H: rand(26, 34), seed: rand(0, 6.28) };
     }
@@ -294,7 +329,7 @@ export class Sea {
     } else if (p === 'brew') {
       if (this.t > this.dur) {
         this.phase = 'typhoon'; this.t = 0; this.dur = 300; this.slow = 1.3;
-        this.goal = { storm: 1.7, gloom: 1, lull: 1.3, rumble: 0.6, rain: 1, surge: 1, thunder: 0.6, swell: 1 };
+        this.goal = { storm: 1.7, gloom: 1, lull: 1.3, rumble: 0.6, rain: 1, surge: 1, thunder: 0.6, swell: 1, veer: 0.75 };   // 颱風從旁邊過去：風向一路轉過來
         this.spoutLeft = 2; this.spoutIn = rand(40, 80);
       }
     } else if (p === 'omen') {
@@ -328,8 +363,8 @@ export class Sea {
     }
 
     // 每樣東西變化的快慢不同（秒）：天色先變，海才跟著變；風暴來得慢，巨浪前的平靜來得比較快
-    const tau = { storm: this.goal.storm > this.storm ? 32 : 20, gloom: 14, lull: 9, rumble: 12, rain: 14, surge: 30, thunder: 10, swell: 26 };
-    for (const key in tau) this[key] += (this.goal[key] - this[key]) * (1 - Math.exp(-dt / (tau[key] * this.slow)));
+    const tau = { storm: this.goal.storm > this.storm ? 32 : 20, gloom: 14, lull: 9, rumble: 12, rain: 14, surge: 30, thunder: 10, swell: 26, veer: 110 };
+    for (const key in tau) if (this.goal[key] !== undefined) this[key] = (this[key] || 0) + (this.goal[key] - (this[key] || 0)) * (1 - Math.exp(-dt / (tau[key] * this.slow)));
   }
 
   _calm() {
@@ -359,7 +394,7 @@ export class Sea {
 
   // 浪頭的這一段捲得多兇（0–1）：跟 shader 的 tsuBreak 同一條式子，所以船感受到的跟畫面上看到的是同一段
   breakOf(l, br, tK, time) {
-    return Math.max(br * smooth(0.15, 0.75, 0.5 + 0.5 * Math.sin(time * 0.45 + l * 0.018)), smooth(0.97, 0.80, tK)) * smooth(0.30, 0.50, tK);
+    return Math.max(br * smooth(0.15, 0.75, 0.5 + 0.5 * Math.sin(time * 0.45 + l * 0.018)) * smooth(0.95, 0.80, tK), smooth(0.85, 0.60, tK)) * smooth(0.30, 0.50, tK);
   }
 
   // 巨浪在 (x, z) 的高度，把「捲起來」算進去（還沒乘上 tK）：正在捲的那幾段，浪的正面被往前推成陡壁，
@@ -392,7 +427,7 @@ export class Sea {
     const c = this.crestNear(x, z);
     c.B = this.breakOf(c.l, c.br, tK, time);
     c.Bw = smooth(0.25, 0.85, c.B);
-    c.Hc = c.k * this.tsu.H * tK;
+    c.Hc = c.k * this.tsu.H * tsuHK(tK);
     c.land = CURL.lean * CURL.a0 * TSU.wf * this.tsu.H * c.B + c.Bw * CURL.u * Math.sqrt(2 * CURL.fall * Math.max(c.Hc, 0.1) / CURL.g);
     return c;
   }
@@ -500,6 +535,7 @@ export class Climate {
     this.day = 1;
     // 第一天是普通的好天氣
     this.windGoal = 1.2; this.cloudGoal = 0; this.rainAmt = 0; this.rainFrom = 0; this.rainTo = 0; this.fogAmt = 0;
+    this.veer = 0; this.veerGoal = 0;   // 今天的風向比平常偏了幾弧度（盛行風向不變，每天偏個一二十度）
     this.wind = 1.2;      // 風浪強度（慢慢變）
     this.cloud = 0;       // 雲量造成的陰沉程度
     this.rain = 0;        // 雨勢
@@ -515,6 +551,7 @@ export class Climate {
     this.rainAmt = s < 0.75 ? 0 : rand(0.35, 0.65);
     this.rainFrom = rand(6, 20); this.rainTo = this.rainFrom + rand(4, 10);   // 雨下在一天裡的某幾個小時
     this.fogAmt = Math.random() < 0.22 ? rand(0.6, 0.9) : 0;                  // 有些日子清晨起霧
+    this.veerGoal = rand(-0.45, 0.45);
   }
 
   update(dt) {
@@ -527,6 +564,7 @@ export class Climate {
     const foggy = h >= 4.5 && h < 9.5;
     const ease = (tau) => 1 - Math.exp(-dt / tau);
     this.wind += (this.windGoal - this.wind) * ease(90);
+    this.veer = (this.veer || 0) + ((this.veerGoal || 0) - (this.veer || 0)) * ease(240);
     this.cloud += (this.cloudGoal - this.cloud) * ease(45);
     this.rain += ((raining ? this.rainAmt : 0) - this.rain) * ease(25);
     this.fog += ((foggy ? this.fogAmt : 0) - this.fog) * ease(45);

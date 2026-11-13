@@ -14,6 +14,7 @@ uniform sampler2D uH0;
 uniform int uN;
 uniform vec3 uPatches;
 uniform float uTime;
+uniform vec2 uShape;   // 今天的海是哪一種浪：(kp² − kp0², A)，見 seaShape()
 void main() {
   ivec2 p = ivec2(gl_FragCoord.xy);
   int ci = p.x / uN;
@@ -23,7 +24,7 @@ void main() {
   mn = mix(mn, mn - n, step(n * 0.5, mn));
   vec2 k = 6.2831853 * mn / uPatch;
   float kl = length(k);
-  vec4 h0 = texelFetch(uH0, p, 0);
+  vec4 h0 = texelFetch(uH0, p, 0) * (kl > 1e-6 ? uShape.y * exp(-0.625 * uShape.x / (kl * kl)) : 0.0);
   // 每道浪的角速度湊成 2π/2048 的整數倍：時間每 2048 秒繞一圈時接得起來（多人模式下大家的浪才對得上，見 weather.js 的 WAVE_LOOP）
   float w = floor(sqrt(9.81 * kl) / 0.0030679616 + 0.5) * 0.0030679616 * uTime;
   float c = cos(w), s = sin(w);
@@ -100,12 +101,24 @@ void main() {
 }
 `;
 
-function jonswap(omega, U, fetch) {
-  const alpha = 0.076 * Math.pow((U * U) / (fetch * G), 0.22);
-  const wp = 22 * Math.pow((G * G) / (U * fetch), 1 / 3);
-  const sigma = omega <= wp ? 0.07 : 0.09;
-  const r = Math.exp(-((omega - wp) ** 2) / (2 * sigma * sigma * wp * wp));
-  return (alpha * G * G) / omega ** 5 * Math.exp(-1.25 * (wp / omega) ** 4) * Math.pow(3.3, r);
+// 風浪的頻譜（Pierson–Moskowitz 的形狀）：短浪那一段跟風多大無關（已經飽和了），風越大只是多出越長的浪。
+// 所以整片海只存「最大的海」那一份（浪峰波長 LAMBDA0），小一點的海每幀在著色器裡把比浪峰長的浪濾掉就是了：
+// 小浪短而碎、大浪又長又慢，是同一份頻譜切在不同的地方
+const LAMBDA0 = 150, KP0 = TAU / LAMBDA0;
+function spectrum(omega) {
+  const wp = Math.sqrt(G * KP0);
+  return (G * G) / omega ** 5 * Math.exp(-1.25 * (wp / omega) ** 4);
+}
+// 外海的示性波高（公尺）→ 浪峰的波長（公尺）。小浪接近「吹了很久的海」（波長約波高的四十倍），
+// 風暴的浪是新生的、比較陡（二十幾倍）；最長只到 LAMBDA0（再長的交給颱風的長浪）
+const PEAK = [[0.25, 11], [0.75, 28], [1.3, 45], [2.5, 80], [5, 128], [7.5, LAMBDA0]];
+export function peakLambda(hs) {
+  if (hs <= PEAK[0][0]) return PEAK[0][1];
+  for (let i = 1; i < PEAK.length; i++) if (hs <= PEAK[i][0]) {
+    const [h0, l0] = PEAK[i - 1], [h1, l1] = PEAK[i];
+    return l0 + (l1 - l0) * (hs - h0) / (h1 - h0);
+  }
+  return LAMBDA0;
 }
 
 export class FftOcean {
@@ -115,7 +128,7 @@ export class FftOcean {
     this.patches = opts.patches ?? [700, 113, 23];
     this.chop = opts.chop ?? 0.85;
     const windAngle = opts.windAngle ?? Math.PI / 2 + 0.3;
-    const U = opts.windSpeed ?? 14, fetch = opts.fetch ?? 2e5, hsTarget = opts.hs ?? 2.2;
+    const hsTarget = this.hs = opts.hs ?? 2.2;
     // floatRT：顯示晶片能不能畫進 32 位元浮點貼圖（不少手機只能畫 16 位元的）。不能的話 FFT 整個改用 16 位元算
     this.floatRT = renderer.extensions.has('EXT_color_buffer_float');
     const fftType = this.floatRT && !opts.fft16 ? THREE.FloatType : THREE.HalfFloatType;
@@ -144,7 +157,7 @@ export class FftOcean {
           const cosd = Math.cos(dth);
           // 順風為主（cos⁴ 分佈），留一點逆風成分讓海面不那麼單向
           const D = (cosd > 0 ? (8 / (3 * Math.PI)) * cosd ** 4 : 0) * 0.94 + 0.06 / TAU;
-          const Sk = jonswap(omega, U, fetch) * D * (G / (2 * omega)) / k;
+          const Sk = spectrum(omega) * D * (G / (2 * omega)) / k;
           const amp = Math.sqrt(Math.max(Sk, 0) * dk * dk * 0.5);
           const o = (j * N + i) * 2;
           h[o] = gauss() * amp; h[o + 1] = gauss() * amp;
@@ -194,10 +207,27 @@ export class FftOcean {
       h0.needsUpdate = true;
       return {
         patch: this.patches[ci], h0, slopeVar,
-        disp: [target(mapType, true), target(mapType, true)], cur: 0,
+        // 最小那一層的位移圖只拿來算斜率，不用縮小版（省掉每幀做兩次縮小）
+        disp: [target(mapType, ci < 2), target(mapType, ci < 2)], cur: 0,
         slope: target(THREE.HalfFloatType, true, true),
       };
     });
+
+    // 能量照波數分成一格一格記下來：浪峰切在哪裡，整片海多高、各層多陡，查這張表就知道（見 seaShape）
+    const NB = 400, kLo = TAU / this.patches[0] * 0.9, kHi = TAU / this.patches[NC - 1] * N;
+    this._bins = { NB, kLo, lg: Math.log(kHi / kLo), e: this.cascades.map(() => new Float64Array(NB)), k2: new Float64Array(NB) };
+    for (let b = 0; b < NB; b++) this._bins.k2[b] = (kLo * Math.exp((b + 0.5) / NB * this._bins.lg)) ** 2;
+    this.cascades.forEach((c, ci) => {
+      const d = c.h0.image.data, dk = TAU / c.patch, eb = this._bins.e[ci];
+      for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+        const q = (j * N + i) * 4, en = d[q] * d[q] + d[q + 1] * d[q + 1];
+        if (!en) continue;
+        const k = dk * Math.hypot(i < N / 2 ? i : i - N, j < N / 2 ? j : j - N);
+        eb[Math.min(NB - 1, Math.max(0, Math.floor(Math.log(k / kLo) / this._bins.lg * NB)))] += 2 * en;
+      }
+    });
+    this._var0 = this._sum(0).v;
+    this.shape = this.seaShape(99);
 
     // 三層的初始頻譜並排成一張（第 j 列 = 各層的第 j 列接在一起）
     const atlas = new Float32Array(NC * N * N * 4);
@@ -212,7 +242,7 @@ export class FftOcean {
     const mat = (frag, uniforms) => new THREE.ShaderMaterial({
       vertexShader: quadVert, fragmentShader: frag, uniforms, depthTest: false, depthWrite: false,
     });
-    this.mSpec = mat(spectrumFrag, { uH0: { value: this.h0Atlas }, uN: { value: N }, uPatches: { value: new THREE.Vector3(...this.patches) }, uTime: { value: 0 } });
+    this.mSpec = mat(spectrumFrag, { uH0: { value: this.h0Atlas }, uN: { value: N }, uPatches: { value: new THREE.Vector3(...this.patches) }, uTime: { value: 0 }, uShape: { value: new THREE.Vector2(0, 1) } });
     this.mFft = mat(fftFrag, { uInput: { value: null }, uN: { value: N }, uSub: { value: 2 }, uHoriz: { value: true } });
     this.mDisp = mat(dispFrag, {
       uFft: { value: null }, uPrev: { value: null }, uN: { value: N }, uPatch: { value: 1 }, uOff: { value: 0 },
@@ -228,7 +258,31 @@ export class FftOcean {
     this.stages = Math.round(Math.log2(N));
     this.readBuf = new Float32Array(16);
     this.scale = 1;
+    this.rc = 1; this.rs = 0;   // 浪的方向比原本轉了多少（cos、sin）：風向變了，整片浪跟著轉
   }
+
+  // 浪峰切在 kp（比它長的浪濾掉）時：整片海的變異數 v、各層的斜率變異數 s[]。x = kp² − kp0²
+  _sum(x) {
+    const B = this._bins, s = B.e.map(() => 0);
+    let v = 0;
+    for (let b = 0; b < B.NB; b++) {
+      const f = Math.exp(-1.25 * x / B.k2[b]);
+      for (let ci = 0; ci < s.length; ci++) { const en = B.e[ci][b] * f; v += en; s[ci] += en * B.k2[b]; }
+    }
+    return { v, s };
+  }
+
+  // 外海的示性波高 hs（公尺）時，海是什麼樣子：{ x, A, slopeVar }。
+  // 每道浪乘上 A·exp(-0.625·x / k²)：x = kp² − kp0²（把比浪峰長的浪濾掉），A 把濾完的海補回原本的高度——
+  // 所以不管哪一種海，位移圖的示性波高都是 this.hs，實際多高照舊由浪的強度（scale）去乘
+  seaShape(hs) {
+    const kp = TAU / peakLambda(hs), x = Math.max(0, kp * kp - KP0 * KP0), r = this._sum(x);
+    const A = Math.sqrt(this._var0 / Math.max(r.v, 1e-12));
+    return { x, A, slopeVar: r.s.map((v) => v * A * A) };
+  }
+
+  // 風向（浪向）比原本轉了幾弧度
+  setTurn(a) { this.rc = Math.cos(a); this.rs = Math.sin(a); }
 
   // 把位移圖的一塊讀回 CPU（Float32Array）。16 位元的圖：能用 32 位元讀就直接讀，不能的話讀 16 位元再換算。
   // 真的讀不了（少數手機）時 out 維持原樣（全 0），船就只是不跟著浪起伏，遊戲照跑
@@ -255,9 +309,12 @@ export class FftOcean {
 
   // t：模擬時間；dt：距上次更新的時間（控制泡沫衰減）；scale：風浪強度
   // foamScale：累積白浪用的強度（風暴時外海的浪比 scale 大，白浪要跟著變多）
-  update(t, dt, scale, foamScale = scale) {
+  // hsOpen：外海現在的示性波高（公尺）——決定浪峰多長（小浪短而碎、大浪又長又慢）
+  update(t, dt, scale, foamScale = scale, hsOpen = 99) {
     this.scale = scale;
     const N = this.N;
+    if (hsOpen !== this._hsOpen) { this._hsOpen = hsOpen; this.shape = this.seaShape(hsOpen); }
+    this.mSpec.uniforms.uShape.value.set(this.shape.x, this.shape.A);
     // 頻譜與逆 FFT：三層並排一起算
     this.mSpec.uniforms.uTime.value = t % 2048;
     this.pass(this.mSpec, this.fft[0]);
@@ -294,24 +351,43 @@ export class FftOcean {
 
   // 船的浮力、游泳、鏡頭在不在水下……要知道浪高的地方，用的是背景執行緒（oceanWorker.js）用 CPU 算的同一片海：
   // 以前是從顯示晶片讀回來，但手機上的 Chrome 每讀一次 CPU 都要停下來等十幾毫秒（連只讀一個像素也一樣）。
-  // 兩層各一個背景執行緒。算一份要好幾幀，所以請它算「稍微未來」的時間，主執行緒在前後兩份之間內插出現在的浪高，
-  // 浮沉才是連續的。開不了背景執行緒的瀏覽器才退回從顯示晶片讀
+  // 兩層各一個背景執行緒，各自每隔一小段時間（step）算一張「稍微未來」的海，主執行緒在前後兩張之間內插出現在的浪高。
+  // 這兩層最短的浪也要一秒半以上才起伏一次，一秒算十來張就夠平順了——以前是一算完馬上再算，手機上兩顆核心整天滿載。
+  // 開不了背景執行緒的瀏覽器才退回從顯示晶片讀
   _pump(t) {
+    // 自己數的時間（不繞圈）：傳進來的時間跳了（對時、繞回 0 以外的跳動）就把手上的丟掉重來
     t %= 2048;
-    this._now = t;
+    let reset = false;
+    if (this._clock === undefined) { this._clock = t; reset = true; }
+    else {
+      let d = t - this._last;
+      if (d < -1024) d += 2048;
+      if (d < -0.01 || d > 1.5) { this._clock = t; reset = true; } else this._clock += Math.max(d, 0);
+    }
+    this._last = t;
+    const now = this._clock;
     if (this._workers === undefined) {
       this._workers = null;
       try {
+        const M = this.M = 128, N = this.N;
         this._workers = [0, 1].map((ci) => {
+          // 粗一半的格子：把有值的那幾十個頻率搬過去（其餘本來就是 0）
+          const src = this.cascades[ci].h0.image.data, h0 = new Float32Array(M * M * 4);
+          for (let j = 0; j < M; j++) for (let i = 0; i < M; i++) {
+            const m = i < M / 2 ? i : i - M, q = j < M / 2 ? j : j - M;
+            if (m === -M / 2 || q === -M / 2) continue;
+            const s = (((q + N) % N) * N + ((m + N) % N)) * 4, d = (j * M + i) * 4;
+            h0[d] = src[s]; h0[d + 1] = src[s + 1]; h0[d + 2] = src[s + 2]; h0[d + 3] = src[s + 3];
+          }
           const w = new Worker(new URL('./oceanWorker.js', import.meta.url), { type: 'module' });
-          const st = { w, busy: false, cost: 0.2, sent: 0, prev: null, cur: null, spare: null };
-          w.postMessage({ init: { N: this.N, chop: this.chop, patch: [this.patches[ci]], h0: [this.cascades[ci].h0.image.data] } });
+          const st = { w, busy: false, cost: 0.05, sent: 0, id: 0, want: 0, snaps: [], spare: [], a: null, b: null, k: 1, step: [0.16, 0.08][ci], jobs: 0 };
+          w.postMessage({ init: { N: M, chop: this.chop, patch: [this.patches[ci]], h0: [h0] } });
           w.onmessage = (e) => {
-            st.busy = false;
-            st.cost = 0.8 * st.cost + 0.2 * (performance.now() - st.sent) / 1000;   // 算一份要多久（秒）
-            if (st.prev) st.spare = st.prev.data;
-            st.prev = st.cur;
-            st.cur = { t: e.data.t, data: e.data.bufs[0] };
+            st.busy = false; st.jobs++;
+            st.cost = 0.8 * st.cost + 0.2 * (performance.now() - st.sent) / 1000;   // 算一張要多久（秒）
+            if (e.data.id !== st.id) { st.spare.push(e.data.bufs[0]); return; }      // 重來之前送出去的：不要了
+            st.snaps.push({ t: st.want, data: e.data.bufs[0] });
+            while (st.snaps.length > 3) st.spare.push(st.snaps.shift().data);
           };
           w.onerror = () => { this._workers = null; };
           return st;
@@ -320,38 +396,63 @@ export class FftOcean {
     }
     if (!this._workers) return;
     for (const st of this._workers) {
-      if (st.busy) continue;
-      st.busy = true; st.sent = performance.now();
-      const buf = st.spare; st.spare = null;
-      st.w.postMessage({ t: (t + st.cost * 1.3 + 0.03) % 2048, bufs: buf ? [buf] : undefined }, buf ? [buf.buffer] : []);
+      if (reset) { st.id++; for (const s of st.snaps) st.spare.push(s.data); st.snaps.length = 0; st.a = st.b = null; }
+      const last = st.snaps[st.snaps.length - 1];
+      // 手上最新的那張快要用完了（扣掉算一張要花的時間）才請下一張
+      if (!st.busy && (!last || now + st.cost * 1.6 + 0.05 >= last.t)) {
+        st.busy = true; st.sent = performance.now();
+        st.want = !last ? now : (last.t + st.step > now + st.cost ? last.t + st.step : now + st.cost * 1.3 + 0.03);
+        const buf = st.spare.pop();
+        st.w.postMessage({ t: st.want % 2048, id: st.id, shape: [this.shape.x, this.shape.A], bufs: buf ? [buf] : undefined }, buf ? [buf.buffer] : []);
+      }
+      // 現在落在哪兩張之間
+      const n = st.snaps.length;
+      if (!n) { st.a = st.b = null; continue; }
+      let i = 0;
+      while (i < n - 1 && st.snaps[i + 1].t <= now) i++;
+      const A = st.snaps[i], B = st.snaps[Math.min(i + 1, n - 1)];
+      st.a = A.data; st.b = B.data;
+      st.k = B.t > A.t ? Math.min(1, Math.max(0, (now - A.t) / (B.t - A.t))) : 0;
     }
   }
 
   // 背景執行緒的結果有沒有到（兩層都要有）
-  get _cpuReady() { return !!(this._workers && this._workers[0].cur && this._workers[1].cur); }
+  get _cpuReady() { return !!(this._workers && this._workers[0].b && this._workers[1].b); }
 
-  // 從背景執行緒的結果取一塊（x、y 已在範圍內）寫進 out（RGBA）：在前後兩份之間依現在的時間內插
-  _copy(ci, x, y, w, h, out) {
-    const st = this._workers[ci], N = this.N, b = st.cur, a = st.prev;
-    let k = 1;
-    if (a && b.t > a.t && this._now > a.t - 1 && this._now < b.t + 1) k = Math.min(1, Math.max(0, (this._now - a.t) / (b.t - a.t)));
-    for (let r = 0; r < h; r++) {
-      const src = ((y + r) * N + x) * 4, dst = r * w * 4;
-      if (k >= 1) out.set(b.data.subarray(src, src + w * 4), dst);
-      else for (let q = 0; q < w * 4; q++) out[dst + q] = a.data[src + q] + (b.data[src + q] - a.data[src + q]) * k;
+  // 背景執行緒算的那一層在 (x, z)（浪的座標）的位移，加進 out：full 時是 (Dx, h, Dz)，否則只加 h（out[1]）。
+  // 格子比畫面用的粗，所以用三次內插（Catmull–Rom）：最短的浪一道只有三四格，直線內插會把浪頭削平
+  _cpu(ci, x, z, out, full) {
+    const st = this._workers[ci], M = this.M, mask = M - 1, patch = this.patches[ci], cell = patch / M;
+    const u = (x - 0.5 * patch / this.N) / cell, v = (z - 0.5 * patch / this.N) / cell;   // 畫面上的貼圖是取格子中央，所以差半格（畫面那種格子的半格）
+    const i0 = Math.floor(u), j0 = Math.floor(v), fx = u - i0, fz = v - j0;
+    const wx = this._wx || (this._wx = [0, 0, 0, 0]), wz = this._wz || (this._wz = [0, 0, 0, 0]);
+    let f2 = fx * fx, f3 = f2 * fx;
+    wx[0] = -0.5 * f3 + f2 - 0.5 * fx; wx[1] = 1.5 * f3 - 2.5 * f2 + 1; wx[2] = -1.5 * f3 + 2 * f2 + 0.5 * fx; wx[3] = 0.5 * f3 - 0.5 * f2;
+    f2 = fz * fz; f3 = f2 * fz;
+    wz[0] = -0.5 * f3 + f2 - 0.5 * fz; wz[1] = 1.5 * f3 - 2.5 * f2 + 1; wz[2] = -1.5 * f3 + 2 * f2 + 0.5 * fz; wz[3] = 0.5 * f3 - 0.5 * f2;
+    const a = st.a, b = st.b, k = st.k;
+    let s0 = 0, s1 = 0, s2 = 0;
+    for (let r = 0; r < 4; r++) {
+      const row = ((j0 - 1 + r) & mask) * M;
+      for (let c = 0; c < 4; c++) {
+        const o = (row + ((i0 - 1 + c) & mask)) * 4, w = wz[r] * wx[c];
+        s1 += w * (a[o + 1] + (b[o + 1] - a[o + 1]) * k);
+        if (full) { s0 += w * (a[o] + (b[o] - a[o]) * k); s2 += w * (a[o + 2] + (b[o + 2] - a[o + 2]) * k); }
+      }
     }
+    out[0] += s0; out[1] += s1; out[2] += s2;
   }
 
-  // 從背景執行緒算的那一份拿；還沒有（剛開始的頭幾幀）才從顯示晶片讀
+  // 從顯示晶片讀一塊（背景執行緒還沒好、或開不了的時候才用）
   _get(ci, x, y, w, h, out) {
-    if (this._cpuReady) { this._copy(ci, x, y, w, h, out); return; }
     const c = this.cascades[ci];
     this._read(c.disp[c.cur], x, y, w, h, out);
   }
 
-  // 一次讀回 (x, z) 周圍 8×8 格的浪高，之後用 sampleCached 取樣，避免每個取樣點都向 GPU 要資料
+  // 背景執行緒還沒有結果時的退路：一次讀回 (x, z) 周圍的浪高，之後用 sampleCached 取樣，避免每個取樣點都向 GPU 要資料
   cacheBlock(x, z) {
-    if (!this.canRead) return;
+    if (!this.canRead || this._cpuReady) return;
+    [x, z] = [x * this.rc + z * this.rs, z * this.rc - x * this.rs];
     const c = this.cascades[0], N = this.N, B = 8;
     const gx = ((x / c.patch) % 1 + 1) % 1 * N, gz = ((z / c.patch) % 1 + 1) % 1 * N;
     const bi = Math.min(N - B, Math.max(0, Math.floor(gx) - B / 2));
@@ -395,15 +496,28 @@ export class FftOcean {
   // 浪頭的水是往旁邊擠過去的（水平位移），所以 (x, z) 上方的那一點其實是從旁邊的網格點搬過來的，要倒推回去找。
   // k：這裡的浪放大幾倍（避浪、風暴、淺水變小）
   sampleSurface(x, z, k = 1) {
-    if (!this.blockBuf || !this.block1) return this.sampleCached(x, z) * k;
     const s = this.scale * k, d = this._dv || (this._dv = [0, 0, 0]);
+    if (this._cpuReady) {
+      const X = x * this.rc + z * this.rs, Z = z * this.rc - x * this.rs;   // 轉到浪的座標去找（高度不受旋轉影響）
+      let px = X, pz = Z;
+      for (let it = 0; it < 3; it++) {
+        d[0] = d[1] = d[2] = 0;
+        this._cpu(0, px, pz, d, true); this._cpu(1, px, pz, d, true);
+        if (it < 2) { px = X - d[0] * s; pz = Z - d[2] * s; }
+      }
+      return d[1] * s;
+    }
+    if (!this.blockBuf || !this.block1) return this.sampleCached(x, z) * k;
+    [x, z] = [x * this.rc + z * this.rs, z * this.rc - x * this.rs];
     let px = x, pz = z;
     for (let it = 0; it < 2; it++) { this._disp(px, pz, d); px = x - d[0] * s; pz = z - d[2] * s; }
     return this._disp(px, pz, d)[1] * s;
   }
 
   sampleCached(x, z) {
+    if (this._cpuReady) return this.sampleHeight(x, z);
     if (!this.blockBuf) return 0;
+    [x, z] = [x * this.rc + z * this.rs, z * this.rc - x * this.rs];
     const B = 8, t = this.N / this.cascades[0].patch, b = this.blockBuf;
     const fx = Math.min(B - 1.001, Math.max(0, (x - this.blockX0) * t - 0.5));
     const fz = Math.min(B - 1.001, Math.max(0, (z - this.blockZ0) * t - 0.5));
@@ -415,7 +529,14 @@ export class FftOcean {
 
   // 讀回最大一層在 (x, z) 的浪高（公尺），給船的浮力用
   sampleHeight(x, z) {
+    if (this._cpuReady) {
+      const d = this._dh || (this._dh = [0, 0, 0]);
+      d[1] = 0;
+      this._cpu(0, x * this.rc + z * this.rs, z * this.rc - x * this.rs, d, false);
+      return d[1] * this.scale;
+    }
     if (!this.canRead) return 0;
+    [x, z] = [x * this.rc + z * this.rs, z * this.rc - x * this.rs];
     const c = this.cascades[0], N = this.N;
     const gx = ((x / c.patch) % 1 + 1) % 1 * N - 0.5, gz = ((z / c.patch) % 1 + 1) % 1 * N - 0.5;
     const i = Math.min(N - 2, Math.max(0, Math.floor(gx))), j = Math.min(N - 2, Math.max(0, Math.floor(gz)));

@@ -1,6 +1,6 @@
 // 天氣的畫面特效：雨絲、閃電、水龍捲。
 import * as THREE from 'three';
-import { TSU } from './weather.js';
+import { TSU, TSU_H } from './weather.js';
 import { tsuExtra, swellLib } from './renderShaders.js';
 
 // 雨：一盒跟著鏡頭走的雨絲，每一滴掉到底就從上面再來一次。雨被風吹斜，風一陣一陣的，雨絲也跟著忽斜忽直
@@ -576,7 +576,7 @@ vec3 sprayPos(float ahead, out float fade, out float age) {
   float a0 = uTsu.z + ${TSU.speed.toFixed(1)} * ahead - fi * ${TSU.gap.toFixed(1)} - shift;   // 浪頭現在在哪
   float dng = textureLod(uTsuK, clamp((dir * a0 + perp * l) / uL + 0.5, 0.0, 1.0), 0.0).r;   // 浪到這裡剩幾成高
   float k = fi < 0.5 ? ${TSU.k[0].toFixed(2)} : fi < 1.5 ? ${TSU.k[1].toFixed(2)} : ${TSU.k[2].toFixed(2)};
-  float top = k * amp * uTsu.w * dng;
+  float top = k * amp * uTsu.w * tsuHK(dng);
   float B = tsuBreak(l, br, dng, uTime);
   if (B > 0.3 && fract(aKind.y * 7.31) > 0.4) {
     // 正在捲的那幾段：捲舌砸在浪腳上，水被炸起來、往前往上噴，升到比浪頂還高，再被浪追過去
@@ -592,7 +592,7 @@ vec3 sprayPos(float ahead, out float fade, out float age) {
   vec2 xz = dir * a + perp * (l + (fract(aKind.y * 13.7) - 0.5) * 16.0 * t);
   float y = top * 0.97 + mix(3.0, 10.0, aSeed.w) * t - 1.7 * t * t;
   age = u;
-  fade = smoothstep(0.0, 0.08, u) * pow(1.0 - u, 1.3) * (0.2 + 0.8 * br) * smoothstep(0.05, 0.45, dng);
+  fade = smoothstep(0.0, 0.08, u) * pow(1.0 - u, 1.3) * (0.2 + 0.8 * br) * smoothstep(0.05, 0.45, dng) * min(tsuHK(dng) / ${TSU_H.peak.toFixed(3)}, 1.0);   // 外海的浪頭很矮，沒什麼水花
   return vec3(xz.x, y, xz.y);
 }
 void main() {
