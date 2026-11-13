@@ -179,7 +179,8 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
   const out = { rocks: [], piles: [], solids: [], camBoxes: [], bulbs: [] };   // bulbs：室內燈的燈泡 { zone, x, y, z, r }
   const camBox = (x0, x1, y0, y1, z0, z1, rot = 0, cx = (x0 + x1) / 2, cz = (z0 + z1) / 2) => out.camBoxes.push({ cx, cy: (y0 + y1) / 2, cz, w: x1 - x0, h: y1 - y0, d: z1 - z0, rot });
   const D = H.DECK_Y;
-  const terrain = new THREE.Mesh(terrainGeo(P, 214, 2.0, 7, homeBed, 0, -46, null), mat);
+  const HG = H.HOME_GROUND;
+  const terrain = new THREE.Mesh(terrainGeo(P, HG.size, 2.0, 7, homeBed, HG.cx, HG.cz, null), mat);
   terrain.castShadow = terrain.receiveShadow = true;
   group.add(terrain);
 

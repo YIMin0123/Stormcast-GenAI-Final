@@ -11,6 +11,7 @@ import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_RO
 import { WORLD } from './config.js';
 import { HOME_U, placeInHome } from './homeGl.js';
 import { HOME_YAW, toWorld, toLocal, headingToWorld } from './frame.js';
+import { HOME_GROUND } from './lowpoly/harborPlan.js';
 import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SWITCHES_W, ROOFS_W, underRoof, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
 import { fishLabel, FishWorld } from './fish.js';
 import { money as cash } from './fishdata.js';
@@ -280,6 +281,15 @@ const boatGround = (x, z) => {
 
 // ---- 場景物件 -------------------------------------------------------------
 // 地形網格：高度與法線直接放進頂點；深海的格子不畫（反正看不到）
+// 這一格（四個角）是不是整個落在母島低面地形的範圍裡（往內縮一格，接縫處兩層稍微重疊，不會露出縫）
+function underHomeGround(i, j) {
+  const HG = HOME_GROUND, half = HG.size / 2 - DX, n = NF;
+  for (const [di, dj] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+    const [hx, hz] = toLocal(((i + di + 0.5) / n - 0.5) * L, ((j + dj + 0.5) / n - 0.5) * L);
+    if (Math.abs(hx - HG.cx) > half || Math.abs(hz - HG.cz) > half) return false;
+  }
+  return true;
+}
 function makeTerrainGeometry() {
   const n = NF, at = (i, j) => bedData[clamp(j, 0, n - 1) * n + clamp(i, 0, n - 1)];
   // 先挑出要畫的格子，只替用得到的頂點建資料（大部分的地圖是深海）
@@ -290,6 +300,7 @@ function makeTerrainGeometry() {
     for (let i = 0; i < n - 1; i++) {
       const a = j * n + i, b = a + n, c = a + 1, d = b + 1;
       if (Math.max(bedData[a], bedData[b], bedData[c], bedData[d]) < -26) continue;
+      if (underHomeGround(i, j)) continue;   // 母島那一塊由港口的低面地形畫
       idx.push(use(a), use(b), use(c), use(b), use(d), use(c));
     }
   }

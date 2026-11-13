@@ -12,6 +12,8 @@ export const ISLAND = { x: 0, z: -54, rx: 78, rz: 56 };
 export const FRONT = { x: 0, z: -6, rx: 56, rz: 9 };          // 岸邊的緩坡（木平台、商店、魚市場在這裡）
 export const POINT = { x: 62, z: -27, rx: 13, rz: 11 };       // 東邊的岩岬（燈塔）
 export const HILL = { x: -8, z: -62, rx: 50, rz: 32, peak: 16 };
+// 母島的低面地形（含海底）蓋的範圍：港座標中心 (cx, cz)、邊長 size。遊戲的大地形在這一塊裡面不畫（兩層疊在同一個高度會互搶）
+export const HOME_GROUND = { cx: 0, cz: -46, size: 214 };
 export const TERRACE = { x0: -34, x1: 34, z0: -17, z1: -5, y: DECK_Y - 0.05, blend: 6 };   // 村子那一片整平（跟棧板一樣高，一步走上去）
 
 // ---- 木棧板：每一塊都是一個長方形（可以斜放）{ cx, cz 中心, ux, uz 長邊方向, hl 半長, hw 半寬 } ----
