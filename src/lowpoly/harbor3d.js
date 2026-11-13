@@ -223,7 +223,8 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
   const before = (R) => ORDER.slice(0, ORDER.indexOf(R));
 
   // ---- 一塊棧板：木板（跨短邊、沿長邊一片一片排）、底下兩三根縱樑、每 3 公尺一根橫樑和一排木樁 ----
-  const deck = (R, { posts = true, braces = false, skirt = 0.06, skipPost = () => false } = {}) => {
+  // flush：跟這幾塊棧板接在一起的那一頭，木板剛好切齊邊界（不伸出去、不長短不齊），兩邊的木板才不會疊在一起
+  const deck = (R, { posts = true, braces = false, skirt = 0.06, skipPost = () => false, flush = [] } = {}) => {
     const wx = -R.uz, wz = R.ux;   // 寬邊方向
     const plankLen = 2 * R.hw + skirt * 2, prev = before(R);
     for (let s = -R.hl; s < R.hl - 0.05;) {
@@ -231,7 +232,15 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
       const c = s + w / 2;
       const k = r();
       const col = k < 0.06 ? P.woodFresh : k < 0.14 ? P.woodGrey : k < 0.55 ? P.woodLight : P.wood;   // 偶爾一片新換的、一片曬白的
-      const off = (r() - 0.5) * 0.12, len = plankLen + (r() - 0.5) * 0.1;   // 木板左右長短不齊
+      let off = (r() - 0.5) * 0.12, len = plankLen + (r() - 0.5) * 0.1;   // 木板左右長短不齊
+      if (flush.length) {
+        let e0 = off - len / 2, e1 = off + len / 2;
+        for (const sg of [-1, 1]) {
+          const px = R.cx + R.ux * c + wx * sg * (R.hw + 0.15), pz = R.cz + R.uz * c + wz * sg * (R.hw + 0.15);
+          if (flush.some((Q) => inRect(px, pz, Q))) { if (sg < 0) e0 = -R.hw; else e1 = R.hw; }
+        }
+        off = (e0 + e1) / 2; len = e1 - e0;
+      }
       const cx = R.cx + R.ux * c + wx * off, cz = R.cz + R.uz * c + wz * off;
       // 板面完全平齊（不上下、不歪）：一公分的小台階都會被陰影和角落暗影抓到，變成很多細碎的邊，鏡頭一動就閃。
       // 木板的「歪」只留在長短不齊和顏色深淺上（亂數照樣抽，後面的木板才不會整片換掉樣子）
@@ -289,12 +298,12 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
   const fingerEnd = (f) => [f.cx + f.ux * (f.hl - 0.2), f.cz + f.uz * (f.hl - 0.2)];
   const nearEnd = (f) => (x, z) => { const [ex, ez] = fingerEnd(f); return Math.hypot(x - ex, z - ez) < 0.8; };
 
-  deck(H.BOARDWALK);
+  deck(H.BOARDWALK, { flush: H.FLOORS });
   deck(H.SEG1, { braces: true });
   deck(H.CORNER, { skipPost: isRopePost });
   deck(H.SEG2, { braces: true });
   for (const f of H.FINGERS) deck(f, { skirt: 0.04, skipPost: nearEnd(f) });
-  for (const f of H.FLOORS) deck(f, { posts: false });
+  for (const f of H.FLOORS) deck(f, { posts: false, flush: [H.BOARDWALK] });
 
   // 指棧尾端那根樁高出棧板（繫纜用），樁上綁一圈繩子；每隔幾根頂上放一盞小燈籠（裝飾，不打光）
   H.FINGERS.forEach((f, i) => {

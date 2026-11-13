@@ -87,7 +87,7 @@ export const SWITCHES = [
 export const SIGNS = [
   { text: '港口漁具行', x: -23.2, y: DECK_Y + 4.75, z: -6.42, w: 5.2, h: 0.9, rot: 0, style: 'wood' },
   { text: '魚市場', x: 20, y: DECK_Y + 3.18, z: -4.98, w: 3.2, h: 0.6, rot: 0, style: 'wood' },
-  { text: '今日漁獲・新鮮直送', x: 20, y: DECK_Y + 1.55, z: -12.27, w: 2.4, h: 1.1, rot: 0, style: 'chalk' },
+  { text: '今日漁獲・新鮮直送', x: 20, y: DECK_Y + 1.55, z: -12.02, w: 2.4, h: 1.1, rot: 0, style: 'chalk' },   // 釘在後排中間那根柱子的正面（柱子不會從黑板中間穿出來）
   { text: '鮮魚', x: 13.25, y: DECK_Y + 2.35, z: -4.62, w: 0.46, h: 1.5, rot: 0, style: 'nobori', col: '#c8352a' },
   { text: '大漁', x: 26.75, y: DECK_Y + 2.35, z: -4.62, w: 0.46, h: 1.5, rot: 0, style: 'nobori', col: '#2f5d9a' },
   { text: '釣具', x: -28.6, y: DECK_Y + 2.35, z: -4.4, w: 0.46, h: 1.5, rot: 0, style: 'nobori', col: '#2f5d9a' },
