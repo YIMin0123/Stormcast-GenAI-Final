@@ -6,7 +6,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { buildBoatMesh, BOAT_TYPES } from './boat.js';
 import { makeCanMesh } from './fish.js';
 import { HOME_U, homeGlsl } from './homeGl.js';
-import { toWorld } from './frame.js';
+import { toWorld, HOME_YAW } from './frame.js';
 import { bulb, softDisc, softSquare } from './toon.js';
 import { DECK_Y, DECKS, WALLS, SHOP, LIGHTHOUSE, SELL, SHELF, SHELF_X, SHELF_Z, PLAYER_SPAWN } from './layout.js';
 import * as H from './lowpoly/harborPlan.js';
@@ -17,7 +17,7 @@ import { palette } from './lowpoly/palette.js';
 export { DECK_Y, DECKS, WALLS, SHOP, LIGHTHOUSE, SELL, SHELF, SHELF_X, SHELF_Z, PLAYER_SPAWN };
 // 這個檔案的座標全是港座標（見 frame.js）；makeHarbor 回傳的 group 由呼叫的人擺到世界裡（位置、轉向）
 
-export const HARBOR_ROCKS = [];   // 消波塊（船和人都過不去）：{ x, z, r, top }
+export const HARBOR_ROCKS = [];   // 母島的大石頭（照模型的高度圖）、燈塔的石墩（平頂橢圓）：格式見 harbor3d.js 的 rockShape、main.js 的 rockAt
 
 // 電子板的畫面：黑底綠字
 const boardCanvas = document.createElement('canvas');
@@ -609,7 +609,7 @@ export function makeHarbor() {
   // 繫船柱：每格停船格的棧橋邊一根（纜繩套在樁頂下面一點）
   for (const b of H.BOLLARDS) {
     BOLLARDS.push({ x: b.x, z: b.z, y: DECK_Y + 0.42 });
-    SOLIDS.push({ x: b.x, z: b.z, r: 0.33 });
+    SOLIDS.push({ x: b.x, z: b.z, r: 0.27 });   // 繫船柱：底部半徑 0.23
   }
 
   // 賣魚的電子板：黑底綠字（setBoard 畫的），貼在立柱上那塊板子的正面
@@ -637,4 +637,7 @@ export function worldizeHarborLists() {
   for (const list of [PILES, SOLIDS, HARBOR_ROCKS, BOLLARDS, LAMPS, EXTRA_LAMPS]) {
     for (const p of list) [p.x, p.z] = toWorld(p.x, p.z);
   }
+  // 石頭的橢圓也要跟著港口轉向（港座標轉 HOME_YAW 就是世界座標）
+  const C = Math.cos(HOME_YAW), S = Math.sin(HOME_YAW);
+  for (const k of HARBOR_ROCKS) if (k.c !== undefined) [k.c, k.s] = [k.c * C - k.s * S, k.s * C + k.c * S];
 }

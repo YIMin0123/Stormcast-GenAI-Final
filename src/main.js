@@ -11,7 +11,7 @@ import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_RO
 import { WORLD } from './config.js';
 import { HOME_U, placeInHome } from './homeGl.js';
 import { HOME_YAW, toWorld, toLocal, headingToWorld } from './frame.js';
-import { BERTHS, berthPose, deckY, ladderY, onDeck, inHarbor, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, SHOP_FRONT_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
+import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, SHOP_FRONT_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
 import { fishLabel, FishWorld } from './fish.js';
 import { money as cash } from './fishdata.js';
 import { Fishing } from './fishing.js';
@@ -213,10 +213,11 @@ const BLOCKS = [
   { x0: SELL.basket.x - 0.5, x1: SELL.basket.x + 0.5, z0: SELL.basket.z - 0.5, z1: SELL.basket.z + 0.5 },   // 籃子
   { x0: SELL.button.x - 0.2, x1: SELL.button.x + 0.2, z0: SELL.button.z - 0.2, z1: SELL.button.z + 0.2 },   // 按鈕柱
   { x0: SHELF_X[0], x1: SHELF_X[1], z0: SHELF_Z - 0.65, z1: SHELF_Z + 0.65 },   // 商品架的長桌
-  ...WALLS,   // 防波堤的胸牆、魚市場的魚箱堆、自動販賣機、晒網架
+  ...WALLS,   // 商店的牆、看板、魚市場的桌子和矮牆、貨架、坡上的小屋（見 layout.js）
 ];
-// 大石頭：用格子分區，查詢某個位置有沒有石頭擋著（回傳石頭頂端的高度，沒有就是 null）
-const ROCK_CELL = 8, rockGrid = new Map();
+// 大石頭：用格子分區，查詢某個位置的石頭表面有多高（沒有石頭就是 null）。
+// 母島的石頭照模型的形狀（高度圖）：低低的邊緣踩得上去，高的地方擋住（見 walkGround）
+const ROCK_CELL = 8, ROCK_STAND = 0.5, rockGrid = new Map();
 function addRocks(list) {
   for (const r of list) {
     for (let gx = Math.floor((r.x - r.r) / ROCK_CELL); gx <= Math.floor((r.x + r.r) / ROCK_CELL); gx++) {
@@ -232,22 +233,41 @@ function rockAt(x, z) {
   const cell = rockGrid.get(Math.floor(x / ROCK_CELL) * 4096 + Math.floor(z / ROCK_CELL));
   if (!cell) return null;
   let top = null;
-  for (const r of cell) if ((x - r.x) ** 2 + (z - r.z) ** 2 < r.r * r.r && (top === null || r.top > top)) top = r.top;
+  for (const r of cell) {
+    const dx = x - r.x, dz = z - r.z;
+    if (dx * dx + dz * dz >= r.r * r.r) continue;
+    let h;
+    if (r.hgt) {   // 母島的石頭：照模型算好的高度圖（見 harbor3d.js 的 rockShape）
+      const u = dx * r.c - dz * r.s + r.hx, v = dx * r.s + dz * r.c + r.hz;   // 轉回港座標、從高度圖的角落算起
+      const i = Math.floor(u / r.cell), j = Math.floor(v / r.cell);
+      if (i < 0 || j < 0 || i >= r.nx || j >= r.nz) continue;
+      h = r.hgt[j * r.nx + i];
+      if (h < -50) continue;   // 這格沒有石頭
+    } else if (r.a !== undefined) {   // 平頂的橢圓（燈塔的石墩）
+      const u = (dx * r.c - dz * r.s) / r.a, v = (dx * r.s + dz * r.c) / r.d;
+      if (u * u + v * v >= 1) continue;
+      h = r.top;
+    } else h = r.top;   // 其他島佈景的石頭、樹幹：平頂的圓（樹幹的頂是 99，等於整根擋住）
+    if (top === null || h > top) top = h;
+  }
   return top;
 }
 
 // 玩家腳下的高度：棧板、地面，或擋路的牆（回傳很高的值）
 function walkGround(x, z, under = false) {
   const [hx, hz] = toLocal(x, z);   // 商店、牆這些矩形是用港座標寫的
-  for (const r of BLOCKS) if (hx > r.x0 && hx < r.x1 && hz > r.z0 && hz < r.z1) return 99;
-  if (rockAt(x, z) !== null) return 99;
+  for (const r of BLOCKS) if (inWall(r, hx, hz)) return 99;
   if (Math.hypot(x - LIGHTHOUSE_W.x, z - LIGHTHOUSE_W.z) < LIGHTHOUSE_W.r) return 99;
   if (!under) for (const c of SOLIDS) if ((x - c.x) ** 2 + (z - c.z) ** 2 < c.r * c.r) return 99;   // 棧板上的樁、燈柱、木桶…（在棧板底下游泳時不算）
   const ly = ladderY(x, z);   // 梯子：落水的人從這裡爬上棧板
   if (ly !== null) return ly;
   const dy = deckY(x, z);   // 木棧板（岸邊平台、棧橋、指棧、店裡的地板）
   if (dy !== null) return under ? 99 : dy;   // 棧板比水面高 1 公尺多，游泳的人直接爬不上去、也不從底下鑽過去：要找梯子
-  return bedAt(x, z);
+  // 石頭：比地面高不到半公尺的地方（石頭低低的邊緣）踩得上去，再高就是擋住。
+  // 不能只靠「一步踏不上 0.6 公尺」：石頭表面是連續變高的，一小步一小步會一路走到頂上
+  const rk = rockAt(x, z), g = bedAt(x, z);
+  if (rk === null || rk <= g) return g;
+  return rk - g < ROCK_STAND ? rk : 99;
 }
 // 船眼中的地面：棧橋也算障礙物
 const boatGround = (x, z) => {

@@ -289,12 +289,13 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false }
     const g = new THREE.CylinderGeometry(p.rr + 0.035, p.rr + 0.035, 0.08, 6); g.translate(rx, D + 0.5, rz);
     fb.addGeometry(g, () => jitter(P.rope, r, 0.05));
     if (i % 4 === 0) { const [tx, tz] = p.at(D + 0.75); lantern(tx, D + 0.75 + 0.21, tz, 0.7); }
-    out.solids.push({ x, z, r: 0.3 });
+    const [sx, sz] = p.at(D + 0.4);
+    out.solids.push({ x: sx, z: sz, r: p.rr + 0.04 });
   });
   // 轉角平台西邊：一排高樁，樁之間拉一條繩子（只是好看，擋不住人）；梯子那一格不拉
   {
     const tops = [];
-    for (const z of ropeZ) { const p = post(ropeX, z, D + 1.0, 0.15); if (p) { tops.push({ z, at: p.at(D + 0.8) }); out.solids.push({ x: ropeX, z, r: 0.22 }); } }
+    for (const z of ropeZ) { const p = post(ropeX, z, D + 1.0, 0.15); if (p) { const at = p.at(D + 0.4); tops.push({ z, at: p.at(D + 0.8) }); out.solids.push({ x: at[0], z: at[1], r: p.rr + 0.04 }); } }
     const lad = H.LADDERS.find((l) => l.nx < 0 && Math.abs(l.x - (C.cx - C.hw)) < 0.1);
     for (let i = 0; i < tops.length - 1; i++) {
       const a = tops[i], b = tops[i + 1];
@@ -319,7 +320,7 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false }
     obox(fb, l.x + l.ax * 0.45, D + 3.65, l.z + l.az * 0.45, l.ax, l.az, 1.0, 0.1, 0.1, P.woodDark, P.woodDark, r);
     box(fb, l.x + l.ax * 0.75 - 0.02, l.x + l.ax * 0.75 + 0.02, D + 3.5, D + 3.6, l.z + l.az * 0.75 - 0.02, l.z + l.az * 0.75 + 0.02, P.lampPole, P.lampPole, r);   // 吊燈籠的短繩
     lantern(l.x + l.ax * 0.75, D + 3.2, l.z + l.az * 0.75);
-    out.solids.push({ x: l.x, z: l.z, r: 0.25 });
+    out.solids.push({ x: l.x, z: l.z, r: 0.17 });
   }
 
   // ---- 商店：木板牆、深色斜屋頂；正面西半邊開放（看得到店裡的長桌和貨架），東半邊掛三塊排行榜 ----
@@ -337,7 +338,7 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false }
     }
     box(fb, H.SHELF_X[0], H.SHELF_X[1], D + 0.78, D + 0.86, H.SHELF_Z - 0.45, H.SHELF_Z + 0.45, P.woodLight, P.woodDark, r);   // 賣東西的長桌
     for (const x of [H.SHELF_X[0] + 0.15, H.SHELF_X[1] - 0.15]) for (const z of [H.SHELF_Z - 0.35, H.SHELF_Z + 0.35]) box(fb, x - 0.06, x + 0.06, D, D + 0.78, z - 0.06, z + 0.06, P.woodDark, P.woodDark, r);
-    for (const x of [S.x0 + 0.1, S.open.x1 - 0.1, S.x1 - 0.1]) box(fb, x - 0.18, x + 0.18, D, top + 0.05, S.z1 - 0.2, S.z1 + 0.15, P.woodDark, P.woodDark, r);   // 柱子
+    for (const x of [S.x0 + 0.1, S.open.x1 - 0.1, S.x1 - 0.1]) { box(fb, x - 0.18, x + 0.18, D, top + 0.05, S.z1 - 0.2, S.z1 + 0.15, P.woodDark, P.woodDark, r); out.solids.push({ x, z: S.z1 - 0.03, r: 0.22 }); }   // 柱子
     gableRoof(fb, S.x0, S.x1, S.z0, S.z1, top, 2.2, 0.7, P.roofSlate, r);
     camBox(S.x0, S.x1, D, top, S.z0, S.z0 + t); camBox(S.x0, S.x0 + t, D, top, S.z0, S.z1); camBox(S.x1 - t, S.x1, D, top, S.z0, S.z1);
     camBox(S.open.x1, S.x1, D, top, S.z1 - t, S.z1); camBox(S.x0, S.open.x1, D + 2.6, top, S.z1 - t, S.z1);
@@ -366,7 +367,7 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false }
     box(fb, M.x0 - 0.2, M.x1 + 0.2, D - 1.4, D - TH, M.z0 - 0.2, M.z0 + 1.5, P.stone, P.stone, r);
     for (const x of [M.x0 + 0.3, (M.x0 + M.x1) / 2, M.x1 - 0.3]) for (const z of [M.z0 + 0.3, M.z1 - 0.3]) {
       box(fb, x - 0.16, x + 0.16, D, D + M.h + (z < -8 ? 0.7 : 0), z - 0.16, z + 0.16, P.wood, P.wood, r);
-      out.solids.push({ x, z, r: 0.3 });
+      out.solids.push({ x, z, r: 0.2 });
     }
     const a = V(M.x0 - 0.6, D + M.h + 0.85, M.z0 - 0.5), b = V(M.x1 + 0.6, D + M.h + 0.85, M.z0 - 0.5), c = V(M.x1 + 0.6, D + M.h - 0.1, M.z1 + 0.9), d = V(M.x0 - 0.6, D + M.h - 0.1, M.z1 + 0.9);
     const col = jitter(P.roofTin, r, 0.03);
@@ -380,6 +381,7 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false }
   // 賣魚：籃子、電子板（立柱上）、按鈕
   box(fb, H.SELL.basket.x - 0.6, H.SELL.basket.x + 0.6, D, D + 0.5, H.SELL.basket.z - 0.45, H.SELL.basket.z + 0.45, P.woodLight, P.wood, r);
   box(fb, H.SELL.board.x - 0.06, H.SELL.board.x + 0.06, D, D + 1.2, H.SELL.board.z - 0.06, H.SELL.board.z + 0.06, P.metal, P.metal, r);
+  out.solids.push({ x: H.SELL.board.x, z: H.SELL.board.z, r: 0.12 });
   box(fb, H.SELL.board.x - 0.6, H.SELL.board.x + 0.6, D + 1.2, D + 1.9, H.SELL.board.z - 0.08, H.SELL.board.z + 0.08, P.window, P.window, r, 0.01);
   box(fb, H.SELL.button.x - 0.25, H.SELL.button.x + 0.25, D, D + 0.95, H.SELL.button.z - 0.25, H.SELL.button.z + 0.25, P.white, P.white, r);
   box(fb, H.SELL.button.x - 0.12, H.SELL.button.x + 0.12, D + 0.95, D + 1.05, H.SELL.button.z - 0.12, H.SELL.button.z + 0.12, P.flagRed, P.flagRed, r);
@@ -406,6 +408,7 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false }
   H.FLAGS.forEach((f, i) => {
     const y0 = harborHeight(f.x, f.z) - 0.2;
     box(fb, f.x - 0.08, f.x + 0.08, y0, y0 + f.h, f.z - 0.08, f.z + 0.08, P.white, P.white, r);
+    out.solids.push({ x: f.x, z: f.z, r: 0.13 });
     box(fb, f.x - 0.14, f.x + 0.14, y0 + f.h, y0 + f.h + 0.25, f.z - 0.14, f.z + 0.14, P.yellow, P.yellow, r);
     const col = [P.flagRed, P.yellow, P.flagRed][i];
     box(fb, f.x + 0.08, f.x + 3.0, y0 + f.h - 2.0, y0 + f.h - 0.1, f.z - 0.03, f.z + 0.03, col, col, r, 0.02);
@@ -417,6 +420,7 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false }
     const L = H.LIGHTHOUSE, g0 = harborHeight(L.x, L.z), y0 = g0 + 0.3, y1 = y0 + L.h;
     const add = (g, x, y, z, col) => { g.translate(x, y, z); fb.addGeometry(g, typeof col === 'function' ? col : () => col); };
     add(new THREE.CylinderGeometry(1.7, 1.9, 1.6, 9), L.x, g0 - 0.5, L.z, (m, n) => jitter(P.stone, r, 0.06));
+    out.rocks.push({ x: L.x, z: L.z, a: 1.75, d: 1.75, c: 1, s: 0, r: 1.75, top: g0 + 0.3 });
     add(new THREE.CylinderGeometry(0.9, 1.2, L.h, 10).rotateY(Math.PI / 10), L.x, y0 + L.h / 2, L.z, (m, n) => (m.y > y0 + L.h * 0.45 && m.y < y0 + L.h * 0.62 ? P.flagRed : n.y > 0.5 ? P.white : jitter(P.white, r, 0.02)));
     box(fb, L.x - 0.4, L.x + 0.4, y0, y0 + 1.9, L.z + 1.05, L.z + 1.22, P.woodDark, P.woodDark, r);
     for (const k of [0.3, 0.7]) box(fb, L.x - 0.22, L.x + 0.22, y0 + L.h * k, y0 + L.h * k + 0.55, L.z + 1.03 - k * 0.3, L.z + 1.17 - k * 0.3, P.window, P.window, r);
@@ -469,7 +473,7 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false }
       if (!ok) continue;
       ground.push({ x, z, rot });
       lists[p.kind].push({ pos: V(x, D, z), scl: V(s, s, s), rot, flip: false, tint: 0.88 + r() * 0.18 });
-      if (p.kind !== 'floats' && p.kind !== 'nets') out.solids.push({ x, z, r: p.kind === 'barrels' ? 0.42 : 0.55 });
+      if (p.kind !== 'floats' && p.kind !== 'nets') out.solids.push({ x, z, r: { barrels: 0.4, crates: 0.47, fishboxes: 0.43 }[p.kind] });
     }
   }
   Object.keys(geos).forEach((k, i) => templates.push({ mesh: place(geos[k], lists[k], true, true), hue: 0.05 + i * 0.12 }));
@@ -477,12 +481,50 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false }
   // ---- 海岸一圈大岩石、東邊岩岬一堆、山上幾顆 ----
   const rg = []; for (let k = 0; k < 3; k++) { const g = rockGeo(k, P, 100 + k * 13); rg.push(g, mirrored(g)); }
   const rl = rg.map(() => []);
+  // 給遊戲用的石頭形狀：把這顆石頭的模型（縮放、倒放、轉向都套上）從正上方往下看，記下每 0.2 公尺一格的表面高度。
+  // 走路、開船時直接查這張高度圖：石頭哪裡低、哪裡高跟畫面上一模一樣，不會有空氣牆
+  const ROCK_CELL = 0.2, rq = new THREE.Quaternion(), rqf = new THREE.Quaternion(), rM = new THREE.Matrix4(), rv = new THREE.Vector3();
+  const AY = new THREE.Vector3(0, 1, 0), AX = new THREE.Vector3(1, 0, 0);
+  const rockShape = (gi, t) => {
+    rq.setFromAxisAngle(AY, t.rot).multiply(rqf.setFromAxisAngle(AX, t.flip ? Math.PI : 0));   // 跟 place() 一樣的轉法
+    rM.compose(t.pos, rq, t.scl);
+    const pos = rg[gi].attributes.position, idx = rg[gi].index, n = pos.count;
+    const X = new Float32Array(n), Y = new Float32Array(n), Z = new Float32Array(n);
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, top = -Infinity;
+    for (let k = 0; k < n; k++) {
+      rv.fromBufferAttribute(pos, k).applyMatrix4(rM); X[k] = rv.x; Y[k] = rv.y; Z[k] = rv.z;
+      x0 = Math.min(x0, rv.x); x1 = Math.max(x1, rv.x); z0 = Math.min(z0, rv.z); z1 = Math.max(z1, rv.z); top = Math.max(top, rv.y);
+    }
+    const nx = Math.ceil((x1 - x0) / ROCK_CELL), nz = Math.ceil((z1 - z0) / ROCK_CELL), hgt = new Float32Array(nx * nz).fill(-99);
+    const tc = idx ? idx.count : n;
+    for (let f = 0; f < tc; f += 3) {
+      const a = idx ? idx.getX(f) : f, b = idx ? idx.getX(f + 1) : f + 1, c = idx ? idx.getX(f + 2) : f + 2;
+      const d = (Z[b] - Z[c]) * (X[a] - X[c]) + (X[c] - X[b]) * (Z[a] - Z[c]);
+      if (Math.abs(d) < 1e-9) continue;   // 立著的面：從上面看是一條線
+      const i0 = Math.max(0, Math.floor((Math.min(X[a], X[b], X[c]) - x0) / ROCK_CELL)), i1 = Math.min(nx - 1, Math.floor((Math.max(X[a], X[b], X[c]) - x0) / ROCK_CELL));
+      const j0 = Math.max(0, Math.floor((Math.min(Z[a], Z[b], Z[c]) - z0) / ROCK_CELL)), j1 = Math.min(nz - 1, Math.floor((Math.max(Z[a], Z[b], Z[c]) - z0) / ROCK_CELL));
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+        const px = x0 + (i + 0.5) * ROCK_CELL, pz = z0 + (j + 0.5) * ROCK_CELL;
+        const l1 = ((Z[b] - Z[c]) * (px - X[c]) + (X[c] - X[b]) * (pz - Z[c])) / d, l2 = ((Z[c] - Z[a]) * (px - X[c]) + (X[a] - X[c]) * (pz - Z[c])) / d, l3 = 1 - l1 - l2;
+        if (l1 < 0 || l2 < 0 || l3 < 0) continue;
+        const y = l1 * Y[a] + l2 * Y[b] + l3 * Y[c], q = j * nx + i;
+        if (y > hgt[q]) hgt[q] = y;
+      }
+    }
+    // 往外撐一格（0.2 公尺）：玩家碰撞只算腳下一個點，身體有寬度，不撐的話會半個身子卡進石頭裡
+    const mx = nx + 2, mz = nz + 2, out2 = new Float32Array(mx * mz).fill(-99), at = (i, j) => (i < 0 || j < 0 || i >= nx || j >= nz ? -99 : hgt[j * nx + i]);
+    for (let j = 0; j < mz; j++) for (let i = 0; i < mx; i++) out2[j * mx + i] = Math.max(at(i - 1, j - 1), at(i - 2, j - 1), at(i, j - 1), at(i - 1, j - 2), at(i - 1, j));
+    const hx = (x1 - x0) / 2 + ROCK_CELL, hz = (z1 - z0) / 2 + ROCK_CELL;
+    return { x: (x0 + x1) / 2, z: (z0 + z1) / 2, hx, hz, c: 1, s: 0, r: Math.hypot(hx, hz), top, cell: ROCK_CELL, nx: mx, nz: mz, hgt: out2 };
+  };
   const addRock = (x, z, s, sink) => {
     const k = Math.floor(r() * 3);
     const scl = V(s * (0.9 + r() * 0.4), s * (0.65 + r() * 0.45), s * (0.9 + r() * 0.4));
     const y = harborHeight(x, z) - scl.y * sink;
-    rl[k * 2 + (r() < 0.5 ? 1 : 0)].push({ pos: V(x, y, z), scl, rot: r() * 6.28, flip: r() < 0.35, tint: 0.88 + r() * 0.16 });
-    out.rocks.push({ x, z, r: 0.85 * Math.max(scl.x, scl.z), top: y + scl.y });
+    const gi = k * 2 + (r() < 0.5 ? 1 : 0);
+    const t = { pos: V(x, y, z), scl, rot: r() * 6.28, flip: r() < 0.35, tint: 0.88 + r() * 0.16 };
+    rl[gi].push(t);
+    out.rocks.push(rockShape(gi, t));
   };
   const nearDeck = (x, z, m) => onBoards(x, z, m);
   const village = (x, z) => x > -40 && x < 40 && z > -22 && z < 6;   // 橋頭那一片是沙灘和村子，不堆大石頭
@@ -516,6 +558,7 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false }
     trees.push({ x, z });
     const s = 1.25 + r() * 0.45;
     tl[Math.floor(r() * tg.length)].push({ pos: V(x, h - 0.2, z), scl: V(s, s * (0.9 + r() * 0.2), s), rot: r() * 6.28, flip: false, tint: 0.92 + r() * 0.14 });
+    out.solids.push({ x, z, r: 0.27 * s });
   }
   tg.forEach((g, i) => templates.push({ mesh: place(g, tl[i], true, true), hue: 0.25 + i * 0.07 }));
   const gg = [tuftGeo(P, 700), tuftGeo(P, 701)], gl = [[], []];

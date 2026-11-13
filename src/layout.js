@@ -19,7 +19,7 @@ export const DECKS = [];
 const S = H.SHOP;
 export const SHOP = { name: '商店', x: (S.x0 + S.x1) / 2, z: (S.z0 + S.z1) / 2, w: S.x1 - S.x0, d: S.z1 - S.z0, roof: 0x525d68, hint: '賣魚請到橋頭東邊魚市場前的籃子；油、扳手、釣具和船在店裡的長桌' };
 // 燈塔：東邊岩岬上的白燈塔（r：走不過去的範圍）
-export const LIGHTHOUSE = { x: H.LIGHTHOUSE.x, z: H.LIGHTHOUSE.z, r: 1.5 };
+export const LIGHTHOUSE = { x: H.LIGHTHOUSE.x, z: H.LIGHTHOUSE.z, r: 1.25 };   // 塔身底部半徑 1.2（腳下的石墩踩得上去，見 harbor3d.js）
 // 賣魚的地方：魚市場前的籃子、顯示價格的電子板、按下去就賣出的按鈕
 export const SELL = {
   basket: { x: H.SELL.basket.x, z: H.SELL.basket.z, y: DECK_Y },
@@ -84,8 +84,17 @@ export const WALLS = [
   { x0: S.open.x1, x1: S.x1, z0: S.z1 - 0.25, z1: S.z1 },            // 正面東半邊
   { x0: BOARDS.berth.x - 0.6, x1: BOARDS.daily.x + 1.5, z0: BOARD_Z - 0.3, z1: BOARD_Z + 0.25 },   // 一排看板
   { x0: H.MARKET.x0 + 1, x1: H.MARKET.x1 - 1, z0: H.MARKET.z0 + 1.2, z1: H.MARKET.z0 + 3.2 },     // 魚市場的桌子
-  ...H.HOUSES.map((h) => { const r = Math.hypot(h.w, h.d) / 2 * 0.8; return { x0: h.x - r, x1: h.x + r, z0: h.z - r, z1: h.z + r }; }),   // 坡上的小屋（斜放的，用略小的方框擋）
+  { x0: H.MARKET.x0 - 0.2, x1: H.MARKET.x1 + 0.2, z0: H.MARKET.z0, z1: H.MARKET.z0 + 0.2 },        // 魚市場後面那道矮木牆
+  { x0: S.x0 + 0.6, x1: S.open.x1 - 0.4, z0: S.z0 + 0.25, z1: S.z0 + 1.2 },                         // 店裡靠後牆的兩排貨架
+  // 坡上的小屋：斜放的，用跟著轉的長方形擋（石砌地基比牆寬 0.15）
+  ...H.HOUSES.map((h) => ({ cx: h.x, cz: h.z, ux: Math.cos(h.rot), uz: -Math.sin(h.rot), hl: h.w / 2 + 0.15, hw: h.d / 2 + 0.15 })),
 ];
+// 某點在不在這個擋路的長方形裡（一般的是對齊座標軸的 x0..x1、z0..z1；斜放的是中心＋方向＋半長半寬）
+export function inWall(r, x, z) {
+  if (r.ux === undefined) return x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1;
+  const dx = x - r.cx, dz = z - r.cz;
+  return Math.abs(dx * r.ux + dz * r.uz) < r.hl && Math.abs(-dx * r.uz + dz * r.ux) < r.hw;
+}
 
 // ---- 世界座標版 ---------------------------------------------------------------
 // 給瀏覽器的互動判斷和伺服器用：把港座標的一個點 {x, z} 轉成世界座標（其他欄位照抄）
