@@ -3,10 +3,11 @@
 // 美術的方向（參考盜賊之海的做法，不照抄）：形狀簡單粗壯、「真實的歪」——木板長短高低差一點、木樁歪歪的、
 // 有換過的新木板和曬白的舊木板、樁腳泡水的地方顏色變深長苔；比信箱小的東西不放
 import * as THREE from 'three';
-import { FaceBuilder, rng, mirrored } from './kit.js';
+import { FaceBuilder, rng, mirrored, SColor } from './kit.js';
 import { jitter } from './palette.js';
 import { rockGeo, broadleafGeo, tuftGeo, terrainGeo, groundKind } from './shapes.js';
 import * as H from './harborPlan.js';
+import { buildShopMarket } from './shopMarket.js';
 import { BOAT_TYPES } from '../boatdata.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -21,12 +22,16 @@ function box(fb, x0, x1, y0, y1, z0, z1, top, side, r, amt = 0.04) {
   const g = new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0);
   g.translate((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
   const cache = new Map();
+  fb.grain = longest(x1 - x0, y1 - y0, z1 - z0);   // 木紋順著最長的那一邊
   fb.addGeometry(g, (m, n) => {
     const k = Math.round(n.x * 3) * 9 + Math.round(n.y * 3) * 3 + Math.round(n.z * 3);
     if (!cache.has(k)) cache.set(k, jitter(n.y > 0.5 ? top : side, r, amt));
     return cache.get(k);
   });
+  fb.grain = null;
 }
+const GX = V(1, 0, 0), GY = V(0, 1, 0), GZ = V(0, 0, 1);
+const longest = (a, b, c) => (a >= b && a >= c ? GX : b >= c ? GY : GZ);
 // 斜放的方塊：中心 (cx, cy, cz)、長邊沿著 (ux, uz)、長 len × 寬 wid × 高 h。
 // roll：繞長邊轉（左右歪）、pitch：繞寬邊轉（一頭高一頭低）
 const yawOf = (ux, uz) => Math.atan2(-uz, ux);
@@ -37,7 +42,13 @@ function obox(fb, cx, cy, cz, ux, uz, len, wid, h, top, side, r, amt = 0.04, rol
   g.rotateY(yawOf(ux, uz));
   g.translate(cx, cy, cz);
   const ct = jitter(top, r, amt), cs = jitter(side, r, amt), cb = cs.clone().multiplyScalar(0.7);
+  // 木紋方向：最長的那一邊（跟著 roll、pitch、轉向一起轉）
+  const gl = longest(len, h, wid).clone();
+  if (roll) gl.applyAxisAngle(GX, roll);
+  if (pitch) gl.applyAxisAngle(GZ, pitch);
+  fb.grain = gl.applyAxisAngle(GY, yawOf(ux, uz));
   fb.addGeometry(g, (m, n) => (n.y > 0.5 ? ct : n.y < -0.5 ? cb : cs));
+  fb.grain = null;
 }
 // 斜屋頂：兩片斜面（屋脊沿 x）
 function gableRoof(fb, x0, x1, z0, z1, y0, rise, over, col, r) {
@@ -53,8 +64,12 @@ function gableRoof(fb, x0, x1, z0, z1, y0, rise, over, col, r) {
 function merge(fb, sub, rot, x, y, z) {
   const g = sub.build();
   g.rotateY(rot); g.translate(x, y, z);
-  const col = g.attributes.color;
-  fb.addGeometry(g, (m, n, i) => new THREE.Color(col.getX(i * 3), col.getY(i * 3), col.getZ(i * 3)));
+  const col = g.attributes.color, sf = g.attributes.aSurf;
+  fb.addGeometry(g, (m, n, i) => {
+    const c = new SColor(col.getX(i * 3), col.getY(i * 3), col.getZ(i * 3));
+    if (sf) { c.surf = sf.getX(i * 3); c.grain = V(sf.getY(i * 3), sf.getZ(i * 3), sf.getW(i * 3)).applyAxisAngle(GY, rot); }   // 材質和紋路方向也跟著搬
+    return c;
+  });
 }
 
 // ---- 船：低面的船殼（船首尖、船尾平）、舷牆、甲板；漁船和大漁船加駕駛艙 ----
@@ -156,11 +171,12 @@ function netGeo(P, seed) {
 
 // ---- 蓋整座港口島 ----
 // game：放進遊戲裡用（船是遊戲自己的，不擺樣品船）。回傳給遊戲用的清單（港座標）：
-//   rocks 海岸的大岩石 { x, z, r, top }、piles 立在水裡的木樁 { x, z, r }、solids 棧板上擋路的東西 { x, z, r }
-export function buildHarbor({ P, r, place, mat, group, templates, game = false }) {
+//   rocks 海岸的大岩石（高度圖，見 rockShape）、piles 立在水裡的木樁 { x, z, r }、solids 棧板上擋路的東西 { x, z, r }
+// detail：要不要畫店裡、魚市場的小東西（手機不畫）
+export function buildHarbor({ P, r, place, mat, group, templates, game = false, detail = true }) {
   // camBoxes：給鏡頭判斷「會不會被擋住」用的簡單方塊（建築的牆和屋頂、小屋、燈塔）。
   // 不拿真正的模型去打射線：整座港合起來十幾萬個三角形，手機每幀打好幾條會慢到只剩十幾幀
-  const out = { rocks: [], piles: [], solids: [], camBoxes: [] };
+  const out = { rocks: [], piles: [], solids: [], camBoxes: [], bulbs: [] };   // bulbs：室內燈的燈泡 { zone, x, y, z, r }
   const camBox = (x0, x1, y0, y1, z0, z1, rot = 0, cx = (x0 + x1) / 2, cz = (z0 + z1) / 2) => out.camBoxes.push({ cx, cy: (y0 + y1) / 2, cz, w: x1 - x0, h: y1 - y0, d: z1 - z0, rot });
   const D = H.DECK_Y;
   const terrain = new THREE.Mesh(terrainGeo(P, 214, 2.0, 7, homeBed, 0, -46, null), mat);
@@ -323,68 +339,11 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false }
     out.solids.push({ x: l.x, z: l.z, r: 0.17 });
   }
 
-  // ---- 商店：木板牆、深色斜屋頂；正面西半邊開放（看得到店裡的長桌和貨架），東半邊掛三塊排行榜 ----
-  {
-    const S = H.SHOP, top = D + S.h, t = 0.25;
-    box(fb, S.x0 - 0.2, S.x1 + 0.2, D - 1.4, D - TH, S.z0 - 0.2, S.z0 + 1.5, P.stone, P.stone, r);   // 後面的石砌地基
-    box(fb, S.x0, S.x1, D, top, S.z0, S.z0 + t, P.wood, P.wood, r);                 // 後牆
-    box(fb, S.x0, S.x0 + t, D, top, S.z0, S.z1, P.wood, P.wood, r);                 // 西牆
-    box(fb, S.x1 - t, S.x1, D, top, S.z0, S.z1, P.wood, P.wood, r);                 // 東牆
-    box(fb, S.open.x1, S.x1, D, top, S.z1 - t, S.z1, P.wood, P.wood, r);            // 正面東半邊
-    box(fb, S.x0, S.open.x1, D + 2.6, top, S.z1 - t, S.z1, P.wood, P.wood, r);      // 開口上方
-    // 正面牆上一條一條的直木條（開口那一段只有上面一截）
-    for (let x = S.x0 + 0.4; x < S.x1 - 0.2; x += 0.9 + r() * 0.3) {
-      box(fb, x - 0.04, x + 0.04, x > S.open.x1 ? D : D + 2.6, top, S.z1, S.z1 + 0.03, P.woodDark, P.woodDark, r);
-    }
-    box(fb, H.SHELF_X[0], H.SHELF_X[1], D + 0.78, D + 0.86, H.SHELF_Z - 0.45, H.SHELF_Z + 0.45, P.woodLight, P.woodDark, r);   // 賣東西的長桌
-    for (const x of [H.SHELF_X[0] + 0.15, H.SHELF_X[1] - 0.15]) for (const z of [H.SHELF_Z - 0.35, H.SHELF_Z + 0.35]) box(fb, x - 0.06, x + 0.06, D, D + 0.78, z - 0.06, z + 0.06, P.woodDark, P.woodDark, r);
-    for (const x of [S.x0 + 0.1, S.open.x1 - 0.1, S.x1 - 0.1]) { box(fb, x - 0.18, x + 0.18, D, top + 0.05, S.z1 - 0.2, S.z1 + 0.15, P.woodDark, P.woodDark, r); out.solids.push({ x, z: S.z1 - 0.03, r: 0.22 }); }   // 柱子
-    gableRoof(fb, S.x0, S.x1, S.z0, S.z1, top, 2.2, 0.7, P.roofSlate, r);
-    camBox(S.x0, S.x1, D, top, S.z0, S.z0 + t); camBox(S.x0, S.x0 + t, D, top, S.z0, S.z1); camBox(S.x1 - t, S.x1, D, top, S.z0, S.z1);
-    camBox(S.open.x1, S.x1, D, top, S.z1 - t, S.z1); camBox(S.x0, S.open.x1, D + 2.6, top, S.z1 - t, S.z1);
-    camBox(S.x0 - 0.7, S.x1 + 0.7, top, top + 2.2, S.z0 - 0.7, S.z1 + 0.7);   // 屋頂
-    // 屋頂上一個小煙囪、門口上方一塊招牌
-    box(fb, S.x0 + 3, S.x0 + 3.8, top + 0.6, top + 3.0, S.z0 + 2, S.z0 + 2.8, P.stone, P.stone, r);
-    box(fb, S.x0 + 1.5, S.open.x1 - 1.5, D + 2.75, D + 3.3, S.z1, S.z1 + 0.12, P.woodLight, P.woodDark, r);
-    // 店裡：靠後牆兩排貨架，上面擺油桶、工具箱、釣竿、船模型
-    for (const [x0, x1] of [[S.x0 + 0.6, S.x0 + 3.6], [S.x0 + 4.0, S.open.x1 - 0.4]]) {
-      for (const y of [D + 0.1, D + 1.0, D + 1.9]) box(fb, x0, x1, y, y + 0.08, S.z0 + 0.3, S.z0 + 1.2, P.woodLight, P.woodLight, r);
-      for (const x of [x0, x1 - 0.08]) box(fb, x, x + 0.08, D, D + 2.6, S.z0 + 0.3, S.z0 + 1.2, P.woodDark, P.woodDark, r);
-    }
-    for (let i = 0; i < 6; i++) box(fb, S.x0 + 0.9 + i * 0.45, S.x0 + 1.1 + i * 0.45, D + 0.18, D + 0.75, S.z0 + 0.6, S.z0 + 0.95, P.flagRed, P.flagRed, r);
-    for (let i = 0; i < 4; i++) box(fb, S.x0 + 0.9 + i * 0.7, S.x0 + 1.4 + i * 0.7, D + 1.08, D + 1.4, S.z0 + 0.5, S.z0 + 1.0, P.hullGreen, P.hullGreen, r);
-    for (let i = 0; i < 7; i++) box(fb, S.x0 + 4.4 + i * 0.35, S.x0 + 4.46 + i * 0.35, D + 0.2, D + 2.4, S.z0 + 0.5, S.z0 + 0.56, P.woodDark, P.woodDark, r);
-    box(fb, S.x0 + 4.6, S.x0 + 6.2, D + 1.98, D + 2.35, S.z0 + 0.55, S.z0 + 1.0, P.white, P.hullBlue, r);
-    if (!game) for (const b of H.BOARDS) {   // 遊戲裡的看板由 boards.js 另外立
-      box(fb, b.x - b.w / 2 - 0.12, b.x + b.w / 2 + 0.12, b.y0 - 0.12, b.y0 + b.h + 0.12, S.z1, S.z1 + 0.1, P.yellow, P.yellow, r);
-      box(fb, b.x - b.w / 2, b.x + b.w / 2, b.y0, b.y0 + b.h, S.z1 + 0.1, S.z1 + 0.14, P.woodDark, P.woodDark, r, 0.02);
-    }
-    lantern(S.x0 + 0.8, D + 2.3, S.z1 + 0.45, 0.8);   // 門口的燈
-  }
-  // ---- 魚市場：木柱、往南傾的鐵皮屋頂、桌上的魚箱 ----
-  {
-    const M = H.MARKET;
-    box(fb, M.x0 - 0.2, M.x1 + 0.2, D - 1.4, D - TH, M.z0 - 0.2, M.z0 + 1.5, P.stone, P.stone, r);
-    for (const x of [M.x0 + 0.3, (M.x0 + M.x1) / 2, M.x1 - 0.3]) for (const z of [M.z0 + 0.3, M.z1 - 0.3]) {
-      box(fb, x - 0.16, x + 0.16, D, D + M.h + (z < -8 ? 0.7 : 0), z - 0.16, z + 0.16, P.wood, P.wood, r);
-      out.solids.push({ x, z, r: 0.2 });
-    }
-    const a = V(M.x0 - 0.6, D + M.h + 0.85, M.z0 - 0.5), b = V(M.x1 + 0.6, D + M.h + 0.85, M.z0 - 0.5), c = V(M.x1 + 0.6, D + M.h - 0.1, M.z1 + 0.9), d = V(M.x0 - 0.6, D + M.h - 0.1, M.z1 + 0.9);
-    const col = jitter(P.roofTin, r, 0.03);
-    fb.tri(a, d, c, col); fb.tri(a, c, b, col); fb.tri(a, c, d, col.clone().multiplyScalar(0.75)); fb.tri(a, b, c, col.clone().multiplyScalar(0.75));
-    box(fb, M.x0 - 0.2, M.x1 + 0.2, D, D + 2.2, M.z0, M.z0 + 0.2, P.woodGrey, P.woodGrey, r);   // 後面一道矮木牆
-    camBox(M.x0 - 0.6, M.x1 + 0.6, D + M.h - 0.1, D + M.h + 0.85, M.z0 - 0.5, M.z1 + 0.9);   // 棚頂（斜的，用一塊方塊包住）
-    box(fb, M.x0 + 1, M.x1 - 1, D + 0.8, D + 0.9, M.z0 + 1.2, M.z0 + 3.2, P.woodLight, P.woodLight, r);
-    for (let i = 0; i < 6; i++) box(fb, M.x0 + 1.4 + i * 1.9, M.x0 + 2.9 + i * 1.9, D + 0.9, D + 1.15, M.z0 + 1.4, M.z0 + 3.0, P.white, P.fishbox, r);
-    lantern((M.x0 + M.x1) / 2, D + M.h - 0.4, (M.z0 + M.z1) / 2 + 1, 0.8);
-  }
-  // 賣魚：籃子、電子板（立柱上）、按鈕
-  box(fb, H.SELL.basket.x - 0.6, H.SELL.basket.x + 0.6, D, D + 0.5, H.SELL.basket.z - 0.45, H.SELL.basket.z + 0.45, P.woodLight, P.wood, r);
-  box(fb, H.SELL.board.x - 0.06, H.SELL.board.x + 0.06, D, D + 1.2, H.SELL.board.z - 0.06, H.SELL.board.z + 0.06, P.metal, P.metal, r);
-  out.solids.push({ x: H.SELL.board.x, z: H.SELL.board.z, r: 0.12 });
-  box(fb, H.SELL.board.x - 0.6, H.SELL.board.x + 0.6, D + 1.2, D + 1.9, H.SELL.board.z - 0.08, H.SELL.board.z + 0.08, P.window, P.window, r, 0.01);
-  box(fb, H.SELL.button.x - 0.25, H.SELL.button.x + 0.25, D, D + 0.95, H.SELL.button.z - 0.25, H.SELL.button.z + 0.25, P.white, P.white, r);
-  box(fb, H.SELL.button.x - 0.12, H.SELL.button.x + 0.12, D + 0.95, D + 1.05, H.SELL.button.z - 0.12, H.SELL.button.z + 0.12, P.flagRed, P.flagRed, r);
+  // ---- 橋頭的商店（港口漁具行）、魚市場、收購站：在 shopMarket.js 蓋（自己的亂數）----
+  // 原本這一段直接在這裡蓋、用掉 1041 個亂數；照樣跳過這麼多個，後面的石頭、樹、草才會長在原本的位置
+  for (let i = 0; i < 1041; i++) r();
+  const fd = new FaceBuilder();   // 小東西（貨架上的雜貨、魚乾、工具…）：手機不畫
+  buildShopMarket({ fb, fd, P, box, obox, gableRoof, boatGeo, out, camBox });
 
   // ---- 坡上的小屋：石砌地基、灰泥或木板牆、斜屋頂、門、窗、煙囪 ----
   H.HOUSES.forEach((hs, k) => {
@@ -436,6 +395,11 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false }
   const statics = new THREE.Mesh(fb.build(), mat);
   statics.castShadow = statics.receiveShadow = true;
   group.add(statics);
+  if (detail) {
+    const small = new THREE.Mesh(fd.build(), mat);
+    small.castShadow = small.receiveShadow = true;
+    group.add(small);
+  }
 
   // ---- 船：停滿大部分的格子；遊戲裡的船是玩家自己的，不擺 ----
   if (!game) {

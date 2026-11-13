@@ -31,18 +31,36 @@ export function fbm(x, z, oct = 4) {
   return s;
 }
 
+// ---- 材質種類（電腦版的程式貼圖用，見 surfaceDetail.js）----
+// 顏色上可以帶 surf（哪一種材質）和 grain（木紋、鐵皮浪板的方向）；FaceBuilder 把它們記在頂點的 aSurf 上。
+// 手機不畫程式貼圖，也就不記（tagSurfaces(false)），省記憶體
+export const SURF = { none: 0, wood: 1, stone: 2, metal: 3, plaster: 4, cloth: 5, rock: 6, shingle: 7, tin: 8, ice: 9 };
+let TAG = false;
+export function tagSurfaces(on) { TAG = on; }
+// 帶材質種類的顏色：clone() 的時候 surf、grain 跟著複製（jitter、multiplyScalar 這些都會留著）
+export class SColor extends THREE.Color {
+  clone() { const c = super.clone(); c.surf = this.surf; c.grain = this.grain; return c; }
+}
+// 一個顏色加上材質種類（新的一份，不改原本的）
+export const withSurf = (col, surf, grain = null) => { const c = new SColor(col.r, col.g, col.b); c.surf = surf; c.grain = grain; return c; };
+const NO_GRAIN = new THREE.Vector3();
+
 // ---- 每面一色的幾何 ----
 // tris：[[ax,ay,az, bx,by,bz, cx,cy,cz, r,g,b(線性), sway], ...] 或用 builder 一面一面加。
 // 不共用頂點，每個三角形自己三個點，法線就是面的方向（平塗風的稜角）。
 // aFx.x：搖動量（0 不動，樹冠約 0.3，草約 3）；aFx.y：1 = 離鏡頭遠了就縮小到消失（草叢）
 export class FaceBuilder {
-  constructor() { this.p = []; this.c = []; this.fx = []; }
+  constructor() { this.p = []; this.c = []; this.fx = []; this.s = []; this.grain = null; }
   // 一個三角形：a、b、c 是 Vector3（逆時針看過去是正面），col 是 THREE.Color，sway 可以給每個點不同的量
   tri(a, b, c, col, sway = [0, 0, 0], shrink = 0, col2 = null) {
     this.p.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
     const cs = col2 || [col, col, col];
     for (const k of cs) this.c.push(k.r, k.g, k.b);
     for (let i = 0; i < 3; i++) this.fx.push(sway[i], shrink);
+    if (TAG) {   // 材質種類＋紋路方向（顏色自己帶的優先，沒有就用 this.grain：box() 這些會先設好長邊的方向）
+      const k = cs[0], g = k.grain || this.grain || NO_GRAIN, t = k.surf || 0;
+      for (let i = 0; i < 3; i++) this.s.push(t, g.x, g.y, g.z);
+    }
   }
   // 把一個有索引的幾何（例如 Icosahedron）拆成一面一面，colorOf(面中心, 面法線, 第幾面) 決定顏色
   addGeometry(geo, colorOf, swayOf = () => 0, shrink = 0) {
@@ -62,6 +80,7 @@ export class FaceBuilder {
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.p, 3));
     g.setAttribute('color', new THREE.Float32BufferAttribute(this.c, 3));
     g.setAttribute('aFx', new THREE.Float32BufferAttribute(this.fx, 2));
+    if (TAG && this.s.length) g.setAttribute('aSurf', new THREE.Float32BufferAttribute(this.s, 4));
     g.computeVertexNormals();   // 沒有共用頂點，算出來就是每一面自己的法線
     g.computeBoundingSphere();
     return g;
@@ -73,6 +92,7 @@ export function mirrored(geo) {
   const g = geo.clone();
   const p = g.attributes.position.array;
   for (let i = 0; i < p.length; i += 3) p[i] = -p[i];
+  if (g.attributes.aSurf) { const s = g.attributes.aSurf.array; for (let i = 1; i < s.length; i += 4) s[i] = -s[i]; }   // 紋路方向也左右翻
   for (const name of Object.keys(g.attributes)) {
     const at = g.attributes[name], s = at.itemSize, arr = at.array;
     for (let i = 0; i < at.count; i += 3) {

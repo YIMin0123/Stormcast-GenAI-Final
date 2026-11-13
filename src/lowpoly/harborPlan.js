@@ -35,12 +35,57 @@ export const PIER_LINE = [[0, 1], [0, 82], [B0[0] + D2[0] * SEG2_LEN, B0[1] + D2
 export const SHOP = { x0: -28, x1: -12, z0: -15, z1: -5, h: 3.4, open: { x0: -27, x1: -19.5 } };
 export const BOARDS = [-18.6, -16.4, -13.5].map((x, i) => ({ id: ['berth', 'room', 'daily'][i], x, w: 2.0, z: SHOP.z1 + 0.15, y0: DECK_Y + 0.5, h: 2.3 }));
 export const SPAWN = { x: -16, z: -2.5, yaw: Math.PI / 2 };   // 商店門口，面向棧橋
-// 店裡賣東西的長桌：玩家走進店裡、站在桌子南邊買
-export const SHELF_Z = -11.0;
-export const SHELF_X = [-26.6, -20.4];
-// 魚市場（橋頭東邊）：開放的棚子；賣魚的籃子、電子價格板、按鈕在棚子前面的木平台上
+// 店裡的擺設（地板上的長方形 x0..x1、z0..z1；模型和擋路都照這些）。
+// 西半邊是櫃台區：客人從正面的大開口進來，櫃台橫在中間，櫃台後面靠後牆一整排貨架；西牆邊一排立著賣的釣竿。
+// 東半邊是展示區：三座展示台（引擎、漁船模型、大漁船模型），後牆是工作台和掛工具的洞洞板
+const COUNTER = { x0: -26.7, x1: -20.5, z0: -11.75, z1: -10.95, h: 0.95 };
+export const SHOP_IN = {
+  counter: COUNTER,
+  backShelf: { x0: -27.7, x1: -20.3, z0: -14.75, z1: -14.1 },
+  rodRack: { x0: -27.75, x1: -27.25, z0: -10.2, z1: -6.6 },
+  plinths: [-17.9, -15.7, -13.5].map((x) => ({ x0: x - 0.75, x1: x + 0.75, z0: -12.05, z1: -11.15, h: 0.75 })),
+  bench: { x0: -19.2, x1: -14.2, z0: -14.75, z1: -14.05, h: 0.9 },
+};
+// 商品：每樣擺在哪（x, z 是商品中心、y 是擺放面的高度），客人站在它南邊 1.3 公尺按 E 買。
+// tag：價格牌相對商品的位置（dy 高、dz 前後）、tilt 往後仰多少（0 = 直立，貼在展示台正面）
+const onCounter = (id, x) => ({ id, x, z: (COUNTER.z0 + COUNTER.z1) / 2, y: DECK_Y + COUNTER.h, tag: { dy: 0.3, dz: -0.27, tilt: -0.25 } });
+const onPlinth = (id, i) => { const p = SHOP_IN.plinths[i]; return { id, x: (p.x0 + p.x1) / 2, z: (p.z0 + p.z1) / 2, y: DECK_Y + p.h, tag: { dy: -0.38, dz: 0.465, tilt: 0 } }; };
+export const GOODS = [   // 順序跟伺服器的商品清單一樣
+  onCounter('fuel', -23.4), onCounter('wrench', -22.1), onCounter('rod', -26.0), onCounter('box', -24.7),
+  onPlinth('engine', 0), onPlinth('fisher', 1), onPlinth('trawler', 2),
+];
+// 魚市場（橋頭東邊）：開放的棚子，前排左右兩座鋪冰的展示台；中間那根柱子是收購站——
+// 柱子上掛電子價格板，左邊是放在磅秤上的漁獲籃，右邊是賣出的按鈕。棚子裡有處理魚的長桌、冰櫃和魚箱、東邊一排活魚水槽
 export const MARKET = { x0: 13, x1: 27, z0: -12.5, z1: -5, h: 3.6 };
-export const SELL = { basket: { x: 17, z: -3.6 }, board: { x: 19, z: -4.3 }, button: { x: 21, z: -3.6 } };
+export const SELL = { basket: { x: 18.5, z: -4.0 }, board: { x: 20, z: -5.06 }, button: { x: 21.5, z: -4.0 } };   // 板子貼在中間那根柱子的正面
+export const MARKET_IN = {
+  displays: [{ x0: 13.8, x1: 18.4, z0: -6.75, z1: -5.75 }, { x0: 21.6, x1: 26.2, z0: -6.75, z1: -5.75 }],
+  table: { x0: 17.4, x1: 22.6, z0: -9.6, z1: -8.7, h: 0.9 },
+  chest: { x0: 13.6, x1: 15.4, z0: -11.6, z1: -10.6 },
+  boxes: { x0: 15.9, x1: 17.4, z0: -12.1, z1: -10.9 },
+  tanks: { x0: 24.6, x1: 26.5, z0: -11.6, z1: -8.0 },
+};
+// 室內燈：店裡（櫃台區、展示區）和魚市場棚下各有一組，牆上（柱子上）的開關一按整組亮或暗；整間房共用（伺服器記著）。
+// ROOM_LAMPS 是真的打光的位置（電腦版）；燈泡的模型在 shopMarket.js 蓋（記在 out.bulbs）
+export const LIGHT_ZONES = ['shop', 'market'];
+export const ROOM_LAMPS = [
+  { zone: 'shop', x: -20.0, y: DECK_Y + 2.6, z: -10.0 },   // 一盞照整間店（每多一盞，電腦整個畫面都要多算一次）
+  { zone: 'market', x: 20, y: DECK_Y + 2.7, z: -8.6 },
+];
+// 開關：{ zone, x, z 開關面板的中心, y 高, nx, nz 面板朝哪邊（玩家站的那一側）}
+export const SWITCHES = [
+  { zone: 'shop', x: -27.73, z: -6.0, y: DECK_Y + 1.3, nx: 1, nz: 0 },     // 店裡西牆、靠門口
+  { zone: 'market', x: 13.3, z: -5.12, y: DECK_Y + 1.3, nx: 0, nz: 1 },    // 魚市場最西邊那根前柱
+];
+// 有字的招牌（畫在貼圖上）：style 是 wood 木頭看板、cloth 布條、nobori 直式的旗（字直排）
+export const SIGNS = [
+  { text: '港口漁具行', x: -23.2, y: DECK_Y + 4.75, z: -6.42, w: 5.2, h: 0.9, rot: 0, style: 'wood' },
+  { text: '魚市場', x: 20, y: DECK_Y + 3.18, z: -4.98, w: 3.2, h: 0.6, rot: 0, style: 'wood' },
+  { text: '今日漁獲・新鮮直送', x: 20, y: DECK_Y + 1.55, z: -12.27, w: 2.4, h: 1.1, rot: 0, style: 'chalk' },
+  { text: '鮮魚', x: 13.25, y: DECK_Y + 2.35, z: -4.62, w: 0.46, h: 1.5, rot: 0, style: 'nobori', col: '#c8352a' },
+  { text: '大漁', x: 26.75, y: DECK_Y + 2.35, z: -4.62, w: 0.46, h: 1.5, rot: 0, style: 'nobori', col: '#2f5d9a' },
+  { text: '釣具', x: -28.6, y: DECK_Y + 2.35, z: -4.4, w: 0.46, h: 1.5, rot: 0, style: 'nobori', col: '#2f5d9a' },
+];
 // 地板：商店、魚市場也是棧板（walk 判斷用）
 export const FLOORS = [
   rect((SHOP.x0 + SHOP.x1) / 2, (SHOP.z0 + SHOP.z1) / 2, 1, 0, (SHOP.x1 - SHOP.x0) / 2, (SHOP.z1 - SHOP.z0) / 2, 'floor'),

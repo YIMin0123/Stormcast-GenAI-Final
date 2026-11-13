@@ -17,21 +17,20 @@ export const DECKS = [];
 
 // 唯一的一間店：買釣具、油、扳手、船都在店裡的長桌；賣魚在橋頭東邊魚市場前的籃子
 const S = H.SHOP;
-export const SHOP = { name: '商店', x: (S.x0 + S.x1) / 2, z: (S.z0 + S.z1) / 2, w: S.x1 - S.x0, d: S.z1 - S.z0, roof: 0x525d68, hint: '賣魚請到橋頭東邊魚市場前的籃子；油、扳手、釣具和船在店裡的長桌' };
+export const SHOP = { name: '商店', x: (S.x0 + S.x1) / 2, z: (S.z0 + S.z1) / 2, w: S.x1 - S.x0, d: S.z1 - S.z0, roof: 0x525d68, hint: '賣魚請到橋頭東邊魚市場的收購站；油、扳手、釣具在店裡的櫃台，引擎和船在店裡東邊的展示台' };
 // 燈塔：東邊岩岬上的白燈塔（r：走不過去的範圍）
 export const LIGHTHOUSE = { x: H.LIGHTHOUSE.x, z: H.LIGHTHOUSE.z, r: 1.25 };   // 塔身底部半徑 1.2（腳下的石墩踩得上去，見 harbor3d.js）
-// 賣魚的地方：魚市場前的籃子、顯示價格的電子板、按下去就賣出的按鈕
+// 賣魚的地方：魚市場前面的收購站（磅秤上的籃子、柱子上的電子價格板、按下去就賣出的按鈕）
 export const SELL = {
   basket: { x: H.SELL.basket.x, z: H.SELL.basket.z, y: DECK_Y },
   board: { x: H.SELL.board.x, z: H.SELL.board.z },
   button: { x: H.SELL.button.x, z: H.SELL.button.z },
 };
 
-// 商品架：店裡的一張長桌，每樣商品後面立著一塊價格牌。玩家走進店裡、站在桌前按 E 購買
-const SHELF_IDS = ['fuel', 'wrench', 'rod', 'box', 'engine', 'fisher', 'trawler'];
-export const SHELF_X = H.SHELF_X;   // 長桌的兩端
-export const SHELF_Z = H.SHELF_Z;
-export const SHELF = SHELF_IDS.map((id, i) => ({ id, x: SHELF_X[0] + (SHELF_X[1] - SHELF_X[0]) * (i + 0.5) / SHELF_IDS.length }));
+// 商品：油、扳手、釣竿、魚箱擺在櫃台上，引擎和兩艘船（模型）擺在展示台上（見 harborPlan.js 的 GOODS）。
+// 每樣商品旁邊一塊價格牌；玩家站在商品南邊（站位）按 E 購買。{ id, x, z 商品位置, y 擺放面高度, tag { x, y, z, tilt } 價格牌 }
+export const SHELF = H.GOODS.map((g) => ({ id: g.id, x: g.x, z: g.z, y: g.y, tag: { x: g.x, y: g.y + g.tag.dy, z: g.z + g.tag.dz, tilt: g.tag.tilt } }));
+export const STAND_OFF = 1.3;   // 站位在商品南邊多遠
 export const PLAYER_SPAWN = { x: H.SPAWN.x, z: H.SPAWN.z, yaw: H.SPAWN.yaw };
 
 // ---- 木棧板 ------------------------------------------------------------------
@@ -76,16 +75,18 @@ export const BOARD_Z = S.z1 + 0.3;
 export const BOARDS = { berth: { x: H.BOARDS[0].x, w: 0.95 }, room: { x: H.BOARDS[1].x, w: 2.8 }, daily: { x: H.BOARDS[2].x, w: 2.8 } };
 export const BOARD_H = 2.3, BOARD_Y0 = DECK_Y + 0.5;   // 排行榜看板的高度、底邊離地多高
 
-// 走不過去的範圍（港座標的矩形）：商店的牆、看板、魚市場的桌子、坡上的小屋
+// 走不過去的範圍（港座標的矩形）：商店的牆、看板、店裡和魚市場的擺設、坡上的小屋
 export const WALLS = [
   { x0: S.x0, x1: S.x1, z0: S.z0, z1: S.z0 + 0.25 },                 // 商店：後牆
   { x0: S.x0, x1: S.x0 + 0.25, z0: S.z0, z1: S.z1 },                 // 西牆
   { x0: S.x1 - 0.25, x1: S.x1, z0: S.z0, z1: S.z1 },                 // 東牆
   { x0: S.open.x1, x1: S.x1, z0: S.z1 - 0.25, z1: S.z1 },            // 正面東半邊
   { x0: BOARDS.berth.x - 0.6, x1: BOARDS.daily.x + 1.5, z0: BOARD_Z - 0.3, z1: BOARD_Z + 0.25 },   // 一排看板
-  { x0: H.MARKET.x0 + 1, x1: H.MARKET.x1 - 1, z0: H.MARKET.z0 + 1.2, z1: H.MARKET.z0 + 3.2 },     // 魚市場的桌子
-  { x0: H.MARKET.x0 - 0.2, x1: H.MARKET.x1 + 0.2, z0: H.MARKET.z0, z1: H.MARKET.z0 + 0.2 },        // 魚市場後面那道矮木牆
-  { x0: S.x0 + 0.6, x1: S.open.x1 - 0.4, z0: S.z0 + 0.25, z1: S.z0 + 1.2 },                         // 店裡靠後牆的兩排貨架
+  { x0: H.MARKET.x0 - 0.2, x1: H.MARKET.x1 + 0.2, z0: H.MARKET.z0, z1: H.MARKET.z0 + 0.2 },        // 魚市場後面那道木牆
+  // 店裡：櫃台、後面的貨架、西牆邊的釣竿架、三座展示台、工作台
+  ...[H.SHOP_IN.counter, H.SHOP_IN.backShelf, H.SHOP_IN.rodRack, ...H.SHOP_IN.plinths, H.SHOP_IN.bench].map((b) => ({ x0: b.x0 - 0.05, x1: b.x1 + 0.05, z0: b.z0 - 0.05, z1: b.z1 + 0.05 })),
+  // 魚市場：兩座鋪冰的展示台、處理魚的長桌、冰櫃、魚箱、活魚水槽
+  ...[...H.MARKET_IN.displays, H.MARKET_IN.table, H.MARKET_IN.chest, H.MARKET_IN.boxes, H.MARKET_IN.tanks].map((b) => ({ x0: b.x0 - 0.05, x1: b.x1 + 0.05, z0: b.z0 - 0.05, z1: b.z1 + 0.05 })),
   // 坡上的小屋：斜放的，用跟著轉的長方形擋（石砌地基比牆寬 0.15）
   ...H.HOUSES.map((h) => ({ cx: h.x, cz: h.z, ux: Math.cos(h.rot), uz: -Math.sin(h.rot), hl: h.w / 2 + 0.15, hw: h.d / 2 + 0.15 })),
 ];
@@ -100,10 +101,13 @@ export function inWall(r, x, z) {
 // 給瀏覽器的互動判斷和伺服器用：把港座標的一個點 {x, z} 轉成世界座標（其他欄位照抄）
 export const homeW = (p) => { const [x, z] = toWorld(p.x, p.z); return { ...p, x, z }; };
 export const SELL_W = { basket: homeW(SELL.basket), board: homeW(SELL.board), button: homeW(SELL.button) };
+// 室內燈的開關（世界座標）：站的位置在面板前面 0.8 公尺
+export const LIGHT_ZONES = H.LIGHT_ZONES;
+export const SWITCHES_W = H.SWITCHES.map((s) => ({ ...homeW(s), stand: homeW({ x: s.x + s.nx * 0.8, z: s.z + s.nz * 0.8 }) }));
 export const SHOP_W = homeW(SHOP);
 export const LIGHTHOUSE_W = homeW(LIGHTHOUSE);
-// 商品架：每樣商品的位置（x）、站在桌前的位置（站位）都是世界座標；桌子在港座標的 z
-export const SHELF_W = SHELF.map((it) => ({ ...it, lx: it.x, ...homeW({ x: it.x, z: SHELF_Z }), stand: homeW({ x: it.x, z: SHELF_Z + 1.3 }) }));
+// 商品：位置、站位、價格牌都換成世界座標（高度 y 不變）
+export const SHELF_W = SHELF.map((it) => ({ ...it, ...homeW(it), stand: homeW({ x: it.x, z: it.z + STAND_OFF }), tagW: homeW(it.tag) }));
 export const BOARD_STAND_W = homeW({ x: BOARDS.berth.x, z: BOARD_Z + 1.2 });
 // 玩家出生點：位置與面向（世界座標）
 export const SPAWN_W = { ...homeW(PLAYER_SPAWN), yaw: headingToWorld(PLAYER_SPAWN.yaw) };

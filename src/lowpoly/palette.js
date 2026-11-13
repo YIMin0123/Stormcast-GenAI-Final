@@ -1,5 +1,6 @@
 // 色板：全場的顏色都從這裡取。三組是給使用者比較用的（柔和偏暖、鮮豔飽和、清爽冷調）
 import * as THREE from 'three';
+import { SColor, SURF } from './kit.js';
 
 const RAW = {
   warm: {
@@ -40,9 +41,23 @@ const HARBOR = {
 };
 for (const k of Object.keys(RAW)) RAW[k] = { ...HARBOR, ...RAW[k] };
 export const PALETTE_KEYS = Object.keys(RAW);
+// 每個顏色是哪一種材質（電腦版的程式貼圖照這個畫紋路；沒列的就是平塗）
+const SURF_OF = {
+  wood: SURF.wood, woodDark: SURF.wood, woodLight: SURF.wood, woodWet: SURF.wood, woodFresh: SURF.wood, woodGrey: SURF.wood, crate: SURF.wood, pontoon: SURF.wood, trunk: SURF.wood,
+  stone: SURF.stone, concrete: SURF.stone, concreteSide: SURF.stone, parapet: SURF.stone, tetra: SURF.stone,
+  rock: SURF.rock, rock2: SURF.rock, rockWarm: SURF.rock, cliff: SURF.rock,
+  metal: SURF.metal, lampPole: SURF.metal, roofTin: SURF.tin,
+  plaster: SURF.plaster, rope: SURF.cloth, net: SURF.cloth,
+  roofSlate: SURF.shingle, roofRed: SURF.shingle,
+};
 export function palette(key) {
   const p = {};
-  for (const [k, v] of Object.entries(RAW[key])) p[k] = k === 'name' ? v : new THREE.Color(v);
+  for (const [k, v] of Object.entries(RAW[key])) {
+    if (k === 'name') { p[k] = v; continue; }
+    const c = new SColor(v);
+    c.surf = SURF_OF[k] || 0;
+    p[k] = c;
+  }
   return p;
 }
 

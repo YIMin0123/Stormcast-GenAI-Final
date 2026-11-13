@@ -7,11 +7,11 @@ import { BOAT_ORDER, CAN, newKit, shopItem } from './boatdata.js';
 import { Player } from './player.js';
 import { ShallowWater, SWE } from './shallow.js';
 import { makeSwimFx } from './swimfx.js';
-import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SHOP, SELL, setBoard, BOLLARDS, MoorLine, SHELF, SHELF_X, SHELF_Z, setTag, LAMPS, UNLIT, WET } from './harbor.js';
+import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SHOP, SELL, setBoard, BOLLARDS, MoorLine, SHELF, setTag, LAMPS, UNLIT, WET, ROOM_LIGHTS, ROOM_LAMPS, setRoomLights } from './harbor.js';
 import { WORLD } from './config.js';
 import { HOME_U, placeInHome } from './homeGl.js';
 import { HOME_YAW, toWorld, toLocal, headingToWorld } from './frame.js';
-import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, SHOP_FRONT_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
+import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SWITCHES_W, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, SHOP_FRONT_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
 import { fishLabel, FishWorld } from './fish.js';
 import { money as cash } from './fishdata.js';
 import { Fishing } from './fishing.js';
@@ -32,6 +32,7 @@ import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { SunRaysPass } from './glow.js';
 import { lpUniforms } from './lowpoly/kit.js';
+import { detailUniform } from './lowpoly/surfaceDetail.js';
 import { ShadePass } from './ao.js';
 import { Net, TEST } from './net.js';
 import { bakeClouds } from './clouds.js';
@@ -88,19 +89,21 @@ let pixelRatio = ratioSaved ? clamp(parseFloat(getPref('stormcast.res')), 0.5, R
 const SHADOW_SIZES = [0, 1024, 2048, 3072], SHADOW_HALVES = [40, 54, 72], GRASS_N = [0, 3000, 8000, 14000];
 const VIEW_HAZE = [1.9, 1.35, 1], VIEW_FAR = [520, 680, 820];
 const PRESETS = [
-  { name: '手機', shadow: 1, shRange: 0, ao: false, view: 0, fov: 50, bloom: false, rays: false, refl: true, wet: false, grass: 1, msaa: false },
-  { name: '低', shadow: 2, shRange: 1, ao: false, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: false, grass: 2, msaa: false },
-  { name: '中', shadow: 2, shRange: 1, ao: true, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: false, grass: 2, msaa: false },
-  { name: '高', shadow: 3, shRange: 1, ao: true, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: true, grass: 3, msaa: true },
+  { name: '手機', shadow: 1, shRange: 0, ao: false, view: 0, fov: 50, bloom: false, rays: false, refl: true, wet: false, grass: 1, msaa: false, tex: false },
+  { name: '低', shadow: 2, shRange: 1, ao: false, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: false, grass: 2, msaa: false, tex: false },
+  { name: '中', shadow: 2, shRange: 1, ao: true, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: false, grass: 2, msaa: false, tex: true },
+  { name: '高', shadow: 3, shRange: 1, ao: true, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: true, grass: 3, msaa: true, tex: true },
 ];
 const GS_KEYS = Object.keys(PRESETS[0]).filter((k) => k !== 'name');
 // 舊的設定：只有等級（stormcast.gfx2 是 0–3；更早的 stormcast.gfx 是低中高 0–2）
 const gs = (() => {
   try {
     const o = JSON.parse(getPref('stormcast.gfx3') || 'null');
-    if (o && GS_KEYS.every((k) => k in o || k === 'msaa')) {
-      // 加 msaa 之前存的設定：原本是哪個快速選項就照那一檔補上（存的是「高」就開），自訂的不開
-      if (!('msaa' in o)) o.msaa = PRESETS.find((p) => GS_KEYS.every((k) => k === 'msaa' || p[k] === o[k]))?.msaa ?? false;
+    const LATE = ['msaa', 'tex'];   // 後來才加的設定
+    if (o && GS_KEYS.every((k) => k in o || LATE.includes(k))) {
+      // 加這幾項之前存的設定：原本是哪個快速選項就照那一檔補上，自訂的不開
+      const was = PRESETS.find((p) => GS_KEYS.every((k) => LATE.includes(k) || p[k] === o[k]));
+      for (const k of LATE) if (!(k in o)) o[k] = was?.[k] ?? false;
       return o;
     }
   } catch { /* 壞掉就用預設 */ }
@@ -210,9 +213,8 @@ const tsuKAt = (x, z) => sampleGrid(tsuKData, x, z) / 255;
 
 // 商店與櫃檯、燈塔：玩家走不進去（矩形是港座標）
 const BLOCKS = [
-  { x0: SELL.basket.x - 0.5, x1: SELL.basket.x + 0.5, z0: SELL.basket.z - 0.5, z1: SELL.basket.z + 0.5 },   // 籃子
-  { x0: SELL.button.x - 0.2, x1: SELL.button.x + 0.2, z0: SELL.button.z - 0.2, z1: SELL.button.z + 0.2 },   // 按鈕柱
-  { x0: SHELF_X[0], x1: SHELF_X[1], z0: SHELF_Z - 0.65, z1: SHELF_Z + 0.65 },   // 商品架的長桌
+  { x0: SELL.basket.x - 0.55, x1: SELL.basket.x + 0.55, z0: SELL.basket.z - 0.5, z1: SELL.basket.z + 0.5 },   // 磅秤和上面的籃子
+  { x0: SELL.button.x - 0.22, x1: SELL.button.x + 0.22, z0: SELL.button.z - 0.22, z1: SELL.button.z + 0.22 },   // 按鈕柱
   ...WALLS,   // 商店的牆、看板、魚市場的桌子和矮牆、貨架、坡上的小屋（見 layout.js）
 ];
 // 大石頭：用格子分區，查詢某個位置的石頭表面有多高（沒有石頭就是 null）。
@@ -800,6 +802,20 @@ const lampLights = LAMPS.map((p) => {
   return l;
 });
 const boatLight = new THREE.PointLight(0xffb866, 0, 15, 1.3);
+// 室內燈（店裡、魚市場）：電腦版放真的光源照亮室內；手機不放（harbor.js 用地上的光暈代替）。開關整間房共用，跟時間無關
+const roomLights = TOUCH ? [] : ROOM_LAMPS.map((p) => {
+  const l = new THREE.PointLight(0xffc27a, 0, p.zone === 'shop' ? 10 : 8, 1.3);
+  const [x, z] = toWorld(p.x, p.z);
+  l.position.set(x, p.y, z);
+  l.userData.zone = p.zone;
+  scene.add(l);
+  return l;
+});
+function applyRoomLights(state) {
+  setRoomLights(state);
+  for (const l of roomLights) l.intensity = ROOM_LIGHTS[l.userData.zone].on ? (l.userData.zone === 'shop' ? 13 : 10) : 0;
+}
+applyRoomLights({});
 const rain = new Rain();
 const bolt = new Bolt(shared.uPixelAngle);
 const spindrift = new Spindrift({ uTime: shared.uTime, uWindDir: shared.uWindDir });
@@ -1096,12 +1112,6 @@ const camBlockers = [];
       if (d[1] >= 1.0) camBlockers.push(o);   // 至少有兩個方向超過一公尺：是一個「面」，不是一根桿子
     });
   }
-  // 攤位背面：一排價格牌，牌子之間有空隙。鏡頭繞到攤位後面時，人被牌子的背面擋掉大半，
-  // 沿著攤位走還會從空隙裡忽隱忽現；整排當成一面牆（只給鏡頭用，不畫出來）
-  const back = new THREE.Mesh(new THREE.BoxGeometry(SHELF_X[1] - SHELF_X[0] + 0.7, 2.7, 0.2));
-  { const [bx, bz] = toWorld((SHELF_X[0] + SHELF_X[1]) / 2, SHELF_Z - 0.5); back.position.set(bx, DECK_Y + 1.35, bz); back.rotation.y = HOME_YAW; }
-  back.updateMatrixWorld();
-  camBlockers.push(back);
 }
 // ---- 港口合併成少數幾塊 ---------------------------------------------------------
 // 港口是六百多個小零件（木板、樁、箱子、屋頂、欄杆），一個一個送去畫，光是送指令每幀就要十幾毫秒的 CPU，
@@ -1125,7 +1135,13 @@ const camBlockers = [];
   const inv = harbor.matrixWorld.clone().invert();
   for (const list of sets.values()) {
     if (list.length < 2) continue;
-    const geo = mergeGeometries(list.map((o) => { const g = o.geometry.clone(); g.morphAttributes = {}; g.clearGroups(); return g.applyMatrix4(o.matrixWorld); }));
+    const geo = mergeGeometries(list.map((o) => {
+      const g = o.geometry.clone(); g.morphAttributes = {}; g.clearGroups();
+      // 程式貼圖記的紋路方向（aSurf 的後三個數）也要跟著轉（applyMatrix4 只轉位置和法線）
+      const sf = g.attributes.aSurf;
+      if (sf) { const nm = new THREE.Matrix3().getNormalMatrix(o.matrixWorld), v = new THREE.Vector3(); for (let i = 0; i < sf.count; i++) { v.set(sf.getY(i), sf.getZ(i), sf.getW(i)).applyMatrix3(nm); sf.setXYZW(i, sf.getX(i), v.x, v.y, v.z); } }
+      return g.applyMatrix4(o.matrixWorld);
+    }));
     if (!geo) continue;
     const m = new THREE.Mesh(geo, list[0].material);
     m.castShadow = list[0].castShadow; m.receiveShadow = list[0].receiveShadow;
@@ -1612,12 +1628,12 @@ function aimTarget() {
     });
     if (nearBasket()) add('basket', new THREE.Vector3(SELL_W.basket.x, DECK_Y + 0.3, SELL_W.basket.z), 0.5);
     if (nearButton()) add('button', new THREE.Vector3(SELL_W.button.x, DECK_Y + 1.1, SELL_W.button.z), 0.26);
-    // 攤位上的商品：對準桌上的東西或後面的價格牌都算
+    for (const sw of SWITCHES_W) if (Math.hypot(px - sw.stand.x, pz - sw.stand.z) < 1.8) add('switch', new THREE.Vector3(sw.x, sw.y, sw.z), 0.3, { sw });
+    // 店裡的商品：對準商品本身或它的價格牌都算
     for (const it of SHELF_W) {
       if (Math.hypot(px - it.stand.x, pz - it.stand.z) > 1.7) continue;
-      const [bx, bz] = toWorld(it.lx, SHELF_Z - 0.44);   // 價格牌：桌子後面一點
-      add('shelf', new THREE.Vector3(it.x, DECK_Y + 1.1, it.z), 0.5, { shelf: it });
-      add('shelf', new THREE.Vector3(bx, DECK_Y + 1.95, bz), 0.6, { shelf: it });
+      add('shelf', new THREE.Vector3(it.x, it.y + 0.25, it.z), 0.5, { shelf: it });
+      add('shelf', new THREE.Vector3(it.tagW.x, it.tag.y, it.tagW.z), 0.45, { shelf: it });
     }
     // 停船位置牌
     if (Math.hypot(px - BOARD_STAND_W.x, pz - BOARD_STAND_W.z) < 2.4) add('berth', new THREE.Vector3(BERTH_BOARD_W.x, DECK_Y + 1.7, BERTH_BOARD_W.z), 0.65);
@@ -1693,6 +1709,14 @@ function interact() {
       audio.play('switch');
       return toast(a.boat.lampOn ? '船燈打開了' : '船燈關掉了');
     case 'seat': return sitDown(a.boat, a.seat);
+    case 'switch': {
+      // 室內燈：先在自己這邊換（按下去馬上有反應），再告訴伺服器，它會轉給同房的每個人
+      if (!net.online) return toast('連線中斷，等接回去再按');
+      const on = !ROOM_LIGHTS[a.sw.zone].on;
+      applyRoomLights({ [a.sw.zone]: on });
+      audio.play('switch');
+      return net.send({ t: 'light', zone: a.sw.zone, on });
+    }
     case 'button': {
       // 賣魚：把籃子裡每條魚的編號送給伺服器，它算好錢再回來（見下面的 sold）
       if (!fish.basket.length) return;
@@ -1752,6 +1776,7 @@ function updatePrompt() {
     else if (kind === 'seat') text = player.seat && player.seat.src === a.seat ? '按 E 站起來' : '按 E 坐下';
     else if (kind === 'button') text = fish.basket.length ? `按 E 按下按鈕賣出（$${fish.basketTotal}）` : '把魚拿過來放進籃子，就會顯示價格';
     else if (kind === 'basket') text = '把魚拿過來放進籃子，就會顯示價格';
+    else if (kind === 'switch') text = `按 E ${ROOM_LIGHTS[a.sw.zone].on ? '關掉' : '打開'}${a.sw.zone === 'shop' ? '店裡' : '魚市場'}的燈`;
     else if (kind === 'shelf') {
       const o = offer(a.shelf.id);
       text = o.price === null ? `${o.lines[0]}：${o.lines[1]}` : money >= o.price ? `按 E ${o.act || `購買${o.name}`}　$${o.price}` : `${o.name}　$${o.price}（錢不夠）`;
@@ -1869,6 +1894,7 @@ function applyGfx() {
   const ms = gs.msaa ? 4 : 0;
   if (composer.renderTarget1.samples !== ms) for (const t of [composer.renderTarget1, composer.renderTarget2]) { t.samples = ms; t.dispose(); }
   shared.uHazeK.value = gfx.haze;
+  detailUniform.value = gs.tex && !TOUCH ? 1 : 0;
   if (viewReady) { applyViewSettings(); onResize(); }
   syncGfxUi();
 }
@@ -1899,6 +1925,7 @@ const GFX_ROWS = [
   ['grass', '草', 'seg', ['關', '少', '中', '多']],
   ['畫面'],
   ['msaa', '多重取樣抗鋸齒（MSAA）', 'sw'],
+  ...(TOUCH ? [] : [['tex', '材質紋路（木紋、石紋、屋瓦）', 'sw']]),   // 手機不畫程式貼圖，不列
 ];
 const gfxCtl = {};
 {
@@ -2615,6 +2642,7 @@ function syncTime(roomT, snap) {
 }
 // 伺服器每半秒送一次時間、天氣、海上事件：照著蓋過去（兩次之間這邊自己往前推）
 function applyWorld(w, snap = false) {
+  if (w.lights) applyRoomLights(w.lights);
   Object.assign(climate, w.climate);
   const oldV = sea.vortices, oldFront = sea.tsu.on ? sea.tsu.front : null;
   for (const k in w.sea) sea[k] = w.sea[k];
@@ -2696,6 +2724,7 @@ net.on('sunk', (m) => { const b = others.boat(m.id); if (b) b.founder(m.why, m.s
 net.on('chat', (m) => chat.say(m.name, m.text, m.id === net.id));
 net.on('sys', (m) => chat.sys(m.text, m.kind));
 net.on('boards', (m) => boards.set(m));
+net.on('lights', (m) => applyRoomLights(m.lights));
 net.on('kit', (m) => applyKit(m.kit));
 net.on('no', (m) => { buying = false; if (m.msg) toast(m.msg); });
 

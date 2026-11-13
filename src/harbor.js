@@ -8,13 +8,15 @@ import { makeCanMesh } from './fish.js';
 import { HOME_U, homeGlsl } from './homeGl.js';
 import { toWorld, HOME_YAW } from './frame.js';
 import { bulb, softDisc, softSquare } from './toon.js';
-import { DECK_Y, DECKS, WALLS, SHOP, LIGHTHOUSE, SELL, SHELF, SHELF_X, SHELF_Z, PLAYER_SPAWN } from './layout.js';
+import { DECK_Y, DECKS, WALLS, SHOP, LIGHTHOUSE, SELL, SHELF, PLAYER_SPAWN } from './layout.js';
 import * as H from './lowpoly/harborPlan.js';
 import { buildHarbor } from './lowpoly/harbor3d.js';
-import { rng, makeMaterial } from './lowpoly/kit.js';
+import { rng, makeMaterial, tagSurfaces } from './lowpoly/kit.js';
+import { addSurfaceDetail } from './lowpoly/surfaceDetail.js';
+import { TOUCH } from './touch.js';
 import { palette } from './lowpoly/palette.js';
 // 港口的配置（哪裡是岸壁、商店、攤位、停船格）在 layout.js，伺服器也用同一份；這裡照著它蓋模型
-export { DECK_Y, DECKS, WALLS, SHOP, LIGHTHOUSE, SELL, SHELF, SHELF_X, SHELF_Z, PLAYER_SPAWN };
+export { DECK_Y, DECKS, WALLS, SHOP, LIGHTHOUSE, SELL, SHELF, PLAYER_SPAWN };
 // 這個檔案的座標全是港座標（見 frame.js）；makeHarbor 回傳的 group 由呼叫的人擺到世界裡（位置、轉向）
 
 export const HARBOR_ROCKS = [];   // 母島的大石頭（照模型的高度圖）、燈塔的石墩（平頂橢圓）：格式見 harbor3d.js 的 rockShape、main.js 的 rockAt
@@ -57,6 +59,48 @@ export function setTag(i, lines) {
   g.fillStyle = '#a3261a'; g.font = font(40); g.fillText(lines[2], 128, 124);
   t.needsUpdate = true;
 }
+// 招牌的字：wood 深色木頭看板＋米白色的字、chalk 黑板＋粉筆字、nobori 直式的布旗（字由上往下排）
+function signFace(sg) {
+  const PX = 160, c = document.createElement('canvas');
+  c.width = Math.round(sg.w * PX); c.height = Math.round(sg.h * PX);
+  const g = c.getContext('2d'), W = c.width, Hh = c.height;
+  const font = (px) => 'bold ' + Math.round(px) + 'px "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", serif';
+  const r = trng(sg.text.length * 31 + Math.round(sg.x * 7));
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  if (sg.style === 'nobori') {
+    g.fillStyle = sg.col; g.fillRect(0, 0, W, Hh);
+    g.fillStyle = 'rgba(255,255,255,0.92)'; g.fillRect(0, 0, W, Hh * 0.06); g.fillRect(0, Hh * 0.94, W, Hh * 0.06);
+    const n = sg.text.length, cell = Hh * 0.82 / n;
+    g.fillStyle = '#fbf6ea'; g.font = font(Math.min(cell * 0.82, W * 0.8));
+    [...sg.text].forEach((ch, i) => g.fillText(ch, W / 2, Hh * 0.09 + cell * (i + 0.5)));
+  } else if (sg.style === 'chalk') {
+    g.fillStyle = '#2d3a33'; g.fillRect(0, 0, W, Hh);
+    for (let i = 0; i < 300; i++) { g.fillStyle = 'rgba(255,255,255,' + (0.02 + r() * 0.04) + ')'; g.fillRect(r() * W, r() * Hh, 2 + r() * 20, 1 + r() * 3); }   // 擦過的粉筆痕
+    const [a, b] = sg.text.split('・');
+    g.fillStyle = '#f4f0e2'; g.font = font(Hh * 0.2); g.fillText(a, W / 2, Hh * 0.22);
+    g.fillStyle = '#f2d36b'; g.font = font(Hh * 0.13); g.fillText(b || '', W / 2, Hh * 0.42);
+    g.strokeStyle = 'rgba(244,240,226,0.7)'; g.lineWidth = 3; g.beginPath(); g.moveTo(W * 0.12, Hh * 0.53); g.lineTo(W * 0.88, Hh * 0.53); g.stroke();
+    // 幾條魚的簡筆畫
+    for (let i = 0; i < 3; i++) {
+      const x = W * (0.25 + i * 0.25), y = Hh * 0.76, s = Hh * 0.08;
+      g.strokeStyle = ['#f4f0e2', '#f29a8a', '#9fd3e6'][i]; g.lineWidth = 4;
+      g.beginPath(); g.ellipse(x, y, s * 1.7, s, 0, 0, Math.PI * 2); g.moveTo(x - s * 1.7, y); g.lineTo(x - s * 2.6, y - s * 0.8); g.lineTo(x - s * 2.6, y + s * 0.8); g.closePath(); g.stroke();
+    }
+  } else {
+    // 木頭看板：橫向的木紋、一圈深色的框、字有一點陰影（像刻進去再上色）
+    g.fillStyle = '#4a2f1c'; g.fillRect(0, 0, W, Hh);
+    for (let i = 0; i < 60; i++) { g.strokeStyle = 'rgba(' + (r() < 0.5 ? '255,220,170' : '0,0,0') + ',' + (0.04 + r() * 0.06) + ')'; g.lineWidth = 1 + r() * 2; const y = r() * Hh; g.beginPath(); g.moveTo(0, y); g.bezierCurveTo(W * 0.3, y + (r() - 0.5) * 12, W * 0.7, y + (r() - 0.5) * 12, W, y + (r() - 0.5) * 8); g.stroke(); }
+    g.strokeStyle = '#2b1a0e'; g.lineWidth = Hh * 0.08; g.strokeRect(0, 0, W, Hh);
+    g.font = font(Hh * 0.62);
+    g.fillStyle = 'rgba(0,0,0,0.55)'; g.fillText(sg.text, W / 2 + 3, Hh / 2 + 4);
+    g.fillStyle = '#f3e3bd'; g.fillText(sg.text, W / 2, Hh / 2);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+
 // 碼頭的四盞燈（晚上會亮）；UNLIT：招牌、價格牌這些不吃光照的材質，晚上要跟著變暗
 export const LAMPS = H.LAMPS.map((l) => ({ x: l.x + l.ax * 0.75, y: DECK_Y + 3.2, z: l.z + l.az * 0.75 }));   // 燈籠（燈桿往棧橋中間伸出去 0.75 公尺）
 export const UNLIT = [];
@@ -64,9 +108,21 @@ export const POOLS = [];   // 晚上燈光照在地上的光圈：{ mesh, mat, k
 // 路燈以外、晚上也會照到水面和地上的光源（燈籠、販賣機、魚市場的燈泡）：{ x, z, k }
 export const EXTRA_LAMPS = [
   { x: H.SHOP.x0 + 0.8, z: H.SHOP.z1 + 0.45, k: 0.35 },                                       // 商店門口的燈
-  { x: (H.MARKET.x0 + H.MARKET.x1) / 2, z: (H.MARKET.z0 + H.MARKET.z1) / 2 + 1, k: 0.5 },     // 魚市場棚下
+  { x: (H.MARKET.x0 + H.MARKET.x1) / 2, z: -9.5, k: 0.5 },                                     // 魚市場棚下的燈泡
 ];
 export const GLOW = [];   // 晚上會透出燈光的材質（窗戶）
+// 室內燈（店裡、魚市場）：每一區的燈泡材質、手機版地上的光圈。開關是整間房共用的（伺服器記著），setRoomLights 照著換亮暗
+export const ROOM_LAMPS = H.ROOM_LAMPS;   // 室內燈打光的位置（港座標）
+export const ROOM_LIGHTS = Object.fromEntries(H.LIGHT_ZONES.map((z) => [z, { on: true, bulbs: [], pools: [] }]));
+const BULB_ON = new THREE.Color(1.0, 0.82, 0.5).multiplyScalar(2.4), BULB_OFF = new THREE.Color(0.42, 0.39, 0.33);
+export function setRoomLights(state) {
+  for (const [zone, z] of Object.entries(ROOM_LIGHTS)) {
+    if (!(zone in state)) continue;
+    z.on = !!state[zone];
+    for (const m of z.bulbs) m.color.copy(z.on ? BULB_ON : BULB_OFF);
+    for (const p of z.pools) p.visible = z.on;
+  }
+}
 
 // 畫貼圖用的亂數（固定種子：每次開遊戲畫出來的都一樣）
 const trng = (seed) => { let s = seed >>> 0; return () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296); };
@@ -575,6 +631,9 @@ export const SOLIDS = [];   // 棧板上擋路的東西（高出棧板的樁、�
 export function makeHarbor() {
   const group = new THREE.Group();
   const mat = makeMaterial(), P = palette('warm'), r = rng(7919);
+  // 電腦版：每一面記下材質種類，著色器畫木紋、石紋這些程式貼圖（手機不畫，也不記）
+  tagSurfaces(!TOUCH);
+  if (!TOUCH) addSurfaceDetail(mat);
   // 會重複很多個的東西（消波塊、岩石、樹、草、繫纜樁）：一個樣板＋實例
   const place = (geo, list, cast, recv) => {
     const m = new THREE.InstancedMesh(geo, mat, Math.max(1, list.length));
@@ -592,7 +651,8 @@ export function makeHarbor() {
     group.add(m);
     return m;
   };
-  const out = buildHarbor({ P, r, place, mat, group, templates: [], game: true });
+  const out = buildHarbor({ P, r, place, mat, group, templates: [], game: true, detail: !TOUCH });   // 手機不畫店裡的小東西
+  tagSurfaces(false);
   group.userData.lowpolyMat = mat;
   HARBOR_ROCKS.push(...out.rocks);   // 海岸的大岩石：船和人都過不去
   PILES.push(...out.piles);          // 立在水裡的木樁（淺水模擬的障礙物）
@@ -612,18 +672,47 @@ export function makeHarbor() {
     SOLIDS.push({ x: b.x, z: b.z, r: 0.27 });   // 繫船柱：底部半徑 0.23
   }
 
-  // 賣魚的電子板：黑底綠字（setBoard 畫的），貼在立柱上那塊板子的正面
+  // 室內燈的燈泡：開著的時候很亮（會暈開），關掉變成灰灰的玻璃
+  const bulbGeo = new THREE.IcosahedronGeometry(1, 1);
+  for (const b of out.bulbs) {
+    const m = new THREE.MeshBasicMaterial({ color: BULB_ON.clone() });
+    const mesh = new THREE.Mesh(bulbGeo, m);
+    mesh.position.set(b.x, b.y, b.z); mesh.scale.setScalar(b.r);
+    group.add(mesh);
+    ROOM_LIGHTS[b.zone].bulbs.push(m);
+  }
+  // 手機不打真的光（每多一盞光源，整個畫面每一點都要多算一次）：燈下的地板鋪一圈淡淡的暖色光暈代替
+  if (TOUCH) {
+    for (const l of H.ROOM_LAMPS) {
+      const m = new THREE.MeshBasicMaterial({ map: softDisc(), color: 0xffc27a, transparent: true, opacity: 0.32, blending: THREE.AdditiveBlending, depthWrite: false });
+      const sz = l.zone === 'shop' ? 11 : 7, mesh = new THREE.Mesh(new THREE.PlaneGeometry(sz, sz), m);
+      mesh.rotation.x = -Math.PI / 2; mesh.position.set(l.x, DECK_Y + 0.04, l.z); mesh.renderOrder = 2;
+      group.add(mesh);
+      ROOM_LIGHTS[l.zone].pools.push(mesh);
+    }
+  }
+
+  // 有字的招牌：屋頂上的店名、魚市場的招牌、黑板、旗子（見 harborPlan.js 的 SIGNS）
+  for (const sg of H.SIGNS) {
+    const m = new THREE.MeshBasicMaterial({ map: signFace(sg), toneMapped: false, side: sg.style === 'nobori' ? THREE.DoubleSide : THREE.FrontSide });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(sg.w, sg.h), m);
+    mesh.position.set(sg.x, sg.y, sg.z); mesh.rotation.y = sg.rot;
+    group.add(mesh);
+    UNLIT.push(m);
+  }
+
+  // 賣魚的電子板：黑底綠字（setBoard 畫的），貼在魚市場中間那根柱子上的板子正面
   const bm = new THREE.MeshBasicMaterial({ map: boardTex, toneMapped: false });
   const bp = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.55), bm);
   bp.position.set(H.SELL.board.x, DECK_Y + 1.55, H.SELL.board.z + 0.085);
   group.add(bp);
   UNLIT.push(bm);
-  // 價格牌：長桌上每樣商品後面立一塊（setTag 畫的），面向店門口
+  // 價格牌（setTag 畫的）：櫃台上的商品後面立一塊、展示台的正面貼一塊，都面向店門口
   SHELF.forEach((it, i) => {
     const tm = new THREE.MeshBasicMaterial({ map: tags[i].t, toneMapped: false });
     const tp = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 0.45), tm);
-    tp.position.set(it.x, DECK_Y + 0.86 + 0.3, SHELF_Z - 0.25);
-    tp.rotation.x = -0.25;
+    tp.position.set(it.tag.x, it.tag.y, it.tag.z);
+    tp.rotation.x = it.tag.tilt;
     group.add(tp);
     UNLIT.push(tm);
   });

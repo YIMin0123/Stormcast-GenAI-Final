@@ -5,7 +5,7 @@
 //   釣魚：上鉤什麼魚、多大、值多少由這裡擲；收線太快、離落水點太遠、站在陸地卻說拋進深海，一律不認
 //   本房紀錄（看板）與聊天
 import { Sea, Climate, HOUR } from '../src/weather.js';
-import { BERTHS, berthPose, berthKinds, inHarbor, SELL_W, SHELF_W, BOARD_STAND_W, SPAWN_W } from '../src/layout.js';
+import { BERTHS, berthPose, berthKinds, inHarbor, SELL_W, SHELF_W, BOARD_STAND_W, SPAWN_W, SWITCHES_W, LIGHT_ZONES } from '../src/layout.js';
 import { BOAT_TYPES, BOAT_ORDER, newKit, shopItem } from '../src/boatdata.js';
 import { SPECIES, rollCatch, minFightTime, biteDelay, castRange, money } from '../src/fishdata.js';
 import { dangerAt, isWater, fishingSpot } from './world.js';
@@ -58,6 +58,7 @@ export class Room {
     this.hold = false;           // 準備合併中：不再發生新的海上事件
     this.focus = 0;
     this.env = { near: { x: 0, z: 0 }, dangerAt };
+    this.lights = Object.fromEntries(LIGHT_ZONES.map((z) => [z, true]));   // 室內燈（店裡、魚市場）：一開始是開著的，之後誰按開關都算數
   }
 
   // 佔了位置的人數（斷線還在等他回來的也算；已經離開、只剩船還沒收的不算）
@@ -76,7 +77,7 @@ export class Room {
   worldState() {
     const sea = this.sea;
     return {
-      t: 'world', time: this.t,
+      t: 'world', time: this.t, lights: { ...this.lights },
       climate: Object.fromEntries(CLIMATE_KEYS.map((k) => [k, this.climate[k]])),
       sea: { ...sea, remote: undefined, goal: { ...sea.goal }, tsu: { ...sea.tsu }, vortices: sea.vortices.map((v) => ({ ...v })) },
     };
@@ -353,6 +354,13 @@ export class Room {
       }
 
       // ---- 聊天 ----
+      case 'light': {   // 按了室內燈的開關：整間房的人都看到
+        const sw = SWITCHES_W.find((s) => s.zone === m.zone);
+        if (!sw || typeof m.on !== 'boolean') return;
+        if (!this.near(p, sw.stand.x, sw.stand.z, 3)) { this.send(p, { t: 'lights', lights: this.lights }); return this.send(p, { t: 'no', msg: '要站在開關旁邊才能按' }); }   // 他那邊已經先換了：改回來
+        this.lights[sw.zone] = m.on;
+        return this.all({ t: 'lights', lights: this.lights });
+      }
       case 'chat': {
         const text = String(m.text ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 80);
         if (!text) return;
