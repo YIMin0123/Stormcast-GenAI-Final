@@ -609,8 +609,8 @@ const shDir = sunDir.clone(), SH_REF = new THREE.Vector3(0, 0, 1);
 // 把光源擺到注視點上方。位置對齊陰影貼圖的格子，鏡頭移動時影子的邊緣才不會閃
 function placeSun(center) {
   // 影子的方向不要每一幀都跟著太陽轉：陰影貼圖整張跟著轉，所有影子的邊緣會一直在像素之間爬（看起來一閃一閃）。
-  // 太陽轉超過約 0.25 度才換一次方向，平常影子是靜止的
-  if (shDir.lengthSq() < 0.5 || shDir.angleTo(sunDir) > 0.0045) shDir.copy(sunDir);
+  // 太陽轉超過約 0.09 度才換一次方向（白天太陽每秒轉約 0.17 度，所以大約每半秒跳一小格，每次只移動半個陰影像素左右）
+  if (shDir.lengthSq() < 0.5 || shDir.angleTo(sunDir) > 0.0015) shDir.copy(sunDir);
   _sr.copy(SH_REF).cross(shDir);
   if (_sr.lengthSq() < 1e-6) _sr.set(1, 0, 0);
   _sr.normalize();
