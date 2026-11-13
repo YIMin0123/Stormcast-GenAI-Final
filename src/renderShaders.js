@@ -288,11 +288,16 @@ uniform sampler2D uSweWet;   // 濕沙
 uniform vec2 uSweOrigin;
 uniform float uSweSize;
 uniform float uSweOn;
+#ifdef SWE_ON
 float sweWin(vec2 xz, out vec2 suv) {
   suv = (xz - uSweOrigin) / uSweSize;
   vec2 e = min(suv, 1.0 - suv);
   return uSweOn * smoothstep(0.0, 0.07, min(e.x, e.y));
 }
+#else
+// 淺水模擬停用中（main.js 的 SWE_ON）：固定回傳 0，編譯器會把用到它的取樣和算式整段丟掉，海面和地形的程式都短一截
+float sweWin(vec2 xz, out vec2 suv) { suv = vec2(0.0); return 0.0; }
+#endif
 `;
 
 // 捲浪與退潮（數字與 weather.js 的 CURL、EBB 相同）。海面和浪花（skyfx.js）共用，所以時間用參數傳進來
@@ -435,6 +440,7 @@ ${waveDecl}
 ${shore}
 ${swe}
 uniform vec2 uCenter;
+uniform vec2 uMeshRot;   // 海面的網格轉了多少（cos, sin）：遠處只鋪鏡頭看得到的那個方向，整張網格轉過去對準
 uniform float uTime;
 
 varying vec3 vWorld;
@@ -467,7 +473,7 @@ vec2 vortexY(vec2 xz) {
   #define W_SWL 1
 #endif
 void main() {
-  vec2 xz = position.xz + uCenter;
+  vec2 xz = vec2(position.x * uMeshRot.x - position.z * uMeshRot.y, position.x * uMeshRot.y + position.z * uMeshRot.x) + uCenter;
 #ifdef W_TSU
   if (uTsu.w > 0.0) xz -= uTsu.xy * tsuPull(xz);
 #endif

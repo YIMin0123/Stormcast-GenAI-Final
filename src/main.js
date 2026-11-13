@@ -284,7 +284,8 @@ function makeTerrainGeometry() {
 }
 
 // 海面網格：以鏡頭注視點為中心的極座標網格，近處密、遠處疏，一路鋪到地平線
-function makePolarGeometry(nA = 384, nR = 420, r0 = 0.8, rMax = 34000) {
+// 遠處（rFull 公尺外）的三角形照「方位」一條一條排：只畫前面幾條，就是只鋪某個方向的一片扇形（見 fitWater）
+function makePolarGeometry(nA = 384, nR = 420, r0 = 0.8, rMax = 34000, rFull = 150) {
   const pos = new Float32Array((1 + nA * nR) * 3);
   for (let i = 0; i < nR; i++) {
     const r = r0 * Math.pow(rMax / r0, i / (nR - 1));
@@ -296,16 +297,22 @@ function makePolarGeometry(nA = 384, nR = 420, r0 = 0.8, rMax = 34000) {
   const idx = new Uint32Array(nA * 3 + (nR - 1) * nA * 6);
   let t = 0;
   for (let j = 0; j < nA; j++) { idx[t++] = 0; idx[t++] = 1 + ((j + 1) % nA); idx[t++] = 1 + j; }
-  for (let i = 0; i < nR - 1; i++) {
-    for (let j = 0; j < nA; j++) {
-      const a = 1 + i * nA + j, b = 1 + i * nA + ((j + 1) % nA), c = a + nA, d = b + nA;
-      idx[t++] = a; idx[t++] = b; idx[t++] = c;
-      idx[t++] = b; idx[t++] = d; idx[t++] = c;
-    }
-  }
+  const quad = (i, j) => {
+    const a = 1 + i * nA + j, b = 1 + i * nA + ((j + 1) % nA), c = a + nA, d = b + nA;
+    idx[t++] = a; idx[t++] = b; idx[t++] = c;
+    idx[t++] = b; idx[t++] = d; idx[t++] = c;
+  };
+  // 近處：一圈一圈排（整圈都要）
+  let iF = 0;
+  while (iF < nR - 1 && r0 * Math.pow(rMax / r0, iF / (nR - 1)) < rFull) iF++;
+  for (let i = 0; i < iF; i++) for (let j = 0; j < nA; j++) quad(i, j);
+  const inner = t;
+  // 遠處：一條一條排
+  for (let j = 0; j < nA; j++) for (let i = iF; i < nR - 1; i++) quad(i, j);
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setIndex(new THREE.BufferAttribute(idx, 1));
+  g.userData = { nA, inner, perCol: (nR - 1 - iF) * 6, rFull: r0 * Math.pow(rMax / r0, iF / (nR - 1)) };
   return g;
 }
 
@@ -357,7 +364,7 @@ const TIME_U = { value: 0 };
 const shared = {
   uBed: { value: bedTex }, uShelter: { value: shelterTex }, uShore: { value: shoreTex }, uN: { value: NF }, uL: { value: L },
   uSunDir: { value: sunDir }, uTime: TIME_U, uSwellT: TIME_U,
-  uCenter: { value: new THREE.Vector2() }, uWaveScale: { value: 1 },
+  uCenter: { value: new THREE.Vector2() }, uMeshRot: { value: new THREE.Vector2(1, 0) }, uWaveScale: { value: 1 },
   uPixelAngle: { value: 0.001 }, uWake: { value: wake }, uWakeBox: { value: new THREE.Vector4() }, uLampOn: { value: 0 }, uWaveRot: { value: new THREE.Vector2(1, 0) }, uTide: { value: 0 }, uRip: { value: null }, uSwimmer: { value: null },
   uDisp0: { value: null }, uDisp1: { value: null },
   uSlope0: { value: ocean.cascades[0].slope.texture },
@@ -468,6 +475,25 @@ function checkWater() {
   }, 3000);
 }
 let waterWarm = null;   // 留著，編好的程式才不會被丟掉
+// 海面的網格只鋪看得到的地方：身邊 150 公尺內整圈都鋪；更遠的只鋪鏡頭朝的那個方向（背後那一大半本來每一幀都白算）。
+// 整張網格轉過去對準，轉的角度是「一格」的整數倍——每個頂點落在的位置跟整圈鋪的時候一模一樣，所以畫面不會因此抖動。
+// 鏡頭很高、離中心很遠、幾乎垂直往下看、在水裡，或是有巨浪、漩渦（它們會把網格往旁邊拉）的時候，照舊整圈鋪
+const _wd = new THREE.Vector3();
+function fitWater(under) {
+  const ud = water.geometry.userData, cp = camera.position, c = shared.uCenter.value, step = Math.PI * 2 / ud.nA;
+  let cols = ud.nA, rot = 0;
+  const off = Math.hypot(cp.x - c.x, cp.z - c.y);
+  camera.getWorldDirection(_wd);
+  if (!under && !NO_FIT && !sea.tsu.on && !sea.vortices.length && cp.y < 25 && off < 0.45 * ud.rFull && Math.hypot(_wd.x, _wd.z) > 0.3) {
+    // 貼近水平的視線最遠只偏到畫面的半個水平視角（往上往下看都一樣）；再加上鏡頭不在中心的偏差、浪把頂點推歪的餘裕
+    const th = Math.atan(Math.tan(camera.fov * Math.PI / 360) * camera.aspect * 1.07) + Math.asin(off / ud.rFull) + 0.12;
+    const n = Math.ceil(2 * th / step) + 2;
+    if (n < ud.nA) { cols = n; rot = (Math.round((Math.atan2(_wd.z, _wd.x) - th) / step) - 1) * step; }
+  }
+  water.geometry.setDrawRange(0, ud.inner + cols * ud.perCol);
+  shared.uMeshRot.value.set(Math.cos(rot), Math.sin(rot));
+}
+const NO_FIT = new URLSearchParams(window.location.search).has('nofit');   // 測試（?nofit）：海面照舊整圈鋪
 function syncWaterTsu() {
   if (!waterSplit) return;
   const on = shared.uTsu.value.w > 0;
@@ -3022,6 +3048,7 @@ function drawFrame(dt) {
     }
   } else SIGHT.r.value.set(0, 0);
   syncWaterTsu();
+  fitWater(under);
   composer.render();
   checkWater();
 }
