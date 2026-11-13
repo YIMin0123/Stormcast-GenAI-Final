@@ -676,6 +676,26 @@ float shOne(sampler2DShadow map, mat4 M, vec3 wp, float texel, float ang, out fl
   return smoothstep(0.22, 0.78, sh / float(SH_N));
 }
 
+#ifdef SH_PLUS
+// 近處那張：3×3 格、中間重四周輕，不轉角度、不加雜訊、不拉陡（格子細，這樣邊緣最平順；跟 main.js 的 sunNearPCF 同一套）
+float shNear(sampler2DShadow map, mat4 M, vec3 wp, float texel, out float edge) {
+  vec4 sc = M * vec4(wp, 1.0);
+  vec3 p = sc.xyz / sc.w;
+  edge = 0.0;
+  if (p.x <= 0.0 || p.x >= 1.0 || p.y <= 0.0 || p.y >= 1.0 || p.z >= 1.0) return 1.0;
+  p.z -= 0.00015;
+  vec2 t = vec2(texel);
+  float s = texture(map, p) * 4.0;
+  s += (texture(map, vec3(p.xy + vec2(t.x, 0.0), p.z)) + texture(map, vec3(p.xy - vec2(t.x, 0.0), p.z))
+      + texture(map, vec3(p.xy + vec2(0.0, t.y), p.z)) + texture(map, vec3(p.xy - vec2(0.0, t.y), p.z))) * 2.0;
+  s += texture(map, vec3(p.xy + t, p.z)) + texture(map, vec3(p.xy - t, p.z))
+     + texture(map, vec3(p.xy + vec2(t.x, -t.y), p.z)) + texture(map, vec3(p.xy + vec2(-t.x, t.y), p.z));
+  vec2 e = min(p.xy, 1.0 - p.xy);
+  edge = smoothstep(0.0, 0.08, min(e.x, e.y));
+  return s / 16.0;
+}
+#endif
+
 // 這一點有沒有被樹、船、建築、山坡擋住陽光：1 = 照得到，0 = 在影子裡
 float sunShadow(vec3 wp, vec3 n) {
   if (uShadowOn < 0.5) return 1.0;
@@ -689,10 +709,10 @@ float sunShadow(vec3 wp, vec3 n) {
 #ifdef SH_PLUS
   // 近處：換成高解析度的那張（範圍邊緣跟遠的那張接起來）
   if (uShadowNearOn > 0.5) {
-    float sn = shOne(uShadowMapNear, uShadowMatNear, wp + n * 0.015, uShadowTexelNear, ang, e2);
+    float sn = shNear(uShadowMapNear, uShadowMatNear, wp + n * 0.015, uShadowTexelNear, e2);
     if (e2 > 0.0) {
       float e3;
-      if (uShadowFade > 0.001) sn = mix(sn, shOne(uShadowMapNearOld, uShadowMatNearOld, wp + n * 0.015, uShadowTexelNear, ang, e3), uShadowFade);
+      if (uShadowFade > 0.001) sn = mix(sn, shNear(uShadowMapNearOld, uShadowMatNearOld, wp + n * 0.015, uShadowTexelNear, e3), uShadowFade);
       s = mix(s, sn, e2);
     }
   }

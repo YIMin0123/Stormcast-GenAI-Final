@@ -630,6 +630,19 @@ THREE.ShaderChunk.shadowmap_pars_fragment = THREE.ShaderChunk.shadowmap_pars_fra
 // 每盞的 shadow.intensity 拿來傳比例：[0] 整體深淺、[1] 舊方向佔幾成、[2] 近處開不開
 THREE.ShaderChunk.shadowmap_pars_fragment += `
 #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS == 4
+// 近處那張的取樣：3×3 格、中間重四周輕（每一格又是硬體的雙線性比較），不轉角度、不加雜訊、不再拉陡。
+// 內建的取法每個像素轉一個亂數角度再拉陡邊緣，格子細的時候反而把邊緣弄成一坨一坨鋸齒
+float sunNearPCF( sampler2DShadow map, vec4 coord, vec2 size, float bias ) {
+\tvec3 c = coord.xyz / coord.w;
+\tc.z += bias;
+\tvec2 t = 1.0 / size;
+\tfloat s = texture( map, c ) * 4.0;
+\ts += ( texture( map, vec3( c.xy + vec2( t.x, 0.0 ), c.z ) ) + texture( map, vec3( c.xy - vec2( t.x, 0.0 ), c.z ) )
+\t\t+ texture( map, vec3( c.xy + vec2( 0.0, t.y ), c.z ) ) + texture( map, vec3( c.xy - vec2( 0.0, t.y ), c.z ) ) ) * 2.0;
+\ts += texture( map, vec3( c.xy + t, c.z ) ) + texture( map, vec3( c.xy - t, c.z ) )
+\t\t+ texture( map, vec3( c.xy + vec2( t.x, -t.y ), c.z ) ) + texture( map, vec3( c.xy + vec2( -t.x, t.y ), c.z ) );
+\treturn s / 16.0;
+}
 float sunShadowPlus() {
 	DirectionalLightShadow s0 = directionalLightShadows[ 0 ], s1 = directionalLightShadows[ 1 ], s2 = directionalLightShadows[ 2 ], s3 = directionalLightShadows[ 3 ];
 	float wOld = s1.shadowIntensity;
@@ -640,8 +653,8 @@ float sunShadowPlus() {
 		vec2 e = min( c.xy, 1.0 - c.xy );
 		float w = c.z <= 1.0 ? smoothstep( 0.0, 0.08, min( e.x, e.y ) ) : 0.0;
 		if ( w > 0.0 ) {
-			float sn = getShadow( directionalShadowMap[ 2 ], s2.shadowMapSize, 1.0, s2.shadowBias, s2.shadowRadius, vDirectionalShadowCoord[ 2 ] );
-			if ( wOld > 0.001 ) sn = mix( sn, getShadow( directionalShadowMap[ 3 ], s3.shadowMapSize, 1.0, s3.shadowBias, s3.shadowRadius, vDirectionalShadowCoord[ 3 ] ), wOld );
+			float sn = sunNearPCF( directionalShadowMap[ 2 ], vDirectionalShadowCoord[ 2 ], s2.shadowMapSize, s2.shadowBias );
+			if ( wOld > 0.001 ) sn = mix( sn, sunNearPCF( directionalShadowMap[ 3 ], vDirectionalShadowCoord[ 3 ], s3.shadowMapSize, s3.shadowBias ), wOld );
 			sh = mix( sh, sn, w );
 		}
 	}
@@ -686,12 +699,12 @@ function aimLight(l, dir, center, half, size) {
 }
 
 // ---- 電腦版的陰影升級（不是手機、陰影畫質「低」以上）----
-// 1. 近處另一張高解析度的陰影：注視點周圍 20 公尺見方、2048 格（一格約 1 公分），人物、柱子的影子才清楚；遠處照舊用大的那張
+// 1. 近處另一張高解析度的陰影：注視點周圍 12 公尺見方、2048 格（一格約 0.6 公分；試過 4096 蓋 16 公尺，內顯每幀多 13 毫秒），人物、柱子的影子才清楚；遠處照舊用大的那張
 // 2. 影子的方向不再每一幀跟著太陽轉（每一幀都轉，影子的邊緣每一幀都重新落格，看起來一直在抖）：
 //    太陽走了 1 度才換一次，新舊兩組影子用 2 秒淡入淡出（不會一格一格跳）。太陽的光照方向照舊每一幀跟著走
 // 做法：四盞不發光（亮度 0）的平行光只負責畫陰影貼圖——遠新、遠舊、近新、近舊；這時太陽本身不投影，
 // 它的影子由 sunShadowPlus（上面改的 three.js 著色器）把四張合起來。舊的那兩張只在淡入淡出的那 2 秒裡畫
-const NEAR_HALF = 10, NEAR_SIZE = 2048, SH_STEP = THREE.MathUtils.degToRad(1), SH_FADE = 2;
+const NEAR_HALF = 6, NEAR_SIZE = 2048, SH_STEP = THREE.MathUtils.degToRad(1), SH_FADE = 2;
 function shadowOnly(half, size, normalBias) {
   const l = new THREE.DirectionalLight(0xffffff, 0);
   l.castShadow = false; l.visible = false;
@@ -703,7 +716,7 @@ function shadowOnly(half, size, normalBias) {
   return l;
 }
 const farNew = shadowOnly(SHADOW_HALF, SHADOW_SIZE, sun.shadow.normalBias), farOld = shadowOnly(SHADOW_HALF, SHADOW_SIZE, sun.shadow.normalBias);
-const nearNew = shadowOnly(NEAR_HALF, NEAR_SIZE, 0.012), nearOld = shadowOnly(NEAR_HALF, NEAR_SIZE, 0.012);
+const nearNew = shadowOnly(NEAR_HALF, NEAR_SIZE, 0.008), nearOld = shadowOnly(NEAR_HALF, NEAR_SIZE, 0.008);
 const SH_LIGHTS = [farNew, farOld, nearNew, nearOld];
 const shOld = sunDir.clone();
 let shPlus = false, shWOld = 0, shFresh = true;

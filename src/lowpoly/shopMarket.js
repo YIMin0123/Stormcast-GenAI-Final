@@ -531,10 +531,16 @@ export function buildShopMarket({ fb, fd, P, box, obox, gableRoof, boatGeo, out,
     cyl(fb, Ba.x, D + 1.0, Ba.z - 0.48, 0.2, 0.2, 0.08, 14, (m, n) => (n.z > 0.5 ? Q.plWhite : Q.dark), r, Math.PI / 2);
     obox(fb, Ba.x + 0.05, D + 1.06, Ba.z - 0.39, 0.7, 0.7, 0.16, 0.02, 0.01, Q.red, Q.red, r, 0.01, Math.PI / 2, 0.8);
     // 籃子：編織的（電腦版有布紋），四面＋底
-    const bw = 0.45, bd = 0.38, bh = 0.42, bc = withSurf(P.woodLight, SURF.cloth), y0 = D + 0.1;
+    // 籃壁的頂比籃口那一圈低一點、包在它裡面（同一個高度的話兩個面會搶著畫，一閃一閃像穿模）；籃底也離磅秤台面一點點
+    const bw = 0.45, bd = 0.38, bh = 0.42, bc = withSurf(P.woodLight, SURF.cloth), y0 = D + 0.105;
     box(fb, Ba.x - bw, Ba.x + bw, y0, y0 + 0.04, Ba.z - bd, Ba.z + bd, bc, bc, r);
-    for (const [a, b, c2, e] of [[-bw, bw, -bd, -bd + 0.04], [-bw, bw, bd - 0.04, bd], [-bw, -bw + 0.04, -bd, bd], [bw - 0.04, bw, -bd, bd]]) box(fb, Ba.x + a, Ba.x + b, y0, y0 + bh, Ba.z + c2, Ba.z + e, bc, bc.clone().multiplyScalar(0.88), r);
-    box(fb, Ba.x - bw - 0.02, Ba.x + bw + 0.02, y0 + bh - 0.05, y0 + bh, Ba.z - bd - 0.02, Ba.z + bd + 0.02, P.woodDark, P.woodDark, r);   // 籃口一圈
+    for (const [a, b, c2, e] of [[-bw, bw, -bd, -bd + 0.04], [-bw, bw, bd - 0.04, bd], [-bw, -bw + 0.04, -bd, bd], [bw - 0.04, bw, -bd, bd]]) box(fb, Ba.x + a, Ba.x + b, y0, y0 + bh - 0.02, Ba.z + c2, Ba.z + e, bc, bc.clone().multiplyScalar(0.88), r);
+    // 籃口一圈：四根框條（中間是空的，看得到籃子裡面）
+    const rw = 0.065, ry0 = y0 + bh - 0.05, ry1 = y0 + bh;
+    box(fb, Ba.x - bw - 0.02, Ba.x + bw + 0.02, ry0, ry1, Ba.z - bd - 0.02, Ba.z - bd - 0.02 + rw, P.woodDark, P.woodDark, r);
+    box(fb, Ba.x - bw - 0.02, Ba.x + bw + 0.02, ry0, ry1, Ba.z + bd + 0.02 - rw, Ba.z + bd + 0.02, P.woodDark, P.woodDark, r);
+    box(fb, Ba.x - bw - 0.02, Ba.x - bw - 0.02 + rw, ry0, ry1, Ba.z - bd - 0.02 + rw, Ba.z + bd + 0.02 - rw, P.woodDark, P.woodDark, r);
+    box(fb, Ba.x + bw + 0.02 - rw, Ba.x + bw + 0.02, ry0, ry1, Ba.z - bd - 0.02 + rw, Ba.z + bd + 0.02 - rw, P.woodDark, P.woodDark, r);
     // 按鈕：一根圓柱台、黃色的面板、紅色的大按鈕
     cyl(fb, Bu.x, D, Bu.z, 0.17, 0.2, 0.92, 10, Q.plWhite, r);
     cyl(fb, Bu.x, D + 0.92, Bu.z, 0.2, 0.2, 0.05, 10, Q.plYellow, r);
