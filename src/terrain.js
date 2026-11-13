@@ -2,6 +2,7 @@ import { toWorld, toLocal } from './frame.js';
 import { WORLD } from './config.js';
 
 import { homeBed } from './lowpoly/homeShape.js';
+import * as H from './lowpoly/harborPlan.js';
 const IL = WORLD.home.islandLocal;
 
 // 地圖：開闊海洋上的一座母島（低面的小島漁港，形狀見 lowpoly/homeShape.js），沒有大陸。高程單位公尺，海平面 = 0，負值為海底。
@@ -12,7 +13,7 @@ export const SEA_FLOOR = -30;
 // 島的資料（港座標）。R：島的大概半徑（著色與佈景用）；look：地表的樣子；flora：舊的佈景（樹、石頭）—— 新島的樹和岩石是低面模型，這裡不種
 const LOCAL_ISLANDS = [
   {
-    id: 'home', name: '母港島', x: IL.x, z: IL.z, R: 75, bumps: [{ x: IL.x, z: IL.z, r: 60, peak: 10 }],
+    id: 'home', name: '母港島', x: H.ISLAND.x, z: H.ISLAND.z, R: 85, bumps: [{ x: H.HILL.x, z: H.HILL.z, r: 50, peak: H.HILL.peak }],
     shape: { beach: 0, bw: 1, jag: 0, cliff: 0, hill: 0 },
     look: { rock: 0.12, veg: 1.0, white: 0.15, dry: 0.15 },
     flora: { broadleaf: 0, conifer: 0, palm: 0, bush: 0, shoreRock: 0, landRock: 0 },
@@ -31,8 +32,8 @@ export function makeTerrain(N, L) {
   for (let j = 0; j < N; j++) {
     for (let i = 0; i < N; i++) {
       const [x, z] = toLocal(((i + 0.5) / N - 0.5) * L, ((j + 0.5) / N - 0.5) * L);
-      // 離島 230 公尺外都是外海的海底（homeBed 在那裡早就到底了），不用算
-      bed[j * N + i] = (x - IL.x) ** 2 + (z - IL.z) ** 2 > 230 * 230 ? SEA_FLOOR : Math.max(SEA_FLOOR, homeBed(x, z));
+      // 離島 260 公尺外都是外海的海底（homeBed 在那裡早就到底了），不用算
+      bed[j * N + i] = (x - H.ISLAND.x) ** 2 + (z - H.ISLAND.z) ** 2 > 260 * 260 ? SEA_FLOOR : Math.max(SEA_FLOOR, homeBed(x, z));
     }
   }
   return { bed };

@@ -35,6 +35,8 @@ const HARBOR = {
   white: '#f1ede4', hullRed: '#a9443a', hullBlue: '#3f6f9a', hullGreen: '#4f8a5a', hullOrange: '#d9823e', cabinRoof: '#3f6f9a',
   board: '#2f5d86', flagRed: '#d64b3f', flagWhite: '#f4efe4', flagBlue: '#3b6fb0', crate: '#b08a5e', fishbox: '#4f8fc0',
   float: '#e8843c', net: '#4f7a5a', lampPole: '#454545', bulb: '#ffe2a0', pontoon: '#9c7a54', window: '#3c4f5c', yellow: '#e2b93b',
+  // 木造碼頭：泡水的木頭、新換上去的木板、曬白的舊木板、灰泥牆、繩子
+  woodWet: '#54493a', woodFresh: '#d8b47e', woodGrey: '#9c8f7c', plaster: '#e8dfcb', rope: '#b59a68',
 };
 for (const k of Object.keys(RAW)) RAW[k] = { ...HARBOR, ...RAW[k] };
 export const PALETTE_KEYS = Object.keys(RAW);

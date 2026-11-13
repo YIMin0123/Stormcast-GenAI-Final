@@ -2,7 +2,7 @@
 // 釣魚時用它決定「這裡會釣到什麼」，也用它擋掉不合理的請求（人在陸地卻說釣到深海魚）。
 import { makeTerrain, ISLANDS } from '../src/terrain.js';
 import { computeDanger, computeOffshore, windWave, seaLevel } from '../src/weather.js';
-import { onDeck, pontoonY, BERTHS, berthPose } from '../src/layout.js';
+import { onDeck, BERTHS, berthPose } from '../src/layout.js';
 import { BOAT_TYPES } from '../src/boatdata.js';
 
 import { WORLD } from '../src/config.js';
@@ -23,8 +23,8 @@ function sample(arr, x, z, n) {
 export const bedAt = (x, z) => sample(bed, x, z, NF);
 export const dangerAt = (x, z) => sample(danger, x, z, N) / 255;
 export const offAt = (x, z) => sample(offshore, x, z, N);
-// 可以拋竿的水面：不是岸、不是岸壁和浮橋（船上不算，伺服器不管船擋不擋）
-export const isWater = (x, z) => bedAt(x, z) < -0.6 && !onDeck(x, z, 0.2) && pontoonY(x, z, 0.2) === null;
+// 可以拋竿的水面：不是岸、不是棧板（船上不算，伺服器不管船擋不擋）
+export const isWater = (x, z) => bedAt(x, z) < -0.6 && !onDeck(x, z, 0.2);
 
 // 這個位置釣魚的條件（給 rollCatch 用）。climate、sea：這間房現在的天氣與海況
 export function fishingSpot(x, z, climate, sea) {
@@ -36,7 +36,7 @@ export function fishingSpot(x, z, climate, sea) {
 
 // 開機時檢查每個停船格的水夠不夠深（地形改了、格子擺到淺灘上的話，這裡會講）
 for (const b of BERTHS) {
-  const type = b.kind === 'small' ? 'skiff' : 'trawler', p = berthPose(b, type), S = BOAT_TYPES[type];
+  const type = 'trawler', p = berthPose(b, type), S = BOAT_TYPES[type];   // 每格都要停得下最大的船
   const c = Math.cos(p.heading), s = Math.sin(p.heading);
   const shallow = [[S.len / 2, 0], [-S.len / 2, 0], [0, S.beam / 2], [0, -S.beam / 2], [0, 0]].some(([a, e]) => -bedAt(p.x + c * a - s * e, p.z + s * a + c * e) < S.draft + 0.2);
   if (shallow) console.warn(`[berth] 停船格 ${b.label} 的水太淺`);

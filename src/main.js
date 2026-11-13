@@ -11,7 +11,7 @@ import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_RO
 import { WORLD } from './config.js';
 import { HOME_U, placeInHome } from './homeGl.js';
 import { HOME_YAW, toWorld, toLocal, headingToWorld } from './frame.js';
-import { BERTHS, berthPose, pontoonY, stairY, onDeck, PONTOON_Y, inHarbor, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, SHOP_FRONT_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
+import { BERTHS, berthPose, deckY, ladderY, onDeck, inHarbor, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, SHOP_FRONT_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
 import { fishLabel, FishWorld } from './fish.js';
 import { money as cash } from './fishdata.js';
 import { Fishing } from './fishing.js';
@@ -236,17 +236,15 @@ function walkGround(x, z, under = false) {
   if (rockAt(x, z) !== null) return 99;
   if (Math.hypot(x - LIGHTHOUSE_W.x, z - LIGHTHOUSE_W.z) < LIGHTHOUSE_W.r) return 99;
   if (!under) for (const c of SOLIDS) if ((x - c.x) ** 2 + (z - c.z) ** 2 < c.r * c.r) return 99;   // 棧板上的樁、燈柱、木桶…（在棧板底下游泳時不算）
-  const sy = stairY(x, z);   // 擋土牆前面的樓梯
-  if (sy !== null) return under ? 99 : sy;
-  if (onDeck(x, z)) return under ? 99 : DECK_Y;   // 岸壁和防波堤是實心的：游泳的人鑽不到底下
-  const py = pontoonY(x, z);
-  // 浮在水上的浮橋鑽不過去；從岸壁斜下來的跳板底下是空的，離水面還有一點高度的地方游得過去
-  if (py !== null) return !under ? py : py > PONTOON_Y + 0.05 && py > playerWater(x, z) + 0.6 ? bedAt(x, z) : 99;
+  const ly = ladderY(x, z);   // 梯子：落水的人從這裡爬上棧板
+  if (ly !== null) return ly;
+  const dy = deckY(x, z);   // 木棧板（岸邊平台、棧橋、指棧、店裡的地板）
+  if (dy !== null) return under ? 99 : dy;   // 棧板比水面高 1 公尺多，游泳的人直接爬不上去、也不從底下鑽過去：要找梯子
   return bedAt(x, z);
 }
 // 船眼中的地面：棧橋也算障礙物
 const boatGround = (x, z) => {
-  if (onDeck(x, z, 0.4) || pontoonY(x, z, 0.3) !== null) return DECK_Y;
+  if (deckY(x, z, 0.4) !== null) return DECK_Y;
   const rk = rockAt(x, z);
   return rk === null ? bedAt(x, z) : Math.max(bedAt(x, z), rk);
 };
@@ -800,7 +798,7 @@ function splash(x, y, z, n = 14) {
 }
 // 某處是不是可以拋竿的水面（不是岸、不是棧板、不是船上）
 function isWater(x, z) {
-  if (bedAt(x, z) > -0.6 || onDeck(x, z, 0.2) || pontoonY(x, z, 0.2) !== null) return false;
+  if (bedAt(x, z) > -0.6 || onDeck(x, z, 0.2)) return false;
   return !boats.some((b) => { const l = b.toLocal(x, z); return b.deckContains(l.x, l.z); });
 }
 const waterY = (x, z) => ocean.sampleHeight(x, z) * clamp((-bedAt(x, z) - 0.3) / 7.7, 0, 1) * waveK(x, z) + tsuAt(x, z);
@@ -1063,6 +1061,7 @@ const camBlockers = [];
     root.updateMatrixWorld(true);
     root.traverse((o) => {
       if (!o.isMesh || o.isInstancedMesh || o.material.transparent) return;
+      if (o.material === harbor.userData.lowpolyMat) return;   // 港口的低面模型太細（十幾萬個三角形）：鏡頭改用它附的簡單擋牆（camProxy）
       if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
       o.geometry.boundingBox.getSize(size).multiply(sc.setFromMatrixScale(o.matrixWorld));
       const d = [size.x, size.y, size.z].sort((p, q) => q - p);
@@ -2911,7 +2910,7 @@ function advance(dt) {
     const stepN = Math.floor(player.phase / Math.PI);
     if (stepN !== lastStep) {
       lastStep = stepN;
-      if (inGame && player.moving && player.h <= 0 && !player.swim && !player.seat) audio.play(player.boat || onDeck(player.x, player.z) || pontoonY(player.x, player.z) !== null ? 'stepWood' : 'stepGrass', keys.shift ? 1 : 0.7);
+      if (inGame && player.moving && player.h <= 0 && !player.swim && !player.seat) audio.play(player.boat || onDeck(player.x, player.z) ? 'stepWood' : 'stepGrass', keys.shift ? 1 : 0.7);
     }
   }
 
@@ -3100,7 +3099,7 @@ function drawFrame(dt) {
   rays.color.setRGB(shared.uSunCol.value.x, shared.uSunCol.value.y, shared.uSunCol.value.z);
   rays.strength = under ? 0 : RAYS * clamp((camera.getWorldDirection(_rf).dot(sunDir) - 0.15) / 0.35, 0, 1) * (1 - 0.8 * gloom);
   // 腳下的暗影
-  const onFloor = !!player.boat || onDeck(player.x, player.z) || pontoonY(player.x, player.z) !== null, lift = clamp(1 - (player.h || 0) / 1.2, 0, 1);
+  const onFloor = !!player.boat || onDeck(player.x, player.z), lift = clamp(1 - (player.h || 0) / 1.2, 0, 1);
   blob.visible = onFloor && !player.swim;
   shared.uBlob.value.set(player.x, player.z, onFloor || player.swim ? 0 : lift);
   aoPass.enabled = !under && gfx.ao;   // 水裡一片混濁，不需要；畫質「低」也省掉

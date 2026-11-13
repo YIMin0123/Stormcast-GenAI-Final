@@ -1,5 +1,5 @@
-// 日本風的小漁港：水泥岸壁（船就靠在岸壁邊）、往海裡伸出去再轉彎的防波堤（外側堆著消波塊、堤尾一座紅燈標）、
-// 船揚場的斜坡、岸壁上的商店、攤位、魚市場棚。
+// 母島的木造漁港：一條轉彎的木棧橋（兩側 32 格停船格）、橋頭的商店和魚市場、坡上的小屋、岩岬上的燈塔。
+// 模型在 lowpoly/harbor3d.js，這裡再加上遊戲才需要的東西（賣魚的電子板、價格牌、纜繩）。
 // 除了模型，也回傳可行走的棧板範圍、商店與燈塔位置、出生點，給玩家與船的邏輯用。
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -58,12 +58,12 @@ export function setTag(i, lines) {
   t.needsUpdate = true;
 }
 // 碼頭的四盞燈（晚上會亮）；UNLIT：招牌、價格牌這些不吃光照的材質，晚上要跟著變暗
-export const LAMPS = H.LAMPS.map((l) => ({ x: l.x, y: DECK_Y + 4.1, z: l.z + 0.75 }));   // 路燈的燈頭（燈桿往港內伸出去 0.75 公尺）
+export const LAMPS = H.LAMPS.map((l) => ({ x: l.x + l.ax * 0.75, y: DECK_Y + 3.2, z: l.z + l.az * 0.75 }));   // 燈籠（燈桿往棧橋中間伸出去 0.75 公尺）
 export const UNLIT = [];
 export const POOLS = [];   // 晚上燈光照在地上的光圈：{ mesh, mat, k }
 // 路燈以外、晚上也會照到水面和地上的光源（燈籠、販賣機、魚市場的燈泡）：{ x, z, k }
 export const EXTRA_LAMPS = [
-  { x: H.SHOP.x0 + 0.8, z: H.SHOP.z1 + 0.6, k: 0.35 },                                        // 商店門口的燈
+  { x: H.SHOP.x0 + 0.8, z: H.SHOP.z1 + 0.45, k: 0.35 },                                       // 商店門口的燈
   { x: (H.MARKET.x0 + H.MARKET.x1) / 2, z: (H.MARKET.z0 + H.MARKET.z1) / 2 + 1, k: 0.5 },     // 魚市場棚下
 ];
 export const GLOW = [];   // 晚上會透出燈光的材質（窗戶）
@@ -594,17 +594,23 @@ export function makeHarbor() {
   };
   const out = buildHarbor({ P, r, place, mat, group, templates: [], game: true });
   group.userData.lowpolyMat = mat;
-  HARBOR_ROCKS.push(...out.tetrapods, ...out.rocks);   // 消波塊、海岸的大岩石：船和人都過不去
-
-  // 繫纜樁：岸壁邊每 7 公尺一根、大船格每格堤邊一根（纜繩套在樁頂下面一點）
-  for (const b of H.BOLLARDS) {
-    BOLLARDS.push({ x: b.x, z: b.z, y: DECK_Y + 0.45 });
-    SOLIDS.push({ x: b.x, z: b.z, r: 0.35 });
+  HARBOR_ROCKS.push(...out.rocks);   // 海岸的大岩石：船和人都過不去
+  PILES.push(...out.piles);          // 立在水裡的木樁（淺水模擬的障礙物）
+  SOLIDS.push(...out.solids);        // 燈桿、高出棧板的樁、魚市場的柱子、木箱木桶
+  // 鏡頭用的擋牆（看不見，只給 main.js 的 camBlockers 打射線）
+  const pm = new THREE.MeshBasicMaterial({ visible: false });
+  for (const b of out.camBoxes) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(b.w, b.h, b.d), pm);
+    m.position.set(b.cx, b.cy, b.cz); m.rotation.y = b.rot;
+    m.userData.camProxy = true;
+    group.add(m);
   }
-  for (const l of H.LAMPS) SOLIDS.push({ x: l.x, z: l.z, r: 0.25 });                // 路燈的燈桿
-  SOLIDS.push({ x: H.BEACON.x, z: H.BEACON.z, r: 0.9 });                             // 東邊堤頭的紅燈標
-  const M = H.MARKET;
-  for (const x of [M.x0 + 0.3, (M.x0 + M.x1) / 2, M.x1 - 0.3]) for (const z of [M.z0 + 0.3, M.z1 - 0.3]) SOLIDS.push({ x, z, r: 0.3 });   // 魚市場棚的柱子
+
+  // 繫船柱：每格停船格的棧橋邊一根（纜繩套在樁頂下面一點）
+  for (const b of H.BOLLARDS) {
+    BOLLARDS.push({ x: b.x, z: b.z, y: DECK_Y + 0.42 });
+    SOLIDS.push({ x: b.x, z: b.z, r: 0.33 });
+  }
 
   // 賣魚的電子板：黑底綠字（setBoard 畫的），貼在立柱上那塊板子的正面
   const bm = new THREE.MeshBasicMaterial({ map: boardTex, toneMapped: false });
