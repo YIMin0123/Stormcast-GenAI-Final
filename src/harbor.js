@@ -647,7 +647,7 @@ const flagTexture = (text, bg) => canvasTex(256, 160, (g) => {
 
 // 立在水裡的木樁（給淺水模擬當障礙物）
 export const PILES = [];
-export const PORCHES = [];   // 小屋的門廊、石階（港座標的斜放矩形 { cx, cz, ux, uz, hl, hw, y0 內緣高, y1 外緣高 }）
+export const PORCHES = [];   // 小屋的門廊（港座標的斜放矩形 { cx, cz, ux, uz, hl, hw, y0 }）、石階（{ steps: true, cx, cz 起點, ux, uz, y0, n, rise, run, w0, dw }）
 export const BOLLARDS = [];  // 岸壁上的繫纜樁：{ x, z, y }（y 是纜繩套在樁上的高度）。船的纜繩可以綁在上面
 
 // 繫船的纜繩：從船舷拉到岸上的繫纜樁。繩子比兩頭的距離長時中間垂下去（垂到水面就浮在水上），拉緊了就是直的

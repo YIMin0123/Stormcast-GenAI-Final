@@ -273,9 +273,16 @@ function walkGround(x, z, under = false) {
     }
     if (top !== null) return top;
   } else for (const p of PILES) if ((x - p.x) ** 2 + (z - p.z) ** 2 < p.r * p.r) return 99;   // 在棧板底下游：水裡的樁擋著
-  for (const p of PORCHES) if (inWall(p, hx, hz)) {   // 小屋的門廊（平的）和門前石階（從門廊往外一路斜下去）；上面的長椅、水桶照上面擋著
-    const v = -(hx - p.cx) * p.uz + (hz - p.cz) * p.ux;
-    return p.y0 + (p.y1 - p.y0) * (v + p.hw) / (2 * p.hw);
+  for (const p of PORCHES) {   // 小屋的門廊（平的）和門前石階；上面的長椅、水桶照上面擋著
+    if (p.steps) {
+      // 石階：第 i 階從門廊邊伸出 run×(i+1)、半寬 w0 + dw×i、頂面低 rise×(i+1)。某一點落在哪一階 = 往外的距離、往旁邊的距離各算一個階數取大的。
+      // 高度用連續的（踩在每一階的中間剛好貼齊，前後差不到半階），走上走下才不會一頓一頓的；兩側很陡，從旁邊走過去會擋住
+      const dx = hx - p.cx, dz = hz - p.cz, lat = Math.abs(dx * p.ux + dz * p.uz), d = -dx * p.uz + dz * p.ux;
+      if (d <= 0 || d >= p.run * p.n || lat >= p.w0 + p.dw * (p.n - 1)) continue;
+      const k = Math.max(d / p.run, (lat - p.w0) / p.dw + 1, 0);
+      return p.y0 + p.rise * (Math.min(k, p.n - 0.5) + 0.5);
+    }
+    if (inWall(p, hx, hz)) return p.y0;
   }
   const ly = ladderY(x, z);   // 梯子：落水的人從這裡爬上棧板
   if (ly !== null) return ly;

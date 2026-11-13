@@ -175,12 +175,14 @@ export function buildHouses({ fb, fd, P, box, obox, gableRoof, merge, harborHeig
 
     merge(fb, sub, hs.rot, hs.x, y0, hs.z);
     merge(fd, sd, hs.rot, hs.x, y0, hs.z);
-    // 走得上去的門廊和石階（港座標的矩形，見 main.js 的 walkGround）：門廊是平的，石階當成一道斜坡
+    // 走得上去的門廊和石階（港座標，見 main.js 的 walkGround）：門廊是平的矩形
     {
-      const z0 = hd + 0.15, z1 = hd + PORCH + 0.05, sz1 = hd + PORCH + 0.3 + (nStep - 1) * 0.3;
-      const [pcx, pcz] = toW(0, (z0 + z1) / 2), [scx, scz] = toW(0, (z1 + sz1) / 2);
+      const z0 = hd + 0.15, z1 = hd + PORCH + 0.05;
+      const [pcx, pcz] = toW(0, (z0 + z1) / 2);
       out.porches.push({ cx: pcx, cz: pcz, ux: c, uz: -s, hl: hw + 0.2, hw: (z1 - z0) / 2, y0, y1: y0 });
-      out.porches.push({ cx: scx, cz: scz, ux: c, uz: -s, hl: 0.8, hw: (sz1 - z1) / 2, y0, y1: y0 + groundY });
+      // 石階：照實際的形狀（每一階都從門廊邊伸出來，越下面越長、越寬，所以兩側也是一階一階下去的），見 main.js 的 walkGround
+      const [tcx, tcz] = toW(0, hd + PORCH);
+      out.porches.push({ steps: true, cx: tcx, cz: tcz, ux: c, uz: -s, y0, n: nStep, rise: groundY / (nStep + 1), run: 0.3, w0: 0.75, dw: 0.05 });
     }
     out.camBoxes.push({ cx: hs.x, cy: y0 + (h + 1.8) / 2, cz: hs.z, w: hs.w + 0.9, h: h + 1.8, d: hs.d + 0.9, rot: hs.rot });
   });
