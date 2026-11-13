@@ -284,7 +284,8 @@ float foamLace(vec2 p, float t, float hole) {
 float shK(float s) { return 28.56 * log(5.0 + 0.22 * s); }
 const float SH_K0 = 45.97;   // shK(0)
 // 這段海岸的浪打到第幾拍：約 5 秒一道，沿著海岸錯開，浪頭不會跟海岸線完全平行，也不會整條海岸同時漲退
-float shorePhase(vec2 xz, float t) { return t * 1.25 + 6.0 * shNoise(xz * 0.012); }
+// （兩層：大的一層讓整段海岸先後到，小的一層讓同一道浪線彎彎曲曲，不是一條跟海岸平行的弧）
+float shorePhase(vec2 xz, float t) { return t * 1.25 + 6.0 * shNoise(xz * 0.012) + 2.4 * shNoise(xz * 0.045 + 7.3); }
 // 這裡的浪有多大：港內與背風面只是輕輕拍岸
 float shoreExpo(float shelter, float scale) { return clamp(shelter * scale / 1.3, 0.18, 2.3); }
 // 今天的風浪有多大（岸邊用）：平常跟著風力，颱風時再放大
@@ -306,8 +307,8 @@ vec4 swell(float s, float ph, vec2 xz, float expo, out float pre) {
   float th = (shK(s) + ph) / 6.2832;
   float n = floor(th), f = th - n;
   float rn = shHash(n);
-  float sb = 10.0 + 6.0 * rn;                                 // 這道浪在離岸多遠的地方破
-  float along = 0.55 + 0.9 * shNoise(xz * 0.035 + n * 5.3);   // 同一道浪沿著海岸有高有低
+  float sb = 8.0 + 5.0 * rn + 6.0 * shNoise(xz * 0.05 + n * 2.1);   // 這道浪在離岸多遠的地方破（沿著海岸各段不一樣：有的地方先破）
+  float along = 0.5 + 0.65 * shNoise(xz * 0.035 + n * 5.3) + 0.35 * shNoise(xz * 0.11 + n * 3.1);   // 同一道浪沿著海岸有高有低（大段、小段各一層）
   float fc = mix(0.25, 0.5, smoothstep(sb * 0.6, 40.0, s));   // 越靠岸，朝岸的那一面越陡
   float w = f < fc ? 0.5 * f / fc : 0.5 + 0.5 * (f - fc) / (1.0 - fc);
   float p = 0.5 - 0.5 * cos(6.2832 * w);
@@ -1154,19 +1155,24 @@ void main() {
     float w = swl.z, big = smoothstep(0.75, 1.2, swl.w), calm = smoothstep(0.12, 0.6, expo);
     float rag = 0.6 * shNoise(vWorld.xz * 0.23 + 9.1) + 0.4 * shNoise(vWorld.xz * 0.71 + 3.3);   // 邊緣參差不齊
     float part = smoothstep(0.80, 1.12, swl.w + 0.3 * (rag - 0.5));                           // 浪是一段一段破的：高的那幾段先翻白，矮的還沒
-    part = mix(part, 1.0, 0.25 + 0.75 * smoothstep(9.0, 2.5, sd));                            // 到了岸邊才整道都破
+    part = mix(part, 1.0, 0.2 + 0.5 * smoothstep(9.0, 2.5, sd));                              // 越靠岸破得越多，但還是一段一段的
     // 快破的浪頭：只有比較高的那幾段冒白，斷斷續續的一條
     float lip = pre * (1.0 - swl.y) * smoothstep(0.41, 0.49, w) * smoothstep(0.60, 0.51, w) * big;
     // 破了以後：朝岸的那一面翻成一整道白沫，前緣參差；後面拖著一片慢慢散開的碎泡沫
-    float front = smoothstep(0.16 + 0.20 * rag, 0.40 + 0.16 * rag, w) * smoothstep(0.64 - 0.12 * rag, 0.47, w) * part;
-    float trail = smoothstep(0.44, 0.58, w) * pow(1.0 - smoothstep(0.5, 1.0, w), 1.2) * (0.45 + 0.6 * rag) * (0.4 + 0.6 * part);
+    float wid = shNoise(vWorld.xz * 0.06 + 4.0);   // 白帶的粗細沿著海岸慢慢變（有的地方一大片、有的地方細細一條）
+    float front = smoothstep(0.16 + 0.20 * rag + 0.12 * wid, 0.40 + 0.16 * rag, w) * smoothstep(0.64 - 0.12 * rag - 0.12 * (1.0 - wid), 0.47, w) * part;
+    // 白帶裡面有破洞：大的一層照上面的泡沫紋理，細的一層再取一次（近處才看得出來，遠處淡掉免得閃），不是一整條實心的白
+    float holes = smoothstep(0.22, 0.58, ft) * mix(1.0, smoothstep(0.25, 0.6, texture2D(uFoamTex, vWorld.xz * 0.43 + vec2(0.21, 0.67) + flow * c0 * 0.6).r), texFade);
+    front *= 0.3 + 0.7 * holes;
+    float trail = smoothstep(0.44, 0.58, w) * pow(1.0 - smoothstep(0.5, 1.0, w), 1.2) * (0.45 + 0.6 * rag) * (0.4 + 0.6 * part) * (0.15 + 0.85 * holes);   // 後面拖的碎泡沫：破洞更多
     float thin = 0.35 + 0.65 * smoothstep(0.1, 0.7, depth);   // 水很薄的地方（已經上了沙灘）浪頭的白沫散掉
     cov += shoreZone * calm * (0.9 * lip + swl.y * thin * (1.05 * front + 0.7 * trail * (0.35 + 0.65 * texFade)));   // 遠處只留浪頭那一道白線
     // 沖上沙灘的那層薄水：浪剛到的時候整片是白的，退下去的時候散成一絲一絲
     float age = swashAge(ph);
     float fresh = 1.0 - 0.75 * smoothstep(0.12, 0.85, age);
     cov += (1.0 - win) * (0.5 + 0.5 * calm) * (0.25 + 0.75 * fresh)
-         * (0.95 * smoothstep(0.07, 0.01, depth) * (0.6 + 0.4 * rag) + 0.46 * smoothstep(0.8, 0.05, depth) * (0.35 + 0.65 * rag));
+         * (0.95 * smoothstep(0.07, 0.01, depth) * (0.6 + 0.4 * rag) + 0.46 * smoothstep(0.8, 0.05, depth) * (0.35 + 0.65 * rag) * (0.25 + 0.75 * holes))
+         * (0.3 + 0.7 * smoothstep(0.28, 0.62, shNoise(vWorld.xz * 0.13 + vec2(uTime * 0.05, 1.7))));   // 沖上岸的白邊一段一段的（斷口沿著岸慢慢移動）
   }
   cov += win * (0.72 * sw.a + 0.4 * smoothstep(0.85, 1.3, sw.a));
   cov += smoothstep(0.07, 0.0, depth) * (0.15 + 0.6 * ft) * (1.0 - 0.6 * smoothstep(0.3, 0.9, swashAge(ph)));   // 最前緣一圈碎泡沫（退潮時淡掉）

@@ -7,7 +7,7 @@ import { BOAT_ORDER, CAN, newKit, shopItem } from './boatdata.js';
 import { Player } from './player.js';
 import { ShallowWater, SWE } from './shallow.js';
 import { makeSwimFx } from './swimfx.js';
-import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SELL, setBoard, BOLLARDS, MoorLine, SHELF, setTag, LAMPS, UNLIT, WET, ROOM_LIGHTS, ROOM_LAMPS, setRoomLights, GLOW_KEEP, lightBulbs, updateFlags, PORCHES } from './harbor.js';
+import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SELL, setBoard, BOLLARDS, MoorLine, SHELF, setTag, LAMPS, UNLIT, WET, ROOM_LIGHTS, ROOM_LAMPS, setRoomLights, GLOW_KEEP, lightBulbs, updateFlags, PORCHES, HOME_LAND } from './harbor.js';
 import { WORLD } from './config.js';
 import { HOME_U, placeInHome } from './homeGl.js';
 import { HOME_YAW, toWorld, toLocal, headingToWorld } from './frame.js';
@@ -291,7 +291,7 @@ function walkGround(x, z, under = false) {
   // 石頭：比地面高不到半公尺的地方（石頭低低的邊緣）直接踩得上去。
   // 再高的地方不能只靠「一步踏不上 0.6 公尺」：石頭表面是連續變高的，一小步一小步會一路走到頂上，所以看玩家的腳（walker）：
   //   跳起來、腳離石頭頂不到 0.3 公尺 → 落得上去；已經站在石頭上 → 平的、往下的地方照走，往上只走得上不陡的坡
-  const rk = rockAt(x, z), g = bedAt(x, z);
+  const rk = rockAt(x, z), g = landAt(x, z, hx, hz);
   if (rk === null || rk <= g) return g;
   if (rk - g < ROCK_STAND) return rk;
   const f = walker.feet;
@@ -300,6 +300,12 @@ function walkGround(x, z, under = false) {
     if (rk <= f + 0.3 && (walker.air || rockSlope(x, z) < 0.7)) return rk;
   }
   return 99;
+}
+// 走路踩的地面：母島照畫出來的那張三角面（一面一面的，跟平滑的海床高度差得多的地方有好幾十公分，腳會陷進去或浮起來），其他地方照海床
+function landAt(x, z, hx, hz) {
+  const HG = HOME_GROUND, half = HG.size / 2 - 1;
+  if (HOME_LAND.at && Math.abs(hx - HG.cx) < half && Math.abs(hz - HG.cz) < half) return HOME_LAND.at(hx, hz);
+  return bedAt(x, z);
 }
 // 正在走的那個人的腳在多高（只有玩家自己移動的那一下有值；其他地方問地面高度時是 null，石頭照「比地面高半公尺就擋」）
 const walker = { feet: null, air: false };

@@ -160,6 +160,106 @@ export function terrainGeo(P, size = 170, step = 2.8, seed = 5, hf = heightAt, c
   return fb.build();
 }
 
+// ---- 岩架：懸崖上一層一層的扁岩板（從上面看是不規則的多邊形，上緣削一圈斜角，側面一圈深色的底） ----
+// 模型是 x、z 各 ±1、高 0～1 的大小，擺的時候再拉成需要的長、寬、厚。top：頂面的顏色（岩石或長了苔）
+export function ledgeGeo(P, seed, top) {
+  const r = rng(seed), fb = new FaceBuilder(), n = 9;
+  const rad = [], V = (x, y, z) => new THREE.Vector3(x, y, z);
+  for (let i = 0; i < n; i++) rad.push(0.82 + r() * 0.3);
+  const ring = (k, y, jy) => rad.map((q, i) => { const a = (i / n) * Math.PI * 2 + 0.15; return V(Math.cos(a) * q * k, y + (r() - 0.5) * jy, Math.sin(a) * q * k); });
+  const bot = ring(0.86, 0, 0), mid = ring(1.0, 0.86, 0.1), up = ring(0.88, 0.98, 0.1), cen = V(0, 1.0, 0);
+  const side = P.rock2, under = P.rock2.clone().multiplyScalar(0.72), lip = P.rock.clone(), cap = top;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const c = side.clone().multiplyScalar(0.92 + r() * 0.16);
+    fb.tri(bot[i], mid[i], mid[j], i % 3 ? c : under); fb.tri(bot[i], mid[j], bot[j], i % 3 ? c : under);   // 側面（往下收）
+    fb.tri(mid[i], up[i], up[j], lip); fb.tri(mid[i], up[j], mid[j], lip);                                  // 上緣的斜角
+    fb.tri(up[i], cen, up[j], cap.clone().multiplyScalar(0.94 + r() * 0.12));                                // 頂面
+    fb.tri(bot[j], V(0, 0, 0), bot[i], under);                                                               // 底面
+  }
+  return fb.build();
+}
+
+// ---- 母島的地形（比上面那個細）：格子 step 公尺、陡坡做成一層層的岩架 ----
+// 回傳 { geo, at(x, z) → 畫出來的那張三角面在這一點的高度, kind(x, z) → 這一點那一面的種類（'shore' 'sand' 'cliff' 'grass'） }。
+// 草、樹、石頭、人物的腳都照 at() 站，才會貼在看得到的地面上（不是照平滑的高度算式，那個跟一面一面的三角形差好幾十公分）
+// 陡坡（坡度超過 37 度，連海岸的陡壁也算）：高度一層一層地分（每層 BAND 公尺，分界跟著雜訊起伏），每層是一段緩的岩架接一段陡的岩壁，
+// 岩壁的顏色照它在哪一層輪流換灰褐色（看起來是一層層的岩層），岩架上夠平的地方照樣長草
+export function islandTerrain(P, size, step, seed, hf, cx, cz) {
+  const r = rng(seed);
+  const N = Math.round(size / step), half = size / 2, x0 = cx - half, z0 = cz - half;
+  const BAND = 1.5;
+  const X = new Float32Array((N + 1) * (N + 1)), Y = new Float32Array(X.length), Z = new Float32Array(X.length);
+  for (let j = 0; j <= N; j++) for (let i = 0; i <= N; i++) {
+    const edge = i === 0 || j === 0 || i === N || j === N;
+    const x = x0 + i * step + (edge ? 0 : (r() - 0.5) * step * 0.7);
+    const z = z0 + j * step + (edge ? 0 : (r() - 0.5) * step * 0.7);
+    let h = hf(x, z);
+    if (!edge) {
+      const e = 0.8, gx = (hf(x + e, z) - hf(x - e, z)) / (2 * e), gz = (hf(x, z + e) - hf(x, z - e)) / (2 * e);
+      const w = smooth(0.62, 1.1, Math.hypot(gx, gz)) * smooth(-1.2, 0.2, h);   // 海岸的陡壁也分層（水面下一點開始）
+      if (w > 0) {
+        const off = (fbm(x * 0.06 + 13, z * 0.06) - 0.5) * 1.2;   // 岩層的分界不是水平的一刀，跟著雜訊微微起伏
+        const t = h / BAND + off, k = Math.floor(t), f = t - k;
+        const g = f < 0.5 ? f * 0.3 : 0.15 + ((f - 0.5) / 0.5) * 0.85;   // 前半段是緩的岩架、後半段是陡的岩壁
+        h += ((k + g - off) * BAND - h) * w * 0.9;
+      }
+    }
+    const q = j * (N + 1) + i; X[q] = x; Y[q] = h; Z[q] = z;
+  }
+  const V3 = (q) => new THREE.Vector3(X[q], Y[q], Z[q]);
+  const diag = new Uint8Array(N * N), kinds = new Uint8Array(N * N * 2);   // 每一格怎麼切、每個三角形的種類
+  const KIND = ['shore', 'sand', 'cliff', 'grass'];
+  const strata = [P.rock2, P.rockWarm.clone().multiplyScalar(0.92), P.rock.clone().multiplyScalar(0.88), P.cliff.clone().lerp(P.rock2, 0.6).multiplyScalar(0.85)];
+  const fb = new FaceBuilder();
+  const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), nrm = new THREE.Vector3();
+  const face = (a, b, c, slot) => {
+    nrm.crossVectors(e1.subVectors(b, a), e2.subVectors(c, a)).normalize();
+    const cy = (a.y + b.y + c.y) / 3, fx = (a.x + b.x + c.x) / 3, fz = (a.z + b.z + c.z) / 3;
+    const patch = fbm(fx * 0.05 + 40, fz * 0.05);
+    let col, kind;
+    if (nrm.y < 0.74 && cy > -1.5) {
+      kind = 2;
+      // 岩壁：照它在第幾層輪流換顏色（分界跟地形分層同一套雜訊），很陡的再暗一點
+      const layer = Math.floor(cy / (BAND * 0.5) + (fbm(fx * 0.06 + 13, fz * 0.06) - 0.5) * 2.4);
+      col = strata[((layer % 4) + 4) % 4];
+      if (nrm.y < 0.4) col = col.clone().multiplyScalar(0.9);
+      if (cy < 0.5) col = col.clone().multiplyScalar(0.82);   // 水線附近濕的、顏色深一點
+    } else if (cy < 0.35) { col = P.sandWet; kind = 0; }
+    else if (cy < 1.5 && nrm.y > 0.8) { col = P.sand; kind = 1; }
+    else { col = patch < 0.42 ? P.grassDark : patch < 0.55 ? P.grass2 : P.grass; kind = 3; }
+    kinds[slot] = kind;
+    fb.tri(a, b, c, jitter(col, r, 0.05), [0, 0, 0], 0.25);   // 0.25：地形的記號（不打邊緣光）
+  };
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const qa = j * (N + 1) + i, a = V3(qa), b = V3(qa + 1), c = V3(qa + N + 1), d = V3(qa + N + 2), cell = j * N + i;
+    if (r() < 0.5) { diag[cell] = 0; face(a, c, b, cell * 2); face(b, c, d, cell * 2 + 1); } else { diag[cell] = 1; face(a, c, d, cell * 2); face(a, d, b, cell * 2 + 1); }
+  }
+  // 這一點落在哪個三角形：頂點有抖動，所以看附近 3×3 格
+  const tri = (qa, qb, qc, x, z) => {
+    const d = (Z[qb] - Z[qc]) * (X[qa] - X[qc]) + (X[qc] - X[qb]) * (Z[qa] - Z[qc]);
+    const l1 = ((Z[qb] - Z[qc]) * (x - X[qc]) + (X[qc] - X[qb]) * (z - Z[qc])) / d, l2 = ((Z[qc] - Z[qa]) * (x - X[qc]) + (X[qa] - X[qc]) * (z - Z[qc])) / d, l3 = 1 - l1 - l2;
+    return l1 >= -1e-6 && l2 >= -1e-6 && l3 >= -1e-6 ? l1 * Y[qa] + l2 * Y[qb] + l3 * Y[qc] : null;
+  };
+  let lastSlot = -1;
+  const find = (x, z) => {
+    const ci = Math.floor((x - x0) / step), cj = Math.floor((z - z0) / step);
+    for (let dj = 0; dj <= 2; dj++) for (let di = 0; di <= 2; di++) {
+      const i = ci + (di === 2 ? -1 : di), j = cj + (dj === 2 ? -1 : dj);   // 先看自己那格
+      if (i < 0 || j < 0 || i >= N || j >= N) continue;
+      const qa = j * (N + 1) + i, qb = qa + 1, qc = qa + N + 1, qd = qa + N + 2, cell = j * N + i;
+      const [t0, t1] = diag[cell] === 0 ? [[qa, qc, qb], [qb, qc, qd]] : [[qa, qc, qd], [qa, qd, qb]];
+      let y = tri(t0[0], t0[1], t0[2], x, z); if (y !== null) { lastSlot = cell * 2; return y; }
+      y = tri(t1[0], t1[1], t1[2], x, z); if (y !== null) { lastSlot = cell * 2 + 1; return y; }
+    }
+    lastSlot = -1;
+    return null;
+  };
+  const at = (x, z) => { const y = find(x, z); return y === null ? hf(x, z) : y; };
+  const kind = (x, z) => (find(x, z) === null ? groundKind(x, z, hf) : KIND[kinds[lastSlot]]);
+  return { geo: fb.build(), at, kind };
+}
+
 // 地面的種類（擺放物件用；跟上色同一套規則）
 export function groundKind(x, z, hf = heightAt) {
   const h = hf(x, z), e = 0.6;

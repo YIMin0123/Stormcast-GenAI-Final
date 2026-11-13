@@ -647,6 +647,7 @@ const flagTexture = (text, bg) => canvasTex(256, 160, (g) => {
 
 // 立在水裡的木樁（給淺水模擬當障礙物）
 export const PILES = [];
+export const HOME_LAND = { at: null };   // 母島畫出來的地面多高（港座標）：at(x, z)，見 shapes.js 的 islandTerrain
 export const PORCHES = [];   // 小屋的門廊（港座標的斜放矩形 { cx, cz, ux, uz, hl, hw, y0 }）、石階（{ steps: true, cx, cz 起點, ux, uz, y0, n, rise, run, w0, dw }）
 export const BOLLARDS = [];  // 岸壁上的繫纜樁：{ x, z, y }（y 是纜繩套在樁上的高度）。船的纜繩可以綁在上面
 
@@ -736,6 +737,7 @@ export function makeHarbor() {
   PILES.push(...out.piles);          // 立在水裡的木樁（淺水模擬的障礙物）
   SOLIDS.push(...out.solids);        // 燈桿、高出棧板的樁、魚市場的柱子、木箱木桶
   PORCHES.push(...out.porches);      // 小屋的門廊、石階
+  HOME_LAND.at = out.groundAt;
   // 鏡頭用的擋牆（看不見，只給 main.js 的 camBlockers 打射線）
   const pm = new THREE.MeshBasicMaterial({ visible: false });
   for (const b of out.camBoxes) {

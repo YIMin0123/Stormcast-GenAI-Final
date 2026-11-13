@@ -5,7 +5,8 @@
 import * as THREE from 'three';
 import { FaceBuilder, rng, mirrored, SColor, SURF, withSurf } from './kit.js';
 import { jitter } from './palette.js';
-import { rockGeo, broadleafGeo, tuftGeo, terrainGeo, groundKind } from './shapes.js';
+import { rockGeo, broadleafGeo, tuftGeo, islandTerrain, ledgeGeo } from './shapes.js';
+import { TOUCH } from '../touch.js';
 import * as H from './harborPlan.js';
 import { buildShopMarket } from './shopMarket.js';
 import { buildHouses, buildFlagPoles } from './houses.js';
@@ -273,7 +274,10 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
   const camBox = (x0, x1, y0, y1, z0, z1, rot = 0, cx = (x0 + x1) / 2, cz = (z0 + z1) / 2) => out.camBoxes.push({ cx, cy: (y0 + y1) / 2, cz, w: x1 - x0, h: y1 - y0, d: z1 - z0, rot });
   const D = H.DECK_Y;
   const HG = H.HOME_GROUND;
-  const terrain = new THREE.Mesh(terrainGeo(P, HG.size, 2.0, 7, homeBed, HG.cx, HG.cz, null), mat);
+  // 島的地形：電腦 1 公尺一格、手機 1.4 公尺（三角形少一半）。ground.at：畫出來的地面在某一點多高（草、樹、石頭、人物的腳都照它）
+  const ground = islandTerrain(P, HG.size, TOUCH ? 1.4 : 1.0, 7, homeBed, HG.cx, HG.cz);
+  out.groundAt = ground.at;
+  const terrain = new THREE.Mesh(ground.geo, mat);
   terrain.castShadow = terrain.receiveShadow = true;
   group.add(terrain);
 
@@ -507,8 +511,8 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
   // ---- 坡上的小屋、大漁旗的旗桿：在 houses.js 蓋（自己的亂數；旗面在 harbor.js 做成會飄的布）----
   // 原本這兩段直接在這裡蓋、用掉 444 個亂數；照樣跳過，後面的石頭、樹、草才會長在原本的位置
   for (let i = 0; i < 444; i++) r();
-  buildHouses({ fb, fd, P, box, obox, gableRoof, merge, harborHeight, out });
-  buildFlagPoles({ fb, P, box, harborHeight, out });
+  buildHouses({ fb, fd, P, box, obox, gableRoof, merge, harborHeight: ground.at, out });
+  buildFlagPoles({ fb, P, box, harborHeight: ground.at, out });
 
   // ---- 白燈塔：東邊岩岬上，石砌的矮墩、白色的塔、一圈陽台＋欄杆、玻璃燈室、深色圓頂 ----
   {
@@ -574,7 +578,8 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
       let x, z, ok = false;
       for (let t = 0; t < 30 && !ok; t++) { x = p.x + (r() - 0.5) * p.w; z = p.z + (r() - 0.5) * p.d; ok = ground.every((g) => Math.hypot(g.x - x, g.z - z) > gap[p.kind]); }
       if (!ok) continue;
-      const solid = p.kind !== 'floats' && p.kind !== 'nets' ? { x, z, r: { barrels: 0.4, crates: 0.47, fishboxes: 0.36 }[p.kind], top: D + stackH[p.kind] } : null;   // top：跳上去站的高度
+      // top：站上去的高度（浮球、漁網矮，直接踩上去；以前沒有碰撞，人會穿過去）
+      const solid = { x, z, r: { barrels: 0.4, crates: 0.47, fishboxes: 0.36, floats: 0.24, nets: 0.62 }[p.kind], top: D + ({ floats: 0.42, nets: 0.38 }[p.kind] ?? stackH[p.kind]) };
       ground.push({ x, z, rot, solid });
       lists[p.kind].push({ pos: V(x, D, z), scl: V(s, s, s), rot, flip: false, tint: 0.88 + r() * 0.18 });
       if (solid) out.solids.push(solid);
@@ -597,10 +602,11 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
   // 走路、開船時直接查這張高度圖：石頭哪裡低、哪裡高跟畫面上一模一樣，不會有空氣牆
   const ROCK_CELL = 0.2, rq = new THREE.Quaternion(), rqf = new THREE.Quaternion(), rM = new THREE.Matrix4(), rv = new THREE.Vector3();
   const AY = new THREE.Vector3(0, 1, 0), AX = new THREE.Vector3(1, 0, 0);
-  const rockShape = (gi, t) => {
+  const rockShape = (gi, t) => shapeOf(rg[gi], t);
+  const shapeOf = (geo, t) => {
     rq.setFromAxisAngle(AY, t.rot).multiply(rqf.setFromAxisAngle(AX, t.flip ? Math.PI : 0));   // 跟 place() 一樣的轉法
     rM.compose(t.pos, rq, t.scl);
-    const pos = rg[gi].attributes.position, idx = rg[gi].index, n = pos.count;
+    const pos = geo.attributes.position, idx = geo.index, n = pos.count;
     const X = new Float32Array(n), Y = new Float32Array(n), Z = new Float32Array(n);
     let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, top = -Infinity;
     for (let k = 0; k < n; k++) {
@@ -632,7 +638,7 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
   const addRock = (x, z, s, sink) => {
     const k = Math.floor(r() * 3);
     const scl = V(s * (0.9 + r() * 0.4), s * (0.65 + r() * 0.45), s * (0.9 + r() * 0.4));
-    const y = harborHeight(x, z) - scl.y * sink;
+    const y = ground.at(x, z) - scl.y * sink;
     const gi = k * 2 + (r() < 0.5 ? 1 : 0);
     const t = { pos: V(x, y, z), scl, rot: r() * 6.28, flip: r() < 0.35, tint: 0.88 + r() * 0.16 };
     rl[gi].push(t);
@@ -659,24 +665,53 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
   }
   rg.forEach((g, i) => templates.push({ mesh: place(g, rl[i], true, true), hue: i * 0.06 }));
 
+  // ---- 懸崖的岩架：沿著陡坡的等高線疊一層層扁岩板，每層往外凸一點（地形網格是 1 公尺一格的高度圖，這麼陡的地方做不出岩層） ----
+  // 用自己的亂數（不動上面的）；每一塊也記成石頭（人、船都擋，站得上去的照石頭的規則）
+  {
+    const lr = rng(9191), LEVEL = 1.3, GAP = 1.5;
+    const lg = [ledgeGeo(P, 31, P.rock), ledgeGeo(P, 32, P.rock), ledgeGeo(P, 33, P.moss)];
+    const ll = lg.map(() => []), placed = [];
+    const nearHouse = (x, z) => H.HOUSES.some((hs) => Math.hypot(x - hs.x, z - hs.z) < Math.hypot(hs.w, hs.d) / 2 + 2.5);
+    for (let gz = -150; gz < 60; gz += 1.1) for (let gx = -105; gx < 105; gx += 1.1) {
+      const x = gx + (lr() - 0.5) * 0.8, z = gz + (lr() - 0.5) * 0.8, h = homeBed(x, z);
+      if (h < -0.6 || h > 9) continue;
+      const e = 0.8, ax = (homeBed(x + e, z) - homeBed(x - e, z)) / (2 * e), az = (homeBed(x, z + e) - homeBed(x, z - e)) / (2 * e), sl = Math.hypot(ax, az);
+      if (sl < 0.8 || lr() < 0.3) continue;
+      if (nearDeck(x, z, 2.5) || village(x, z) || nearHouse(x, z) || Math.hypot(x - H.LIGHTHOUSE.x, z - H.LIGHTHOUSE.z) < 3.4) continue;
+      const k = Math.round(h / LEVEL), top = k * LEVEL + (lr() - 0.5) * 0.6;
+      const dx = -ax / sl, dz = -az / sl;                          // 往下坡（往外）的方向
+      const out0 = Math.min(1.5, (h - top) / sl) + 0.25;            // 移到懸崖在這個高度的那條線上，再往外凸一點
+      const px = x + dx * out0, pz = z + dz * out0;
+      if (placed.some((q) => q.k === k && (q.x - px) ** 2 + (q.z - pz) ** 2 < GAP * GAP)) continue;
+      if (top < 0.3) continue;   // 貼著水面的不放（往外推了以後會變成泡在水裡的一片）
+      const len = 1.2 + lr() * 0.8, dep = 0.8 + lr() * 0.5;
+      const bot = Math.min(top - 0.45 - lr() * 0.4, ground.at(px, pz) - 0.35);   // 一路接到地面（不會像浮著的板子）
+      const t = { pos: V(px, bot, pz), scl: V(len, top - bot, dep), rot: Math.atan2(dx, dz) + (lr() - 0.5) * 0.4, flip: false, tint: 0.85 + lr() * 0.2 };
+      const gi = top > 2.5 && lr() < 0.35 ? 2 : lr() < 0.5 ? 0 : 1;
+      ll[gi].push(t); placed.push({ k, x: px, z: pz });
+      out.rocks.push(shapeOf(lg[gi], t));
+    }
+    lg.forEach((g, i) => templates.push({ mesh: place(g, ll[i], true, true), hue: 0.6 + i * 0.05 }));
+  }
+
   // ---- 山上的大樹（少而大）、草 ----
   const tg = []; for (let k = 0; k < 3; k++) { const g = broadleafGeo(P, 300 + k * 41); tg.push(g, mirrored(g)); }
   const tl = tg.map(() => []), trees = [];
   const clearOf = (x, z) => H.HOUSES.every((hs) => Math.hypot(x - hs.x, z - hs.z) > 7) && Math.hypot(x - H.LIGHTHOUSE.x, z - H.LIGHTHOUSE.z) > 8 && !(x > -36 && x < 36 && z > -24);
-  const okLand = (x, z, h) => h > 2.4 && clearOf(x, z) && groundKind(x, z, harborHeight) === 'grass';
+  const okLand = (x, z, h) => h > 2.4 && clearOf(x, z) && ground.kind(x, z) === 'grass';
   for (let tries = 0; tries < 12000 && trees.length < 40; tries++) {
     const x = (r() - 0.5) * 160, z = -112 + r() * 100, h = harborHeight(x, z);
     if (!okLand(x, z, h) || trees.some((t) => (t.x - x) ** 2 + (t.z - z) ** 2 < 10 * 10) || out.rocks.some((k) => Math.hypot(k.x - x, k.z - z) < k.r + 1.2)) continue;   // 樹幹不長在石頭裡
     trees.push({ x, z });
     const s = 1.25 + r() * 0.45;
-    tl[Math.floor(r() * tg.length)].push({ pos: V(x, h - 0.2, z), scl: V(s, s * (0.9 + r() * 0.2), s), rot: r() * 6.28, flip: false, tint: 0.92 + r() * 0.14 });
+    tl[Math.floor(r() * tg.length)].push({ pos: V(x, ground.at(x, z) - 0.2, z), scl: V(s, s * (0.9 + r() * 0.2), s), rot: r() * 6.28, flip: false, tint: 0.92 + r() * 0.14 });
     out.solids.push({ x, z, r: 0.27 * s });
   }
   tg.forEach((g, i) => templates.push({ mesh: place(g, tl[i], true, true), hue: 0.25 + i * 0.07 }));
   const gg = [tuftGeo(P, 700), tuftGeo(P, 701)], gl = [[], []];
   for (let tries = 0, made = 0; made < 3600 && tries < 40000; tries++) {
-    const x = (r() - 0.5) * 170, z = -116 + r() * 116, h = harborHeight(x, z);
-    if (h < 1.6 || nearDeck(x, z, 0.5) || groundKind(x, z, harborHeight) !== 'grass') continue;
+    const x = (r() - 0.5) * 170, z = -116 + r() * 116, h = ground.at(x, z);   // 照畫出來的地面種、照那一面的種類（岩壁上不長草）
+    if (h < 1.6 || nearDeck(x, z, 0.5) || ground.kind(x, z) !== 'grass') continue;
     if (H.HOUSES.some((hs) => Math.hypot(x - hs.x, z - hs.z) < Math.hypot(hs.w, hs.d) / 2 + 0.6) || Math.hypot(x - H.LIGHTHOUSE.x, z - H.LIGHTHOUSE.z) < 2.6) continue;
     made++;
     const s = 0.8 + r() * 0.6;

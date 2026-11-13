@@ -83,6 +83,7 @@ export const WALLS = [
   { x0: S.open.x1, x1: S.x1, z0: S.z1 - 0.25, z1: S.z1 },            // 正面東半邊
   { x0: BOARDS.berth.x - 0.6, x1: BOARDS.daily.x + 1.5, z0: BOARD_Z - 0.3, z1: BOARD_Z + 0.25 },   // 一排看板
   { x0: H.MARKET.x0 - 0.2, x1: H.MARKET.x1 + 0.2, z0: H.MARKET.z0, z1: H.MARKET.z0 + 0.2 },        // 魚市場後面那道木牆
+  { x0: H.SELL.board.x - 0.76, x1: H.SELL.board.x + 0.76, z0: H.SELL.board.z - 0.1, z1: H.SELL.board.z + 0.22 },   // 魚市場中間柱子上的價格板：底邊只到胸口，不擋的話頭會鑽進板子裡
   // 店裡：櫃台、後面的貨架、西牆邊的釣竿架、三座展示台、工作台
   ...[H.SHOP_IN.counter, H.SHOP_IN.backShelf, H.SHOP_IN.rodRack, ...H.SHOP_IN.plinths, H.SHOP_IN.bench].map((b) => ({ x0: b.x0 - 0.05, x1: b.x1 + 0.05, z0: b.z0 - 0.05, z1: b.z1 + 0.05 })),
   // 魚市場：兩座鋪冰的展示台、處理魚的長桌、冰櫃、魚箱、活魚水槽
