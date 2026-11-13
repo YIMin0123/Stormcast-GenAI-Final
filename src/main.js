@@ -28,7 +28,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { FXAAPass } from 'three/addons/postprocessing/FXAAPass.js';
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { SunRaysPass } from './glow.js';
 import { lpUniforms } from './lowpoly/kit.js';
@@ -63,17 +63,17 @@ function fail(msg) {
 }
 
 // ---- Renderer -------------------------------------------------------------
-const renderer = new THREE.WebGLRenderer({ antialias: false });   // 抗鋸齒改由後製的 FXAA 負責（內顯上比多重取樣省很多）
+const renderer = new THREE.WebGLRenderer({ antialias: false });   // 抗鋸齒由後製的 SMAA 負責；「高」畫質另外在場景緩衝區開多重取樣（MSAA）
 // 畫質由玩家自己在設定裡調，不會自動變，調過的記在瀏覽器裡（?test 分頁只記在那個分頁）：
 //   解析度：沒調過的話，電腦跟著螢幕的縮放比例走（筆電常見 1.25、1.5 倍，畫面才不會被放大而糊掉）；
-//           手機的螢幕很密、顯示晶片弱，用 1 倍
+//           手機用 2 倍（螢幕原生的 2.6 倍太吃力；1 倍會糊。S22+「中」畫質實測 2 倍 57～60 fps）
 //   畫質等級：手機／低／中／高，管陰影的細緻度、草的數量、角落的暗影（AO）、濕地板的倒影、光暈和陽光光束。
 //           電腦預設高；手機預設低，第一次進遊戲時量幾秒幀率，太慢就自動換成「手機」（只有沒調過的人才會換，換完就記住）。
 //           「手機」這一檔不降解析度，省的是特效：沒有光暈、光束，陰影貼圖小一點、範圍收窄、取樣點減半，草少一半
 const prefStore = (() => { try { return TEST ? window.sessionStorage : window.localStorage; } catch { return null; } })();
 const getPref = (k) => { try { return prefStore ? prefStore.getItem(k) : null; } catch { return null; } };
 const setPref = (k, v) => { try { if (prefStore) prefStore.setItem(k, String(v)); } catch { /* 存不了就下次重調 */ } };
-const ratioFor = () => (TOUCH ? 1 : Math.round(clamp(window.devicePixelRatio || 1, 1, 1.5) * 10) / 10);
+const ratioFor = () => (TOUCH ? Math.min(2, window.devicePixelRatio || 1) : Math.round(clamp(window.devicePixelRatio || 1, 1, 1.5) * 10) / 10);
 const RATIO_MAX = Math.round(clamp(window.devicePixelRatio || 1, 1.5, 2) * 10) / 10;
 let BASE_RATIO = ratioFor();
 let ratioSaved = parseFloat(getPref('stormcast.res')) >= 0.5;
@@ -88,15 +88,22 @@ let pixelRatio = ratioSaved ? clamp(parseFloat(getPref('stormcast.res')), 0.5, R
 const SHADOW_SIZES = [0, 1024, 2048, 3072], SHADOW_HALVES = [40, 54, 72], GRASS_N = [0, 3000, 8000, 14000];
 const VIEW_HAZE = [1.9, 1.35, 1], VIEW_FAR = [520, 680, 820];
 const PRESETS = [
-  { name: '手機', shadow: 1, shRange: 0, ao: false, view: 0, fov: 50, bloom: false, rays: false, refl: true, wet: false, grass: 1 },
-  { name: '低', shadow: 2, shRange: 1, ao: false, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: false, grass: 2 },
-  { name: '中', shadow: 2, shRange: 1, ao: true, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: false, grass: 2 },
-  { name: '高', shadow: 3, shRange: 1, ao: true, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: true, grass: 3 },
+  { name: '手機', shadow: 1, shRange: 0, ao: false, view: 0, fov: 50, bloom: false, rays: false, refl: true, wet: false, grass: 1, msaa: false },
+  { name: '低', shadow: 2, shRange: 1, ao: false, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: false, grass: 2, msaa: false },
+  { name: '中', shadow: 2, shRange: 1, ao: true, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: false, grass: 2, msaa: false },
+  { name: '高', shadow: 3, shRange: 1, ao: true, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: true, grass: 3, msaa: true },
 ];
 const GS_KEYS = Object.keys(PRESETS[0]).filter((k) => k !== 'name');
 // 舊的設定：只有等級（stormcast.gfx2 是 0–3；更早的 stormcast.gfx 是低中高 0–2）
 const gs = (() => {
-  try { const o = JSON.parse(getPref('stormcast.gfx3') || 'null'); if (o && GS_KEYS.every((k) => k in o)) return o; } catch { /* 壞掉就用預設 */ }
+  try {
+    const o = JSON.parse(getPref('stormcast.gfx3') || 'null');
+    if (o && GS_KEYS.every((k) => k in o || k === 'msaa')) {
+      // 加 msaa 之前存的設定：原本是哪個快速選項就照那一檔補上（存的是「高」就開），自訂的不開
+      if (!('msaa' in o)) o.msaa = PRESETS.find((p) => GS_KEYS.every((k) => k === 'msaa' || p[k] === o[k]))?.msaa ?? false;
+      return o;
+    }
+  } catch { /* 壞掉就用預設 */ }
   const oldGfx = getPref('stormcast.gfx'), newGfx = getPref('stormcast.gfx2');
   const lv = /^[0-3]$/.test(newGfx || '') ? +newGfx : /^[012]$/.test(oldGfx || '') ? +oldGfx + 1 : TOUCH ? 1 : 3;
   return { ...PRESETS[lv] };
@@ -860,8 +867,8 @@ function updateBoatShadow() {
 }
 
 // ---- 水面倒影：用鏡像相機把水面以上的物體畫到貼圖 ---------------------------
-// 抗鋸齒：場景先畫到緩衝區，轉成螢幕顏色後再做一次邊緣平滑（FXAA）。
-// 水邊、泡沫這些用著色器切出來的邊緣也一併處理；實測在內顯上比多重取樣（MSAA）每幀省 5 毫秒以上
+// 抗鋸齒：場景先畫到緩衝區，轉成螢幕顏色後再做一次邊緣平滑（SMAA，比 FXAA 認邊認得準，細線不會糊成一團）。
+// 水邊、泡沫這些用著色器切出來的邊緣也一併處理。多重取樣（MSAA）在內顯上每幀多 5 毫秒以上，只放在「高」畫質（見 applyGfx）
 // 場景的深度也留成貼圖：環境光遮蔽要靠它算出哪裡是凹角、哪裡被擋住
 const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, depthTexture: new THREE.DepthTexture(4, 4) }));
 composer.addPass(new RenderPass(scene, camera));
@@ -875,7 +882,7 @@ const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.22, 0.45, 1.7);
 composer.addPass(rays);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
-composer.addPass(new FXAAPass());
+composer.addPass(new SMAAPass());
 
 const reflRT = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, depthBuffer: true });
 shared.uReflTex.value = reflRT.texture;
@@ -1837,6 +1844,9 @@ function applyGfx() {
     grass.geometry = makeGrassGeometry(grassN, GRASS_T);
   }
   applyLite();
+  // 多重取樣：場景那兩張緩衝區（環境光遮蔽要的深度也在上面）改取樣數，換的時候丟掉舊的，下一幀照新的重做
+  const ms = gs.msaa ? 4 : 0;
+  if (composer.renderTarget1.samples !== ms) for (const t of [composer.renderTarget1, composer.renderTarget2]) { t.samples = ms; t.dispose(); }
   shared.uHazeK.value = gfx.haze;
   if (viewReady) { applyViewSettings(); onResize(); }
   syncGfxUi();
@@ -1866,6 +1876,8 @@ const GFX_ROWS = [
   ['refl', '海面倒影', 'sw'],
   ['wet', '積水倒影', 'sw'],
   ['grass', '草', 'seg', ['關', '少', '中', '多']],
+  ['畫面'],
+  ['msaa', '多重取樣抗鋸齒（MSAA）', 'sw'],
 ];
 const gfxCtl = {};
 {
