@@ -29,7 +29,7 @@ export class Daily {
     return true;
   }
 
-  // 有人釣到一條魚。比他今天最好的那條還值錢就記下來，回傳名次（0 起算）；沒有就回傳 -1
+  // 有人賣出一條魚。比他今天最好的那條還值錢就記下來，回傳名次（0 起算）；沒有就回傳 -1
   offer(e) {
     this.roll();
     const old = this.list.findIndex((o) => o.key === e.key);

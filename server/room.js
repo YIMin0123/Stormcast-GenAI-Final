@@ -312,8 +312,7 @@ export class Room {
         if (!ok) return this.send(p, { t: 'fishNo', msg: '魚掙脫跑掉了' });
         const { id, kg, len, value } = f.fish, uid = nextUid++;
         p.fish.set(uid, { id, kg, len, value });
-        this.send(p, { t: 'caught', fish: { uid, id, kg, len, value } });
-        return this.record(p, f.fish);
+        return this.send(p, { t: 'caught', fish: { uid, id, kg, len, value } });   // 紀錄等賣掉才算（見 sell）
       }
       case 'lose': {   // 魚跑了、自己收線、爆桿
         const f = p.fishing;
@@ -329,15 +328,19 @@ export class Room {
       // ---- 買賣 ----
       case 'sell': {
         if (!Array.isArray(m.uids) || !this.near(p, SELL_W.button.x, SELL_W.button.z, 6)) return this.send(p, { t: 'no', msg: '要站在籃子旁邊才能賣' });
-        let total = 0;
+        let total = 0, best = null;
         const sold = [];
         for (const u of new Set(m.uids.slice(0, 250))) {
           const f = p.fish.get(u);
           if (!f) continue;
           total += f.value; sold.push(u); p.fish.delete(u);
+          if (!best || f.value > best.value) best = f;
         }
         kit.money += total;
-        return this.send(p, { t: 'sold', total, uids: sold, kit });
+        this.send(p, { t: 'sold', total, uids: sold, kit });
+        // 真的賣出去才算紀錄；兩塊榜都是每人只留最好的一條，所以這次賣的裡面只拿最值錢那條去比
+        if (best) this.record(p, best);
+        return;
       }
       case 'buy': {
         const it = SHELF_W.find((s) => s.id === m.id);
@@ -382,8 +385,7 @@ export class Room {
           // 直接塞一條魚（測排行榜用）
           const id = SPECIES[m.id] ? m.id : 'tuna', kg = +m.kg || 12, len = +(0.42 * Math.cbrt(kg)).toFixed(2), value = Math.round(100 * SPECIES[id].mult * kg), uid = nextUid++;
           p.fish.set(uid, { id, kg, len, value });
-          this.send(p, { t: 'caught', fish: { uid, id, kg, len, value } });
-          this.record(p, { id, kg, len, value });
+          this.send(p, { t: 'caught', fish: { uid, id, kg, len, value } });   // 賣掉才上榜
         }
         this.all(this.worldState());
         return;
@@ -410,7 +412,7 @@ export class Room {
     this.all({ t: 'boat', id: p.id, boat: this.boatInfo(p) }, p);
   }
 
-  // 釣到一條魚：看有沒有上榜
+  // 賣出一條魚：看有沒有上榜
   record(p, f) {
     const e = { pid: p.id, key: p.token, name: p.name, id: f.id, len: f.len, kg: f.kg, value: f.value };
     // 本房紀錄每人只留最好的一條：沒有比自己榜上那條值錢就不算
@@ -423,7 +425,7 @@ export class Room {
       rank = this.board.indexOf(e);
     }
     const dr = this.hub.daily.offer(e);
-    const what = `${p.name} 釣到 ${SPECIES[f.id].name} ${Math.round(f.len * 100)} 公分・${money(f.value)}`;
+    const what = `${p.name} 賣出 ${SPECIES[f.id].name} ${Math.round(f.len * 100)} 公分・${money(f.value)}`;
     if (rank < 10) this.sys(`${what}，登上本房紀錄第 ${rank + 1} 名！${dr >= 0 && dr < 10 ? `也登上今日紀錄第 ${dr + 1} 名！` : ''}`, 'record');
     else if (dr >= 0 && dr < 10) this.sys(`${what}，登上今日紀錄第 ${dr + 1} 名！`, 'record');
     if (dr >= 0 && dr < 10) this.hub.eachRoom((r) => r.all(r.boards()));

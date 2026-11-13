@@ -1329,9 +1329,10 @@ function applyViewSettings() {
 }
 
 // 第一人稱：畫面中央有準心，滑鼠游標收起來（鎖在畫面裡，直接移動就轉視角）。
-// 按 Esc 會放開滑鼠（要去點設定的時候），再點一下畫面就鎖回去；看地圖、切回第三人稱時自動放開
+// 按 Esc 會放開滑鼠（要去點設定的時候），再點一下畫面就鎖回去；看地圖、打開設定、切回第三人稱時自動放開
+// （設定開著時不鎖：以前在設定裡改畫質、視角會順手把滑鼠鎖回去，游標就不見了）
 // 走路時不管第一、第三人稱畫面中央都有準心：要對準東西才能互動（第三人稱的滑鼠照舊按住拖曳，不鎖）
-const aiming = () => mode !== 'sink' && view[mode].fp && !mapOpen;
+const aiming = () => mode !== 'sink' && view[mode].fp && !mapOpen && !$('panel').open;
 const crosshair = () => !mapOpen && (mode === 'walk' || (mode === 'helm' && view.helm.fp));
 const locked = () => document.pointerLockElement === canvas;
 function grabMouse() {
@@ -2223,7 +2224,7 @@ const gfxCtl = {};
   // 打開、返回：畫質頁蓋掉設定的其他區塊
   $('gfxOpen').addEventListener('click', () => { $('gfxOpen').blur(); $('panel').classList.add('gfx'); $('panel').scrollTop = 0; });
   $('gfxBack').addEventListener('click', () => { $('gfxBack').blur(); $('panel').classList.remove('gfx'); });
-  $('panel').addEventListener('toggle', () => { if (!$('panel').open) $('panel').classList.remove('gfx'); });
+  $('panel').addEventListener('toggle', () => { if (!$('panel').open) $('panel').classList.remove('gfx'); syncAim(); });
   void page;
 }
 function syncGfxUi() {

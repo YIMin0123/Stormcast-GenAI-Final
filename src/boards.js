@@ -58,7 +58,7 @@ export class Boards {
 
   // 伺服器給的兩份名單：[{ name, id 魚種, len, kg, value }]（已經照價值排好）
   set({ room, daily }) {
-    this._draw('room', '本房紀錄', '這間房裡的人釣到最值錢的魚', room ?? []);
+    this._draw('room', '本房紀錄', '這間房裡的人賣出最值錢的魚', room ?? []);
     this._draw('daily', '今日紀錄', '所有房間・每人一條・午夜重置', daily ?? []);
   }
 
