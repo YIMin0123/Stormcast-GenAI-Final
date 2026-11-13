@@ -38,7 +38,7 @@ export const SPAWN = { x: -16, z: -2.5, yaw: Math.PI / 2 };   // 商店門口，
 // 店裡的擺設（地板上的長方形 x0..x1、z0..z1；模型和擋路都照這些）。
 // 西半邊是櫃台區：客人從正面的大開口進來，櫃台橫在中間，櫃台後面靠後牆一整排貨架；西牆邊一排立著賣的釣竿。
 // 東半邊是展示區：三座展示台（引擎、漁船模型、大漁船模型），後牆是工作台和掛工具的洞洞板
-const COUNTER = { x0: -26.7, x1: -20.5, z0: -11.75, z1: -10.95, h: 0.95 };
+const COUNTER = { x0: -26.7, x1: -20.5, z0: -11.75, z1: -10.95, h: 0.72 };   // 玩家眼睛只有 1.25 公尺高：檯面低一點，商品才在視線底下
 export const SHOP_IN = {
   counter: COUNTER,
   backShelf: { x0: -27.7, x1: -20.3, z0: -14.75, z1: -14.1 },
@@ -47,8 +47,9 @@ export const SHOP_IN = {
   bench: { x0: -19.2, x1: -14.2, z0: -14.75, z1: -14.05, h: 0.9 },
 };
 // 商品：每樣擺在哪（x, z 是商品中心、y 是擺放面的高度），客人站在它南邊 1.3 公尺按 E 買。
-// tag：價格牌相對商品的位置（dy 高、dz 前後）、tilt 往後仰多少（0 = 直立，貼在展示台正面）
-const onCounter = (id, x) => ({ id, x, z: (COUNTER.z0 + COUNTER.z1) / 2, y: DECK_Y + COUNTER.h, tag: { dy: 0.3, dz: -0.27, tilt: -0.25 } });
+// tag：價格牌相對商品的位置（dy 高、dz 前後）、tilt 往後仰多少（0 = 直立）。牌子都貼在櫃台／展示台的正面、商品正下方，商品不會擋到字
+// （櫃台的牌子要低到檯面突出的那一截擋不到：從站位看過去，牌子上緣離檯面至少 0.13）
+const onCounter = (id, x) => ({ id, x, z: (COUNTER.z0 + COUNTER.z1) / 2, y: DECK_Y + COUNTER.h, tag: { dy: -0.36, dz: 0.42, tilt: 0 } });
 const onPlinth = (id, i) => { const p = SHOP_IN.plinths[i]; return { id, x: (p.x0 + p.x1) / 2, z: (p.z0 + p.z1) / 2, y: DECK_Y + p.h, tag: { dy: -0.38, dz: 0.465, tilt: 0 } }; };
 export const GOODS = [   // 順序跟伺服器的商品清單一樣
   onCounter('fuel', -23.4), onCounter('wrench', -22.1), onCounter('rod', -26.0), onCounter('box', -24.7),
@@ -68,6 +69,11 @@ export const MARKET_IN = {
 // 室內燈：店裡（櫃台區、展示區）和魚市場棚下各有一組，牆上（柱子上）的開關一按整組亮或暗；整間房共用（伺服器記著）。
 // ROOM_LAMPS 是真的打光的位置（電腦版）；燈泡的模型在 shopMarket.js 蓋（記在 out.bulbs）
 export const LIGHT_ZONES = ['shop', 'market'];
+// 有屋頂遮雨的範圍（含屋簷）：底下不畫雨絲、不濺水花。y 是屋頂最高處（比它高的雨照常落下來，落到屋頂為止）
+export const ROOFS = [
+  { x0: SHOP.x0 - 0.7, x1: SHOP.x1 + 0.7, z0: SHOP.z0 - 0.7, z1: SHOP.z1 + 0.7, y: DECK_Y + SHOP.h + 2.3 },
+  { x0: MARKET.x0 - 0.6, x1: MARKET.x1 + 0.6, z0: MARKET.z0 - 0.5, z1: MARKET.z1 + 0.9, y: DECK_Y + MARKET.h + 0.9 },
+];
 export const ROOM_LAMPS = [
   { zone: 'shop', x: -20.0, y: DECK_Y + 2.6, z: -10.0 },   // 一盞照整間店（每多一盞，電腦整個畫面都要多算一次）
   { zone: 'market', x: 20, y: DECK_Y + 2.7, z: -8.6 },

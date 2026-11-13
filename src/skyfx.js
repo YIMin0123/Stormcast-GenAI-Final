@@ -22,17 +22,24 @@ export class Rain {
       uniforms: {
         uTime: { value: 0 }, uCam: { value: new THREE.Vector3() }, uAmount: { value: 0 }, uColor: { value: new THREE.Color(1, 1, 1) },
         uBox: { value: this.box }, uOff: { value: this.off }, uVel: { value: new THREE.Vector3(0, -17, 0) },
+        uRoofA: { value: [new THREE.Vector4(), new THREE.Vector4()] }, uRoofB: { value: [new THREE.Vector4(), new THREE.Vector4()] },
       },
       vertexShader: /* glsl */ `
         attribute vec4 aSeed;
         uniform float uTime, uAmount;
         uniform vec3 uCam, uBox, uOff, uVel;
+        uniform vec4 uRoofA[2], uRoofB[2];   // 遮雨的屋頂：A = 中心 xz、方向 ux uz；B = 半寬、半長、屋頂高度（半寬 0 = 沒有）
         varying float vA;
         void main() {
           float extra = -6.0 * aSeed.y;                                  // 每一滴掉的速度不太一樣
           vec3 w = mod(aSeed.xyz * uBox + uOff + vec3(0.0, extra * uTime, 0.0) - uCam, uBox) - 0.5 * uBox + uCam;
+          float dry = 0.0;   // 這一滴在屋頂底下：不畫（用雨絲的頭來判斷，頭尾兩個頂點才會一致）
+          for (int i = 0; i < 2; i++) {
+            vec2 d = w.xz - uRoofA[i].xy, u = uRoofA[i].zw;
+            if (w.y < uRoofB[i].z && abs(dot(d, u)) < uRoofB[i].x && abs(dot(d, vec2(-u.y, u.x))) < uRoofB[i].y) dry = 1.0;
+          }
           w += aSeed.w * (uVel + vec3(0.0, extra, 0.0)) * 0.042;         // 雨絲順著它掉的方向拉長
-          float on = step(fract(aSeed.x * 7.31 + aSeed.z * 3.17), uAmount);   // 雨越大，畫出來的雨絲越多
+          float on = step(fract(aSeed.x * 7.31 + aSeed.z * 3.17), uAmount) * (1.0 - dry);   // 雨越大，畫出來的雨絲越多
           vA = on * (0.3 + 0.35 * fract(aSeed.z * 11.7));
           gl_Position = on > 0.5 ? projectionMatrix * viewMatrix * vec4(w, 1.0) : vec4(2.0, 2.0, 2.0, 1.0);
         }`,
@@ -45,6 +52,12 @@ export class Rain {
     this.lines.frustumCulled = false;
     this.lines.renderOrder = 5;
     this.lines.visible = false;
+  }
+
+  // 有屋頂遮雨的地方（最多兩塊，見 layout.js 的 ROOFS_W）
+  setRoofs(roofs) {
+    const u = this.material.uniforms;
+    roofs.slice(0, 2).forEach((b, i) => { u.uRoofA.value[i].set(b.cx, b.cz, b.ux, b.uz); u.uRoofB.value[i].set(b.hx, b.hz, b.y, 0); });
   }
 
   // amount：雨勢 0–1；light：現在有多亮（晚上的雨絲是暗的，閃電時整片亮起來）；wx、wz：風把雨往哪邊吹（公尺／秒）

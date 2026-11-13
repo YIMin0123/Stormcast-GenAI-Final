@@ -105,6 +105,19 @@ export const SELL_W = { basket: homeW(SELL.basket), board: homeW(SELL.board), bu
 export const LIGHT_ZONES = H.LIGHT_ZONES;
 export const SWITCHES_W = H.SWITCHES.map((s) => ({ ...homeW(s), stand: homeW({ x: s.x + s.nx * 0.8, z: s.z + s.nz * 0.8 }) }));
 export const SHOP_W = homeW(SHOP);
+// 屋頂遮雨的範圍（世界座標）：中心、港座標 x 軸在世界裡的方向、半寬半長、屋頂高度
+export const ROOFS_W = H.ROOFS.map((b) => {
+  const [cx, cz] = toWorld((b.x0 + b.x1) / 2, (b.z0 + b.z1) / 2), [ax, az] = toWorld(1, 0), [ox, oz] = toWorld(0, 0);
+  return { cx, cz, ux: ax - ox, uz: az - oz, hx: (b.x1 - b.x0) / 2, hz: (b.z1 - b.z0) / 2, y: b.y };
+});
+// 世界座標 (x, y, z) 是不是在屋頂底下
+export function underRoof(x, y, z) {
+  for (const b of ROOFS_W) {
+    const dx = x - b.cx, dz = z - b.cz;
+    if (y < b.y && Math.abs(dx * b.ux + dz * b.uz) < b.hx && Math.abs(-dx * b.uz + dz * b.ux) < b.hz) return true;
+  }
+  return false;
+}
 export const LIGHTHOUSE_W = homeW(LIGHTHOUSE);
 // 商品：位置、站位、價格牌都換成世界座標（高度 y 不變）
 export const SHELF_W = SHELF.map((it) => ({ ...it, ...homeW(it), stand: homeW({ x: it.x, z: it.z + STAND_OFF }), tagW: homeW(it.tag) }));

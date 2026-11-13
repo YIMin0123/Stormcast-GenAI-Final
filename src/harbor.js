@@ -707,7 +707,7 @@ export function makeHarbor() {
   bp.position.set(H.SELL.board.x, DECK_Y + 1.55, H.SELL.board.z + 0.085);
   group.add(bp);
   UNLIT.push(bm);
-  // 價格牌（setTag 畫的）：櫃台上的商品後面立一塊、展示台的正面貼一塊，都面向店門口
+  // 價格牌（setTag 畫的）：貼在櫃台、展示台的正面（商品正下方），都面向店門口
   SHELF.forEach((it, i) => {
     const tm = new THREE.MeshBasicMaterial({ map: tags[i].t, toneMapped: false });
     const tp = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 0.45), tm);

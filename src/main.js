@@ -11,7 +11,7 @@ import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_RO
 import { WORLD } from './config.js';
 import { HOME_U, placeInHome } from './homeGl.js';
 import { HOME_YAW, toWorld, toLocal, headingToWorld } from './frame.js';
-import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SWITCHES_W, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, SHOP_FRONT_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
+import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SWITCHES_W, ROOFS_W, underRoof, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, SHOP_FRONT_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
 import { fishLabel, FishWorld } from './fish.js';
 import { money as cash } from './fishdata.js';
 import { Fishing } from './fishing.js';
@@ -817,6 +817,7 @@ function applyRoomLights(state) {
 }
 applyRoomLights({});
 const rain = new Rain();
+rain.setRoofs(ROOFS_W);
 const bolt = new Bolt(shared.uPixelAngle);
 const spindrift = new Spindrift({ uTime: shared.uTime, uWindDir: shared.uWindDir });
 const spoutEnv = { uTime: shared.uTime, uAmbient: shared.uAmbient, uSunCol: shared.uSunCol, uGloom: shared.uGloom, fog: airFog };
@@ -2299,7 +2300,7 @@ function updateWeather(dt) {
     for (; splashAcc >= 1; splashAcc--) {
       const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * 12;
       const x = target.x + Math.cos(a) * r, z = target.z + Math.sin(a) * r, y = walkGround(x, z);
-      if (y < 0.05 || y > 50) continue;   // 落在水裡的、牆和石頭上的不算
+      if (y < 0.05 || y > 50 || underRoof(x, y, z)) continue;   // 落在水裡的、牆和石頭上的、屋頂底下的不算
       for (let k = 0; k < 2; k++) {
         const b = Math.random() * Math.PI * 2, v = 0.3 + Math.random() * 0.7;
         spray.emit(x, y + 0.03, z, Math.cos(b) * v, 0.9 + Math.random() * 0.9, Math.sin(b) * v, 0.14 + Math.random() * 0.1, 0.11 + Math.random() * 0.08);
