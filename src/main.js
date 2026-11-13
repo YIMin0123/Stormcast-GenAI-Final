@@ -80,40 +80,61 @@ const RATIO_MAX = Math.round(clamp(window.devicePixelRatio || 1, 1.5, 2) * 10) /
 let BASE_RATIO = ratioFor();
 let ratioSaved = parseFloat(getPref('stormcast.res')) >= 0.5;
 let pixelRatio = ratioSaved ? clamp(parseFloat(getPref('stormcast.res')), 0.5, RATIO_MAX) : BASE_RATIO;
-// 畫質的每一項都能在設定的「畫質」頁單獨調；四個快速選項（手機／低／中／高）是一整組的預設值，
-// 調過任何一項就變成「自訂」。整組記在瀏覽器（stormcast.gfx3）
-//   shadow 陰影：0 關、1 低（1024、取樣點減半）、2 中（2048）、3 高（3072）
+// 畫質的每一項都能在設定的「畫質」頁單獨調；三個快速選項（低／中／高）是一整組的預設值，手機和電腦各一套（手機另外固定少畫一些東西，見 TOUCH）。
+// 調過任何一項就變成「自訂」。整組記在瀏覽器（stormcast.gfx4）
+//   shadow 陰影：0 關、1 低（1024、取樣點減半）、2 中（2048）、3 高（3072）、4 最高（4096）
+//   shNear 近處陰影（電腦）：0 沒有、1 2048 格蓋 12 公尺、2 4096 格蓋 16 公尺——人物、柱子腳邊的影子靠它
 //   shRange 陰影範圍：0 近（40 公尺）、1 中（54）、2 遠（72）——同一張貼圖蓋越大，影子越粗
 //   view 可視距離：0 近（霧濃、520 公尺外的島不畫樹石）、1 中、2 遠
 //   fov 第三人稱的鏡頭視角（度；第一人稱再寬 18 度）
-//   grass 草：0 關、1 少、2 中、3 多
-const SHADOW_SIZES = [0, 1024, 2048, 3072], SHADOW_HALVES = [40, 54, 72], GRASS_N = [0, 3000, 8000, 14000];
+//   grass 草叢：0 無、1 少（三分之一）、2 多（全部）
+const SHADOW_SIZES = [0, 1024, 2048, 3072, 4096], SHADOW_HALVES = [40, 54, 72], GRASS_N = [0, 3000, 14000];
 const VIEW_HAZE = [1.9, 1.35, 1], VIEW_FAR = [520, 680, 820];
-const PRESETS = [
-  { name: '手機', shadow: 1, shRange: 0, ao: false, view: 0, fov: 50, bloom: false, rays: false, refl: true, wet: false, grass: 1, msaa: false, tex: false },
-  { name: '低', shadow: 2, shRange: 1, ao: false, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: false, grass: 2, msaa: false, tex: false },
-  { name: '中', shadow: 2, shRange: 1, ao: true, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: false, grass: 2, msaa: false, tex: true },
-  { name: '高', shadow: 3, shRange: 1, ao: true, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: true, grass: 3, msaa: true, tex: true },
+const PRESETS = TOUCH ? [
+  // 手機：不降解析度、不准有鋸齒，從陰影、特效、可視距離、草省
+  { name: '低', shadow: 1, shNear: 0, shRange: 0, ao: false, view: 0, fov: 50, bloom: false, rays: false, refl: true, wet: false, grass: 0, msaa: false, tex: false },
+  { name: '中', shadow: 2, shNear: 0, shRange: 1, ao: false, view: 1, fov: 50, bloom: true, rays: true, refl: true, wet: false, grass: 1, msaa: false, tex: false },
+  { name: '高', shadow: 2, shNear: 0, shRange: 1, ao: true, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: false, grass: 2, msaa: false, tex: false },
+] : [
+  // 電腦：高是最高規格（不管效能；太卡的電腦第一次進遊戲會自動降到中，見 probeGfx）
+  { name: '低', shadow: 2, shNear: 0, shRange: 1, ao: false, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: false, grass: 1, msaa: false, tex: false },
+  { name: '中', shadow: 2, shNear: 1, shRange: 1, ao: true, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: false, grass: 2, msaa: false, tex: true },
+  { name: '高', shadow: 4, shNear: 2, shRange: 2, ao: true, view: 2, fov: 50, bloom: true, rays: true, refl: true, wet: true, grass: 2, msaa: true, tex: true },
 ];
 const GS_KEYS = Object.keys(PRESETS[0]).filter((k) => k !== 'name');
-// 舊的設定：只有等級（stormcast.gfx2 是 0–3；更早的 stormcast.gfx 是低中高 0–2）
+const DEF_LV = TOUCH ? 1 : 2;   // 預設：手機中、電腦高
+// 舊的設定（以前是手機／低／中／高四檔、手機電腦同一套）：照當時是哪一檔換到新的那一檔；自訂的保留，補上新的欄位
+const OLD_PRESETS = [
+  { shadow: 1, shRange: 0, ao: false, view: 0, bloom: false, rays: false, wet: false, grass: 1 },
+  { shadow: 2, shRange: 1, ao: false, view: 2, bloom: true, rays: true, wet: false, grass: 2 },
+  { shadow: 2, shRange: 1, ao: true, view: 2, bloom: true, rays: true, wet: false, grass: 2 },
+  { shadow: 3, shRange: 1, ao: true, view: 2, bloom: true, rays: true, wet: true, grass: 3 },
+];
+const OLD_TO_NEW = TOUCH ? [0, 1, 2, 2] : [0, 0, 1, 2];
 const gs = (() => {
   try {
+    const o = JSON.parse(getPref('stormcast.gfx4') || 'null');
+    if (o && GS_KEYS.every((k) => k in o)) return o;
+  } catch { /* 壞掉就用預設 */ }
+  try {
     const o = JSON.parse(getPref('stormcast.gfx3') || 'null');
-    const LATE = ['msaa', 'tex'];   // 後來才加的設定
-    if (o && GS_KEYS.every((k) => k in o || LATE.includes(k))) {
-      // 加這幾項之前存的設定：原本是哪個快速選項就照那一檔補上，自訂的不開
-      const was = PRESETS.find((p) => GS_KEYS.every((k) => LATE.includes(k) || p[k] === o[k]));
-      for (const k of LATE) if (!(k in o)) o[k] = was?.[k] ?? false;
-      return o;
+    if (o && typeof o === 'object') {
+      const was = OLD_PRESETS.findIndex((p) => Object.keys(p).every((k) => p[k] === o[k]));
+      if (was >= 0) return { ...PRESETS[OLD_TO_NEW[was]] };
+      const g = { ...PRESETS[DEF_LV] };
+      for (const k of GS_KEYS) if (k in o) g[k] = o[k];
+      g.grass = [0, 1, 1, 2][o.grass] ?? g.grass;   // 草從四檔變三檔
+      g.shNear = !TOUCH && o.shadow >= 2 ? 1 : 0;   // 以前電腦陰影中以上就有近處那張
+      return g;
     }
   } catch { /* 壞掉就用預設 */ }
   const oldGfx = getPref('stormcast.gfx'), newGfx = getPref('stormcast.gfx2');
-  const lv = /^[0-3]$/.test(newGfx || '') ? +newGfx : /^[012]$/.test(oldGfx || '') ? +oldGfx + 1 : TOUCH ? 1 : 3;
+  const lv = /^[0-3]$/.test(newGfx || '') ? OLD_TO_NEW[+newGfx] : /^[012]$/.test(oldGfx || '') ? OLD_TO_NEW[+oldGfx + 1] : DEF_LV;
   return { ...PRESETS[lv] };
 })();
 delete gs.name;
-let gfxSaved = !!(getPref('stormcast.gfx3') || getPref('stormcast.gfx2') || getPref('stormcast.gfx'));
+if (TOUCH) { gs.shadow = Math.min(gs.shadow, 2); gs.shNear = 0; gs.tex = false; }   // 手機沒有的檔位（同一個瀏覽器存過電腦的設定時）收回來
+let gfxSaved = !!(getPref('stormcast.gfx4') || getPref('stormcast.gfx3') || getPref('stormcast.gfx2') || getPref('stormcast.gfx'));
 // 現在這組設定是哪個快速選項（都不像就是 -1：自訂）
 const presetOf = () => PRESETS.findIndex((p) => GS_KEYS.every((k) => p[k] === gs[k]));
 // 其他地方用的是換算好的數值
@@ -672,7 +693,7 @@ scene.add(sun, sun.target, hemi);
 // 每一幀都更新（以前隔一幀，手機幀數低的時候人一走動，影子就落在後面一截）
 // 貼圖 3072：在 Iris Xe 上比 2048 每幀多 0.6 毫秒左右，4096 則要多 4.5 毫秒（量過），所以取 3072、範圍收到 54 公尺
 let SHADOW_HALF = gfx.shadowHalf;   // 畫質「手機」收到 40 公尺（貼圖小，範圍也跟著收，影子才不會太粗）
-let SHADOW_SIZE = gfx.shadow;   // 畫質「高」是 3072，中 2048，低 1536，手機 1024
+let SHADOW_SIZE = gfx.shadow;   // 陰影設定：最高 4096、高 3072、中 2048、低 1024
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.autoUpdate = false;
 sun.castShadow = true;
@@ -770,7 +791,8 @@ function aimLight(l, dir, center, half, size) {
 //    太陽走了 1 度才換一次，新舊兩組影子用 2 秒淡入淡出（不會一格一格跳）。太陽的光照方向照舊每一幀跟著走
 // 做法：四盞不發光（亮度 0）的平行光只負責畫陰影貼圖——遠新、遠舊、近新、近舊；這時太陽本身不投影，
 // 它的影子由 sunShadowPlus（上面改的 three.js 著色器）把四張合起來。舊的那兩張只在淡入淡出的那 2 秒裡畫
-const NEAR_HALF = 6, NEAR_SIZE = 2048, SH_STEP = THREE.MathUtils.degToRad(1), SH_FADE = 2;
+const NEAR_SIZES = [2048, 2048, 4096], NEAR_HALVES = [6, 6, 8], SH_STEP = THREE.MathUtils.degToRad(1), SH_FADE = 2;
+let NEAR_SIZE = NEAR_SIZES[gs.shNear], NEAR_HALF = NEAR_HALVES[gs.shNear];   // 近處那張：最高規格 4096 格蓋 16 公尺（一格 0.4 公分）
 function shadowOnly(half, size, normalBias) {
   const l = new THREE.DirectionalLight(0xffffff, 0);
   l.castShadow = false; l.visible = false;
@@ -788,10 +810,20 @@ const shOld = sunDir.clone();
 let shPlus = 0, shWOld = 0, shFresh = true, shOldStale = false;   // shOldStale：剛換方向，舊的那張還是上上次的內容，這一幀一定要重畫
 // 用哪一種陰影：0 = 一張、方向每一幀跟著太陽（?noshplus，比較用）；1 = 手機、陰影「低」：遠的新舊兩張淡入淡出；2 = 電腦全套（另加近處的兩張）
 // 手機以前是 0：太陽每一幀轉一點點，1024 格的貼圖每一格 8 公分，細的東西（旗桿、樓梯、屋簷）每一幀落格都不一樣，影子一直閃
-const wantShPlus = () => (!gfx.shadowOn || /[?&]noshplus/.test(location.search) ? 0 : !TOUCH && gs.shadow >= 2 ? 2 : 1);
+const wantShPlus = () => (!gfx.shadowOn || /[?&]noshplus/.test(location.search) ? 0 : !TOUCH && gs.shNear > 0 ? 2 : 1);
 // 照畫質決定要不要用電腦版的陰影；遠的那兩張跟著陰影的大小、範圍
 function syncShadowPlus() {
   const on = wantShPlus();
+  // 近處那兩張的大小、範圍跟著設定
+  if (gs.shNear > 0 && (NEAR_SIZE !== NEAR_SIZES[gs.shNear] || NEAR_HALF !== NEAR_HALVES[gs.shNear])) {
+    NEAR_SIZE = NEAR_SIZES[gs.shNear]; NEAR_HALF = NEAR_HALVES[gs.shNear];
+    for (const l of [nearNew, nearOld]) {
+      Object.assign(l.shadow.camera, { left: -NEAR_HALF, right: NEAR_HALF, top: NEAR_HALF, bottom: -NEAR_HALF });
+      l.shadow.camera.updateProjectionMatrix();
+      l.shadow.mapSize.set(NEAR_SIZE, NEAR_SIZE);
+      if (l.shadow.map) { l.shadow.map.dispose(); l.shadow.map = null; }
+    }
+  }
   for (const l of [farNew, farOld]) {
     Object.assign(l.shadow.camera, { left: -SHADOW_HALF, right: SHADOW_HALF, top: SHADOW_HALF, bottom: -SHADOW_HALF });
     l.shadow.camera.updateProjectionMatrix();
@@ -883,7 +915,7 @@ for (const m of terrain.children) m.castShadow = true;
 // 一塊 48 公尺見方的草皮跟著鏡頭走，上面一萬四千叢草；位置、高矮、顏色、隨風擺動都在顯示卡上算。
 // 只有鏡頭附近二十公尺左右有立體的草，更遠的地方靠地面的草葉紋理撐著
 const GRASS_T = 48;
-let grassN = gfx.grass;   // 畫質「高」一萬四千叢，中一萬，低六千
+let grassN = gfx.grass;   // 舊的草皮（沒在用，見 OLD_GRASS）
 // 舊的草皮（跟著鏡頭的一大片草）：新島的草是低面的草叢（在港口模型裡），舊的先不畫
 const OLD_GRASS = false;
 const grass = new THREE.Mesh(makeGrassGeometry(grassN, GRASS_T), new THREE.ShaderMaterial({
@@ -2113,6 +2145,13 @@ function applyGfx() {
     grass.geometry.dispose();
     grass.geometry = makeGrassGeometry(grassN, GRASS_T);
   }
+  // 島上的草叢（港口模型裡的低面草）：無、少（三分之一）、多（全部）
+  harbor.traverse((o) => {
+    if (!o.userData.tuft) return;
+    o.userData.full ??= o.count;
+    o.count = [0, Math.floor(o.userData.full / 3), o.userData.full][gs.grass] ?? o.userData.full;
+    o.visible = o.count > 0;
+  });
   applyLite();
   // 多重取樣：場景那兩張緩衝區（環境光遮蔽要的深度也在上面）改取樣數，換的時候丟掉舊的，下一幀照新的重做
   const ms = gs.msaa ? 4 : 0;
@@ -2122,8 +2161,8 @@ function applyGfx() {
   if (viewReady) { applyViewSettings(); onResize(); }
   syncGfxUi();
 }
-function saveGfx() { setPref('stormcast.gfx3', JSON.stringify(gs)); gfxSaved = true; }
-// 套用一整組快速選項（0 手機、1 低、2 中、3 高）
+function saveGfx() { setPref('stormcast.gfx4', JSON.stringify(gs)); gfxSaved = true; }
+// 套用一整組快速選項（0 低、1 中、2 高；手機電腦各自那一套）
 function setGfx(lv) {
   const p = { ...PRESETS[lv] };
   delete p.name;
@@ -2135,7 +2174,8 @@ function setGfx(lv) {
 // 每一列：[欄位, 標題, 種類, 選項]。seg 是一排按鈕、sw 是開關、range 是滑桿
 const GFX_ROWS = [
   ['光影'],
-  ['shadow', '陰影', 'seg', ['關', '低', '中', '高']],
+  ['shadow', '陰影', 'seg', TOUCH ? ['關', '低', '中'] : ['關', '低', '中', '高', '最高']],
+  ...(TOUCH ? [] : [['shNear', '近處陰影（人物腳邊）', 'seg', ['關', '中', '高']]]),
   ['shRange', '陰影範圍', 'seg', ['近', '中', '遠']],
   ['ao', '角落暗影', 'sw'],
   ['視野'],
@@ -2146,7 +2186,7 @@ const GFX_ROWS = [
   ['rays', '陽光光束', 'sw'],
   ['refl', '海面倒影', 'sw'],
   ['wet', '積水倒影', 'sw'],
-  ['grass', '草', 'seg', ['關', '少', '中', '多']],
+  ['grass', '草叢', 'seg', ['無', '少', '多']],
   ['畫面'],
   ['msaa', '多重取樣抗鋸齒（MSAA）', 'sw'],
   ...(TOUCH ? [] : [['tex', '材質紋路（木紋、石紋、屋瓦）', 'sw']]),   // 手機不畫程式貼圖，不列
@@ -3427,8 +3467,9 @@ if (fpsMore) {
   const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
   gpuName = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)).replace(/ANGLE \(|\)$/g, '').slice(0, 60);
 }
-// 手機第一次進遊戲（還沒自己調過畫質）：進房三秒後量五秒的幀率，平均低於每秒 25 幀就換成「手機」這一檔，量完就記住，之後不再量
-let probe = TOUCH && !gfxSaved ? { t0: 0, n: 0, sum: 0 } : null;
+// 第一次進遊戲（還沒自己調過畫質）：進房三秒後量五秒的幀率，平均每幀超過 40 毫秒（每秒不到 25 幀）就降一檔——
+// 手機降到「低」、電腦降到「中」（電腦的高是最高規格，不管效能）。量完就記住，之後不再量
+let probe = !gfxSaved ? { t0: 0, n: 0, sum: 0 } : null;
 function probeGfx(ms, rawMs) {
   if (!inGame || document.hidden) { if (probe.t0) probe.t0 = ms; return; }
   if (!probe.t0) { probe.t0 = ms; return; }
@@ -3436,7 +3477,8 @@ function probeGfx(ms, rawMs) {
   probe.n++; probe.sum += rawMs;
   if (ms - probe.t0 < 8000) return;
   const avg = probe.sum / probe.n;
-  if (avg > 40 && presetOf() !== 0) { setGfx(0); toast('畫面有點卡，畫質自動換成「手機」（可在設定裡改回來）'); }
+  const down = TOUCH ? 0 : 1;
+  if (avg > 40 && presetOf() > down) { setGfx(down); toast(`畫面有點卡，畫質自動換成「${PRESETS[down].name}」（可在設定裡改回來）`); }
   saveGfx();
   probe = null;
 }

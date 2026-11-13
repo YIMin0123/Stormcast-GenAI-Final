@@ -717,6 +717,7 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
     const s = 0.8 + r() * 0.6;
     gl[made % 2].push({ pos: V(x, h - 0.05, z), scl: V(s, s * (0.8 + r() * 0.5), s), rot: r() * 6.28, flip: false, tint: 0.9 + r() * 0.2 });
   }
-  gg.forEach((g, i) => templates.push({ mesh: place(g, gl[i], false, true), hue: 0.5 + i * 0.05 }));
+  // userData.tuft：畫質的「草叢」設定照這個找（只畫前面幾叢；擺的順序本來就是亂的，前三分之一就是均勻的三分之一）
+  gg.forEach((g, i) => { const mesh = place(g, gl[i], false, true); mesh.userData.tuft = true; templates.push({ mesh, hue: 0.5 + i * 0.05 }); });
   return out;
 }
