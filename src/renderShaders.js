@@ -644,16 +644,21 @@ uniform sampler2DShadow uShadowMap;   // 太陽（月亮）的陰影貼圖
 uniform mat4 uShadowMat;
 uniform float uShadowOn;
 uniform float uShadowTexel;
+// 電腦版（SH_PLUS）：舊方向的那張（太陽換方向時新舊淡入淡出，uShadowFade 是舊的佔幾成）、近處高解析度的那兩張（新、舊）
+#ifdef SH_PLUS
+uniform sampler2DShadow uShadowMapOld, uShadowMapNear, uShadowMapNearOld;
+uniform mat4 uShadowMatOld, uShadowMatNear, uShadowMatNearOld;
+uniform float uShadowFade, uShadowNearOn, uShadowTexelNear;
+#endif
 
-// 這一點有沒有被樹、船、建築、山坡擋住陽光：1 = 照得到，0 = 在影子裡
-float sunShadow(vec3 wp, vec3 n) {
-  if (uShadowOn < 0.5) return 1.0;
-  vec4 sc = uShadowMat * vec4(wp + n * 0.04, 1.0);
+// 一張陰影貼圖：1 = 照得到，0 = 在影子裡；edge：這一點在貼圖範圍裡多深（範圍外 0、邊緣漸漸到 1）
+float shOne(sampler2DShadow map, mat4 M, vec3 wp, float texel, float ang, out float edge) {
+  vec4 sc = M * vec4(wp, 1.0);
   vec3 p = sc.xyz / sc.w;
+  edge = 0.0;
   if (p.x <= 0.0 || p.x >= 1.0 || p.y <= 0.0 || p.y >= 1.0 || p.z >= 1.0) return 1.0;
   p.z -= 0.00015;
   // 繞著一圈取幾個點平均（每個位置轉一個不同的角度）：範圍只有一格左右，蓋掉貼圖的鋸齒就好，影子的邊緣是利落的
-  float ang = fract(sin(dot(wp.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
   float sh = 0.0;
   // 畫質「手機」（LITE）：取樣點減半
 #ifdef LITE
@@ -662,13 +667,37 @@ float sunShadow(vec3 wp, vec3 n) {
   const int SH_N = SH_TAPS;
 #endif
   for (int i = 0; i < SH_N; i++) {
-    float r = sqrt((float(i) + 0.5) / float(SH_N)) * 1.1 * uShadowTexel;
+    float r = sqrt((float(i) + 0.5) / float(SH_N)) * 1.1 * texel;
     float t = float(i) * 2.39996323 + ang;
-    sh += texture(uShadowMap, vec3(p.xy + r * vec2(cos(t), sin(t)), p.z));
+    sh += texture(map, vec3(p.xy + r * vec2(cos(t), sin(t)), p.z));
   }
-  sh = smoothstep(0.22, 0.78, sh / float(SH_N));
   vec2 e = min(p.xy, 1.0 - p.xy);
-  return mix(1.0, sh, smoothstep(0.0, 0.07, min(e.x, e.y)));   // 陰影範圍的邊緣漸漸淡出
+  edge = smoothstep(0.0, 0.07, min(e.x, e.y));   // 陰影範圍的邊緣漸漸淡出
+  return smoothstep(0.22, 0.78, sh / float(SH_N));
+}
+
+// 這一點有沒有被樹、船、建築、山坡擋住陽光：1 = 照得到，0 = 在影子裡
+float sunShadow(vec3 wp, vec3 n) {
+  if (uShadowOn < 0.5) return 1.0;
+  float ang = fract(sin(dot(wp.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
+  float e, e2;
+  float s = shOne(uShadowMap, uShadowMat, wp + n * 0.04, uShadowTexel, ang, e);
+#ifdef SH_PLUS
+  if (uShadowFade > 0.001) s = mix(s, shOne(uShadowMapOld, uShadowMatOld, wp + n * 0.04, uShadowTexel, ang, e2), uShadowFade);
+#endif
+  s = mix(1.0, s, e);
+#ifdef SH_PLUS
+  // 近處：換成高解析度的那張（範圍邊緣跟遠的那張接起來）
+  if (uShadowNearOn > 0.5) {
+    float sn = shOne(uShadowMapNear, uShadowMatNear, wp + n * 0.015, uShadowTexelNear, ang, e2);
+    if (e2 > 0.0) {
+      float e3;
+      if (uShadowFade > 0.001) sn = mix(sn, shOne(uShadowMapNearOld, uShadowMatNearOld, wp + n * 0.015, uShadowTexelNear, ang, e3), uShadowFade);
+      s = mix(s, sn, e2);
+    }
+  }
+#endif
+  return s;
 }
 // 這一點在不在陰影貼圖涵蓋的範圍裡（1 = 在，邊緣漸漸到 0）。w：邊緣多寬的一段用來淡出（佔範圍的比例）
 float shadowRange(vec3 wp, float w) {

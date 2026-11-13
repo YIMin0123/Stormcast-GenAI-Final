@@ -462,6 +462,10 @@ const shared = {
   uIsle: { value: ISLANDS.map((o) => new THREE.Vector4(o.x, o.z, o.R, 0)) },
   uIsleLook: { value: ISLANDS.map((o) => new THREE.Vector4(o.look.rock, o.look.veg, o.look.white, o.look.dry)) },
   uShadowMap: { value: null }, uShadowMat: { value: new THREE.Matrix4() }, uShadowOn: { value: 0 }, uShadowTexel: { value: 1 / 2048 },
+  // 電腦版的陰影：舊方向（淡出中）、近處高解析度（見「電腦版的陰影升級」）
+  uShadowMapOld: { value: null }, uShadowMatOld: { value: new THREE.Matrix4() }, uShadowFade: { value: 0 },
+  uShadowMapNear: { value: null }, uShadowMatNear: { value: new THREE.Matrix4() }, uShadowMapNearOld: { value: null }, uShadowMatNearOld: { value: new THREE.Matrix4() },
+  uShadowNearOn: { value: 0 }, uShadowTexelNear: { value: 1 / 2048 },
   uSwe: { value: null }, uSweWet: { value: null }, uSweOrigin: { value: new THREE.Vector2() }, uSweSize: { value: 1 }, uSweOn: { value: 0 },
 };
 
@@ -621,6 +625,44 @@ sun.shadow.normalBias = 0.03;
 // 邊緣就是一條乾淨的線，細的東西（燈柱、桿子）的影子也不會被抹淡。地形那邊（sunShadow）用同一組數字
 sun.shadow.radius = 1.0;
 THREE.ShaderChunk.shadowmap_pars_fragment = THREE.ShaderChunk.shadowmap_pars_fragment.replace(') * 0.2;', ') * 0.2;\n\t\t\t\tshadow = smoothstep( 0.22, 0.78, shadow );');
+// 電腦版的陰影（見下面「電腦版的陰影升級」）：四盞只投影、不發光的平行光排在最前面（遠新、遠舊、近新、近舊），太陽排第五盞、自己不投影。
+// 太陽那一盞的影子在這裡合起來：遠的新舊照比例混、近處換成高解析度的那張（範圍邊緣接回遠的）。
+// 每盞的 shadow.intensity 拿來傳比例：[0] 整體深淺、[1] 舊方向佔幾成、[2] 近處開不開
+THREE.ShaderChunk.shadowmap_pars_fragment += `
+#if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS == 4
+float sunShadowPlus() {
+	DirectionalLightShadow s0 = directionalLightShadows[ 0 ], s1 = directionalLightShadows[ 1 ], s2 = directionalLightShadows[ 2 ], s3 = directionalLightShadows[ 3 ];
+	float wOld = s1.shadowIntensity;
+	float sh = getShadow( directionalShadowMap[ 0 ], s0.shadowMapSize, 1.0, s0.shadowBias, s0.shadowRadius, vDirectionalShadowCoord[ 0 ] );
+	if ( wOld > 0.001 ) sh = mix( sh, getShadow( directionalShadowMap[ 1 ], s1.shadowMapSize, 1.0, s1.shadowBias, s1.shadowRadius, vDirectionalShadowCoord[ 1 ] ), wOld );
+	if ( s2.shadowIntensity > 0.5 ) {
+		vec3 c = vDirectionalShadowCoord[ 2 ].xyz / vDirectionalShadowCoord[ 2 ].w;
+		vec2 e = min( c.xy, 1.0 - c.xy );
+		float w = c.z <= 1.0 ? smoothstep( 0.0, 0.08, min( e.x, e.y ) ) : 0.0;
+		if ( w > 0.0 ) {
+			float sn = getShadow( directionalShadowMap[ 2 ], s2.shadowMapSize, 1.0, s2.shadowBias, s2.shadowRadius, vDirectionalShadowCoord[ 2 ] );
+			if ( wOld > 0.001 ) sn = mix( sn, getShadow( directionalShadowMap[ 3 ], s3.shadowMapSize, 1.0, s3.shadowBias, s3.shadowRadius, vDirectionalShadowCoord[ 3 ] ), wOld );
+			sh = mix( sh, sn, w );
+		}
+	}
+	return mix( 1.0, sh, s0.shadowIntensity );
+}
+#endif
+`;
+{
+  const ORIG = `\t\t#if defined( USE_SHADOWMAP ) && ( UNROLLED_LOOP_INDEX < NUM_DIR_LIGHT_SHADOWS )\n\t\tdirectionalLightShadow = directionalLightShadows[ i ];`;
+  // （打包過的 three.js 著色器片段空白行被壓掉了，這裡比對都不靠空白）
+  const BODY0 = /(\n\s*directionalLight = directionalLights\[ i \];)/;
+  const BODY1 = /(RE_Direct\( directLight, [^;]*;\s*)(\}\s*#pragma unroll_loop_end\s*#endif\s*#if \( NUM_RECT_AREA_LIGHTS)/;
+  const chunk = THREE.ShaderChunk.lights_fragment_begin;
+  if (!chunk.includes(ORIG) || !BODY0.test(chunk) || !BODY1.test(chunk)) console.warn('lights_fragment_begin 跟預期的不一樣：電腦版陰影接不上');
+  // 只投影、不發光的那四盞（前四盞）：整段光照都跳過
+  THREE.ShaderChunk.lights_fragment_begin = chunk
+    .replace(BODY0, '\n\t\t#if !( defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS == 4 && UNROLLED_LOOP_INDEX < 4 )$1')
+    .replace(BODY1, '$1\t\t#endif\n\t$2');
+  THREE.ShaderChunk.lights_fragment_begin = THREE.ShaderChunk.lights_fragment_begin.replace(ORIG,
+    `\t\t#if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS == 4\n\t\t#if UNROLLED_LOOP_INDEX == 4\n\t\tdirectLight.color *= ( directLight.visible && receiveShadow ) ? sunShadowPlus() : 1.0;\n\t\t#endif\n\t\t#elif defined( USE_SHADOWMAP ) && ( UNROLLED_LOOP_INDEX < NUM_DIR_LIGHT_SHADOWS )\n\t\tdirectionalLightShadow = directionalLightShadows[ i ];`);
+}
 shared.uShadowMat.value = sun.shadow.matrix;
 shared.uShadowTexel.value = 1 / SHADOW_SIZE;
 const _sr = new THREE.Vector3(), _su = new THREE.Vector3(), _sc = new THREE.Vector3();
@@ -628,21 +670,111 @@ const _sr = new THREE.Vector3(), _su = new THREE.Vector3(), _sc = new THREE.Vect
 // 陰影貼圖的格子方向用固定的參考軸（世界的 +Z，太陽的路徑大致繞著它轉）算，太陽移動時格子幾乎不轉，
 // 影子的邊緣只會跟著平順地滑動，不會一格一格地蠕動
 const shDir = sunDir.clone(), SH_REF = new THREE.Vector3(0, 0, 1);
-// 把光源擺到注視點上方。位置對齊陰影貼圖的格子，鏡頭移動時影子的邊緣才不會閃
-function placeSun(center) {
-  // 影子方向每一幀都跟著太陽（試過轉一小段才更新一次，一格一格跳反而更明顯）
-  shDir.copy(sunDir);
-  _sr.copy(SH_REF).cross(shDir);
+// 把一盞平行光擺到注視點上方、朝 dir 照。位置對齊陰影貼圖的格子（half：範圍的一半、size：貼圖幾格），鏡頭移動時影子的邊緣才不會閃
+function aimLight(l, dir, center, half, size) {
+  _sr.copy(SH_REF).cross(dir);
   if (_sr.lengthSq() < 1e-6) _sr.set(1, 0, 0);
   _sr.normalize();
-  _su.copy(shDir).cross(_sr);
-  const texel = (2 * SHADOW_HALF) / SHADOW_SIZE;
+  _su.copy(dir).cross(_sr);
+  const texel = (2 * half) / size;
   const cx = Math.round(center.dot(_sr) / texel) * texel, cy = Math.round(center.dot(_su) / texel) * texel;
-  _sc.copy(_sr).multiplyScalar(cx).addScaledVector(_su, cy).addScaledVector(shDir, center.dot(shDir));
-  sun.target.position.copy(_sc);
-  sun.position.copy(_sc).addScaledVector(shDir, 220);
-  sun.target.updateMatrixWorld();
+  _sc.copy(_sr).multiplyScalar(cx).addScaledVector(_su, cy).addScaledVector(dir, center.dot(dir));
+  l.target.position.copy(_sc);
+  l.position.copy(_sc).addScaledVector(dir, 220);
+  l.target.updateMatrixWorld();
+  l.updateMatrixWorld();
+}
+
+// ---- 電腦版的陰影升級（不是手機、陰影畫質「低」以上）----
+// 1. 近處另一張高解析度的陰影：注視點周圍 20 公尺見方、2048 格（一格約 1 公分），人物、柱子的影子才清楚；遠處照舊用大的那張
+// 2. 影子的方向不再每一幀跟著太陽轉（每一幀都轉，影子的邊緣每一幀都重新落格，看起來一直在抖）：
+//    太陽走了 1 度才換一次，新舊兩組影子用 2 秒淡入淡出（不會一格一格跳）。太陽的光照方向照舊每一幀跟著走
+// 做法：四盞不發光（亮度 0）的平行光只負責畫陰影貼圖——遠新、遠舊、近新、近舊；這時太陽本身不投影，
+// 它的影子由 sunShadowPlus（上面改的 three.js 著色器）把四張合起來。舊的那兩張只在淡入淡出的那 2 秒裡畫
+const NEAR_HALF = 10, NEAR_SIZE = 2048, SH_STEP = THREE.MathUtils.degToRad(1), SH_FADE = 2;
+function shadowOnly(half, size, normalBias) {
+  const l = new THREE.DirectionalLight(0xffffff, 0);
+  l.castShadow = false; l.visible = false;
+  l.shadow.autoUpdate = false;   // 要畫哪幾張由 placeSun 決定（needsUpdate）
+  l.shadow.mapSize.set(size, size);
+  Object.assign(l.shadow.camera, { left: -half, right: half, top: half, bottom: -half, near: 1, far: 460 });
+  l.shadow.bias = sun.shadow.bias; l.shadow.normalBias = normalBias; l.shadow.radius = sun.shadow.radius;
+  scene.add(l, l.target);   // 加在太陽後面：投影的燈排在前面時，這四盞的順序就是加進去的順序
+  return l;
+}
+const farNew = shadowOnly(SHADOW_HALF, SHADOW_SIZE, sun.shadow.normalBias), farOld = shadowOnly(SHADOW_HALF, SHADOW_SIZE, sun.shadow.normalBias);
+const nearNew = shadowOnly(NEAR_HALF, NEAR_SIZE, 0.012), nearOld = shadowOnly(NEAR_HALF, NEAR_SIZE, 0.012);
+const SH_LIGHTS = [farNew, farOld, nearNew, nearOld];
+const shOld = sunDir.clone();
+let shPlus = false, shWOld = 0, shFresh = true;
+// 要不要用電腦版的陰影（?noshplus：照舊用一張，比較用）
+const wantShPlus = () => gfx.shadowOn && !TOUCH && gs.shadow >= 2 && !/[?&]noshplus/.test(location.search);
+// 照畫質決定要不要用電腦版的陰影；遠的那兩張跟著陰影的大小、範圍
+function syncShadowPlus() {
+  const on = wantShPlus();
+  for (const l of [farNew, farOld]) {
+    Object.assign(l.shadow.camera, { left: -SHADOW_HALF, right: SHADOW_HALF, top: SHADOW_HALF, bottom: -SHADOW_HALF });
+    l.shadow.camera.updateProjectionMatrix();
+    if (l.shadow.mapSize.x !== SHADOW_SIZE) {
+      l.shadow.mapSize.set(SHADOW_SIZE, SHADOW_SIZE);
+      if (l.shadow.map) { l.shadow.map.dispose(); l.shadow.map = null; }
+    }
+  }
+  sun.castShadow = gfx.shadowOn && !on;
+  if (on === shPlus) return;
+  shPlus = on;
+  for (const l of SH_LIGHTS) { l.castShadow = on; l.visible = on; }   // 沒用的時候整盞藏起來：著色器裡就沒有這四盞（手機不多跑空的光照）
+  shFresh = true;
+  shared.uShadowMap.value = null; shared.uShadowOn.value = 0;
+}
+
+// 每一幀：擺好太陽和投影的燈（center：注視點）
+function placeSun(center, dt = 0, even = true) {
+  if (!shPlus) {
+    // 影子方向每一幀都跟著太陽（試過轉一小段才更新一次，一格一格跳反而更明顯；電腦版用淡入淡出解決）
+    shDir.copy(sunDir);
+    aimLight(sun, shDir, center, SHADOW_HALF, SHADOW_SIZE);
+    renderer.shadowMap.needsUpdate = true;
+    return;
+  }
+  aimLight(sun, sunDir, center, SHADOW_HALF, SHADOW_SIZE);   // 光照方向照舊每一幀跟著走（太陽自己不投影）
+  if (shFresh) { shDir.copy(sunDir); shWOld = 0; shFresh = false; }
+  else if (shWOld > 0) shWOld = shDir.angleTo(sunDir) > SH_STEP * 4 ? 0 : Math.max(0, shWOld - dt / SH_FADE);   // 太陽動得快（時間被調、跟伺服器對時）：不等淡完，免得越落越遠
+  else {
+    const a = shDir.angleTo(sunDir);
+    // 走了 1 度：新的方向從 0 淡進來。一下子差很多（白天換成月亮、時間被調過）就直接換
+    if (a > SH_STEP) { shOld.copy(shDir); shDir.copy(sunDir); shWOld = a < 0.3 ? 1 : 0; }
+  }
+  // 近的那張每一幀都畫（人物、柱子腳邊的影子靠它）；遠的那張隔一幀畫一次（遠處會動的東西晚一幀跟上看不出來）。
+  // 淡出中的舊方向那兩張也是隔一幀（跟遠的錯開）。沒畫的那一幀，貼圖和它的矩陣都是上一次的，兩個對得上
+  const fresh = !farNew.shadow.map || !nearNew.shadow.map;
+  aimLight(nearNew, shDir, center, NEAR_HALF, NEAR_SIZE);
+  nearNew.shadow.needsUpdate = true;
+  if (even || fresh) { aimLight(farNew, shDir, center, SHADOW_HALF, SHADOW_SIZE); farNew.shadow.needsUpdate = true; }
+  if (shWOld > 0 && (!even || !farOld.shadow.map || !nearOld.shadow.map)) {
+    aimLight(farOld, shOld, center, SHADOW_HALF, SHADOW_SIZE);
+    aimLight(nearOld, shOld, center, NEAR_HALF, NEAR_SIZE);
+    farOld.shadow.needsUpdate = nearOld.shadow.needsUpdate = true;
+  }
+  farNew.shadow.intensity = 1; farOld.shadow.intensity = shWOld; nearNew.shadow.intensity = 1; nearOld.shadow.intensity = shWOld;
   renderer.shadowMap.needsUpdate = true;
+}
+// 自己寫的著色器（海面、地形、草）要的陰影貼圖：每一幀照現在用的是哪一組接上
+function shadowUniforms() {
+  const tex = (l) => (l.shadow.map ? l.shadow.map.depthTexture : null);
+  if (!shPlus) {
+    if (sun.shadow.map) { shared.uShadowMap.value = sun.shadow.map.depthTexture; shared.uShadowMat.value = sun.shadow.matrix; shared.uShadowOn.value = 1; }
+    shared.uShadowFade.value = 0; shared.uShadowNearOn.value = 0;
+    return;
+  }
+  if (!farNew.shadow.map) return;
+  shared.uShadowMap.value = tex(farNew); shared.uShadowMat.value = farNew.shadow.matrix; shared.uShadowOn.value = 1;
+  shared.uShadowMapOld.value = tex(farOld); shared.uShadowMatOld.value = farOld.shadow.matrix;
+  shared.uShadowFade.value = farOld.shadow.map && nearOld.shadow.map ? shWOld : 0;
+  shared.uShadowMapNear.value = tex(nearNew); shared.uShadowMatNear.value = nearNew.shadow.matrix;
+  shared.uShadowMapNearOld.value = tex(nearOld); shared.uShadowMatNearOld.value = nearOld.shadow.matrix;
+  shared.uShadowNearOn.value = nearNew.shadow.map ? 1 : 0;
+  shared.uShadowTexelNear.value = 1 / NEAR_SIZE;
 }
 // 哪些東西會投影、會被影子蓋到：半透明的（窗玻璃、光束）不算
 function shade(obj) {
@@ -686,6 +818,7 @@ shade(scenery.group);
 scenery.setProxy(!/[?&]hishadow/.test(location.search));   // 精細的樹不投影，由簡化版代替（?hishadow：照舊，比較用）
 if (/[?&]noocc/.test(location.search)) scenery.setOccl(false);   // ?noocc：不做「被山擋住不畫」，比較用
 sun.shadow.camera.layers.enable(SHADOW_LAYER);   // 陰影貼圖也畫只投影用的那一層
+for (const l of SH_LIGHTS) l.shadow.camera.layers.enable(SHADOW_LAYER);
 scene.add(scenery.group);
 // 景物（兩千多棵樹、石頭、燈塔）擺好就不會動：位置矩陣算一次就好，不用每一趟繪製都全部重算（燈塔的光束會轉，照舊）。
 // 場景本身也不會動：它每次重算的話，底下每個物件都會被逼著跟著重算
@@ -1855,8 +1988,10 @@ function applyLite() {
   scene.traverse((o) => {
     const m = o.material;
     if (!m || !m.isShaderMaterial || !m.fragmentShader.includes('sunShadow(')) return;
-    if (!!m.defines.LITE === gfx.lite) return;
+    const plus = wantShPlus();
+    if (!!m.defines.LITE === gfx.lite && !!m.defines.SH_PLUS === plus) return;
     if (gfx.lite) m.defines.LITE = 1; else delete m.defines.LITE;
+    if (plus) m.defines.SH_PLUS = 1; else delete m.defines.SH_PLUS;
     m.needsUpdate = true;
   });
 }
@@ -1869,10 +2004,9 @@ function applyGfx() {
     Object.assign(sun.shadow.camera, { left: -SHADOW_HALF, right: SHADOW_HALF, top: SHADOW_HALF, bottom: -SHADOW_HALF });
     sun.shadow.camera.updateProjectionMatrix();
   }
-  if (sun.castShadow !== gfx.shadowOn) {
+  if (!gfx.shadowOn && shared.uShadowOn.value) {
     // 陰影整個關掉：太陽不投影（內建材質會自己換一份不算影子的程式），自己寫的著色器也不取樣
-    sun.castShadow = gfx.shadowOn;
-    if (!gfx.shadowOn) { shared.uShadowOn.value = 0; shared.uShadowMap.value = null; }
+    shared.uShadowOn.value = 0; shared.uShadowMap.value = null;
   }
   if (SHADOW_SIZE !== gfx.shadow) {
     // 陰影貼圖換大小：舊的丟掉，下一幀會照新的大小重做一張
@@ -1882,6 +2016,7 @@ function applyGfx() {
     shared.uShadowMap.value = null; shared.uShadowOn.value = 0;
     shared.uShadowTexel.value = 1 / SHADOW_SIZE;
   }
+  syncShadowPlus();   // 太陽投不投影、電腦版那四盞投影燈開不開，都在這裡決定
   if (gfx.grass > 0 && grassN !== gfx.grass) {
     grassN = gfx.grass;
     grass.geometry.dispose();
@@ -3150,8 +3285,8 @@ function drawFrame(dt) {
   WET.reflOn.value = deckWet ? 1 : 0;
   // 畫質「手機」：陰影貼圖隔一幀才重畫（會動的東西的影子晚一幀跟上，看不出來；陰影是手機上最貴的一項）
   if (gfx.shadowOn && (!gfx.lite || !even)) {
-    placeSun(target);
-    if (sun.shadow.map) { shared.uShadowMap.value = sun.shadow.map.depthTexture; shared.uShadowOn.value = 1; }
+    placeSun(target, dt, even);
+    shadowUniforms();
   }
   // 太陽（月亮）在畫面上的位置；背對著它、或人在水裡時沒有光束
   _rv.copy(camera.position).addScaledVector(sunDir, 1000).project(camera);
