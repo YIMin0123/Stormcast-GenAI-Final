@@ -58,9 +58,17 @@ export const GOODS = [   // 順序跟伺服器的商品清單一樣
   onPlinth('engine', 0), onPlinth('fisher', 1), onPlinth('trawler', 2),
 ];
 // 魚市場（橋頭東邊）：開放的棚子，前排左右兩座鋪冰的展示台；中間那根柱子是收購站——
-// 柱子上掛電子價格板，左邊是放在磅秤上的漁獲籃，右邊是賣出的按鈕。棚子裡有處理魚的長桌、冰櫃和魚箱、東邊一排活魚水槽
+// 柱子上掛電子價格板，左邊是放在磅秤上的漁獲籃，緊靠著籃子右邊是賣出的按鈕。棚子裡有處理魚的長桌、冰櫃和魚箱、東邊一排活魚水槽
 export const MARKET = { x0: 13, x1: 27, z0: -12.5, z1: -5, h: 3.6 };
-export const SELL = { basket: { x: 18.5, z: -4.0 }, board: { x: 20, z: -5.06 }, button: { x: 21.5, z: -4.0 } };   // 板子貼在中間那根柱子的正面
+// 板子貼在中間那根柱子的正面；按鈕緊靠磅秤右邊（磅秤台半寬 0.55、按鈕柱半徑 0.2，中間留 0.3）：站在籃子旁邊就按得到
+const BASKET = { x: 18.5, z: -4.0 };
+export const SELL = { basket: BASKET, board: { x: 20, z: -5.06 }, button: { x: BASKET.x + 1.05, z: BASKET.z } };
+// 磅秤的錶：指針跟著籃子裡魚的總重量轉，0 在左下、滿刻度在右下（掃過 sweep 弧度），超過 maxKg 就頂在底；
+// 每 tickKg 一格短刻度、每 majorKg 一格長刻度。angle(kg)：指針轉的角度（0 朝正上方、正的往左轉）
+export const SCALE_DIAL = {
+  maxKg: 50, tickKg: 5, majorKg: 10, sweep: Math.PI * 1.5,
+  angle(kg) { return this.sweep / 2 - this.sweep * Math.min(Math.max(kg, 0), this.maxKg) / this.maxKg; },
+};
 export const MARKET_IN = {
   displays: [{ x0: 13.8, x1: 18.4, z0: -6.75, z1: -5.75 }, { x0: 21.6, x1: 26.2, z0: -6.75, z1: -5.75 }],
   table: { x0: 17.4, x1: 22.6, z0: -9.6, z1: -8.7, h: 0.9 },

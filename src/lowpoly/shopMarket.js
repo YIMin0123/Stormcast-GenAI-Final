@@ -531,7 +531,14 @@ export function buildShopMarket({ fb, fd, P, box, obox, gableRoof, boatGeo, out,
     box(fb, Ba.x - 0.04, Ba.x + 0.04, D + 0.1, D + 1.0, Ba.z - 0.47, Ba.z - 0.43, Q.dark, Q.dark, r);
     cyl(fb, Ba.x, D + 1.0, Ba.z - 0.48, 0.2, 0.2, 0.08, 14, (m, n) => (n.z > 0.5 ? Q.plWhite : Q.dark), r, Math.PI / 2);
     cyl(fb, Ba.x, D + 1.0, Ba.z - 0.4, 0.025, 0.025, 0.02, 8, Q.dark, r, Math.PI / 2);   // 指針的軸心
-    obox(fb, Ba.x + 0.05, D + 1.06, Ba.z - 0.39, 0.7, 0.7, 0.16, 0.02, 0.01, Q.red, Q.red, r, 0.01, Math.PI / 2, 0.8);
+    // 指針會動，另外做（harbor.js 的 setScale）；這裡照樣呼叫一次但不畫，用掉一樣多的亂數，後面東西的顏色才不會變
+    obox({ addGeometry() {} }, Ba.x + 0.05, D + 1.06, Ba.z - 0.39, 0.7, 0.7, 0.16, 0.02, 0.01, Q.red, Q.red, r, 0.01, Math.PI / 2, 0.8);
+    // 錶面的刻度：貼在白色錶面前面一點點（錶面在 z -0.40），每 tickKg 一格，長的是 majorKg 的倍數
+    for (let kg = 0; kg <= H.SCALE_DIAL.maxKg + 1e-6; kg += H.SCALE_DIAL.tickKg) {
+      const major = Math.abs(kg / H.SCALE_DIAL.majorKg - Math.round(kg / H.SCALE_DIAL.majorKg)) < 1e-6, len = major ? 0.045 : 0.025, a = H.SCALE_DIAL.angle(kg);
+      const g = new THREE.BoxGeometry(major ? 0.012 : 0.008, len, 0.006).translate(0, 0.182 - len / 2, 0).rotateZ(a).translate(Ba.x, D + 1.0, Ba.z - 0.397);
+      fb.addGeometry(g, () => Q.dark);
+    }
     // 籃子：編織的（電腦版有布紋），四面＋底
     // 籃壁的頂比籃口那一圈低一點、包在它裡面（同一個高度的話兩個面會搶著畫，一閃一閃像穿模）；籃底也離磅秤台面一點點
     const bw = 0.45, bd = 0.38, bh = 0.42, bc = withSurf(P.woodLight, SURF.cloth), y0 = D + 0.105;

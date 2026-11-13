@@ -11,7 +11,7 @@ import { bulb, softDisc, softSquare } from './toon.js';
 import { DECK_Y, DECKS, WALLS, SHOP, LIGHTHOUSE, SELL, SHELF, PLAYER_SPAWN } from './layout.js';
 import * as H from './lowpoly/harborPlan.js';
 import { buildHarbor } from './lowpoly/harbor3d.js';
-import { rng, makeMaterial, tagSurfaces } from './lowpoly/kit.js';
+import { rng, makeMaterial, tagSurfaces, FaceBuilder } from './lowpoly/kit.js';
 import { addSurfaceDetail } from './lowpoly/surfaceDetail.js';
 import { TOUCH } from './touch.js';
 import { palette } from './lowpoly/palette.js';
@@ -27,6 +27,16 @@ boardCanvas.width = 512; boardCanvas.height = 256;
 const boardTex = new THREE.CanvasTexture(boardCanvas);
 boardTex.colorSpace = THREE.SRGBColorSpace;
 boardTex.anisotropy = 8;
+// 磅秤的指針：跟著籃子裡魚的總重量轉（每幀呼叫 updateScale）。像彈簧一樣追過去——放一條魚進去會晃一下再停，賣掉了轉回 0
+const scale = { pivot: null, a: H.SCALE_DIAL.angle(0), v: 0 };
+export function updateScale(kg, dt) {
+  if (!scale.pivot || !(dt > 0)) return;
+  const t = H.SCALE_DIAL.angle(kg), h = Math.min(dt, 0.05);
+  scale.v += (90 * (t - scale.a) - 5 * scale.v) * h;   // 彈簧（越大越快）、阻尼（越大越快停）
+  scale.a += scale.v * h;
+  scale.pivot.rotation.z = scale.a;
+}
+
 export function setBoard(lines) {
   const g = boardCanvas.getContext('2d');
   g.fillStyle = '#07140c'; g.fillRect(0, 0, 512, 256);
@@ -797,6 +807,17 @@ export function makeHarbor() {
   bp.position.set(H.SELL.board.x, DECK_Y + 1.55, H.SELL.board.z + 0.085);
   group.add(bp);
   UNLIT.push(bm);
+  // 磅秤的指針（錶在 shopMarket.js：中心在籃子後面 0.4、離棧板 1.0 公尺，錶面在 z -0.40、軸心蓋到 -0.38）：繞著錶的中心轉
+  {
+    const nb = new FaceBuilder(), red = new THREE.Color('#c8352a');
+    nb.addGeometry(new THREE.BoxGeometry(0.016, 0.2, 0.008).translate(0, 0.06, 0), () => red);   // 往上 0.16、尾巴 0.04
+    const needle = new THREE.Mesh(nb.build(), mat);
+    scale.pivot = new THREE.Group();
+    scale.pivot.position.set(H.SELL.basket.x, DECK_Y + 1.0, H.SELL.basket.z - 0.39);
+    scale.pivot.rotation.z = scale.a;
+    scale.pivot.add(needle);
+    group.add(scale.pivot);
+  }
   // 價格牌（setTag 畫的）：貼在櫃台、展示台的正面（商品正下方），都面向店門口
   SHELF.forEach((it, i) => {
     const tm = new THREE.MeshBasicMaterial({ map: tags[i].t, toneMapped: false });

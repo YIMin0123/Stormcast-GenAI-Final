@@ -26,6 +26,8 @@ export const SELL = {
   board: { x: H.SELL.board.x, z: H.SELL.board.z },
   button: { x: H.SELL.button.x, z: H.SELL.button.z },
 };
+// 伺服器檢查「人在收購站旁邊」：離按鈕多遠內可以賣（畫面上 1.7 公尺內才按得到，多留一點給網路延遲、位置還沒送到）
+export const SELL_REACH = 4;
 
 // 商品：油、扳手、釣竿、魚箱擺在櫃台上，引擎和兩艘船（模型）擺在展示台上（見 harborPlan.js 的 GOODS）。
 // 每樣商品旁邊一塊價格牌；玩家站在商品南邊（站位）按 E 購買。{ id, x, z 商品位置, y 擺放面高度, tag { x, y, z, tilt } 價格牌 }

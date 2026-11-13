@@ -7,7 +7,7 @@ import { BOAT_ORDER, CAN, newKit, shopItem } from './boatdata.js';
 import { Player } from './player.js';
 import { ShallowWater, SWE } from './shallow.js';
 import { makeSwimFx } from './swimfx.js';
-import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SELL, setBoard, BOLLARDS, MoorLine, SHELF, setTag, LAMPS, UNLIT, WET, ROOM_LIGHTS, ROOM_LAMPS, setRoomLights, GLOW_KEEP, lightBulbs, updateFlags, PORCHES, HOME_LAND } from './harbor.js';
+import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SELL, setBoard, BOLLARDS, MoorLine, SHELF, setTag, LAMPS, UNLIT, WET, ROOM_LIGHTS, ROOM_LAMPS, setRoomLights, GLOW_KEEP, lightBulbs, updateFlags, updateScale, PORCHES, HOME_LAND } from './harbor.js';
 import { WORLD } from './config.js';
 import { HOME_U, placeInHome } from './homeGl.js';
 import { HOME_YAW, toWorld, toLocal, headingToWorld } from './frame.js';
@@ -3401,6 +3401,7 @@ function drawFrame(dt) {
   WIND.amp.value = clamp(gale.steady / 14, 0.15, 2.6);   // 樹搖得多厲害跟著風速
   WIND.t.value += dt * (0.75 + 0.45 * WIND.amp.value);
   updateFlags(dt, gale.x, gale.z);   // 大漁旗跟著風飄
+  updateScale(fish.basketKg, dt);    // 磅秤的指針跟著籃子裡魚的總重量
   shared.uCenter.value.set(target.x, target.z);
   camera.updateMatrixWorld();
   scenery.cull(camera);   // 被山擋住的那幾塊樹不畫

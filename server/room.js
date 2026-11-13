@@ -5,7 +5,7 @@
 //   釣魚：上鉤什麼魚、多大、值多少由這裡擲；收線太快、離落水點太遠、站在陸地卻說拋進深海，一律不認
 //   本房紀錄（看板）與聊天
 import { Sea, Climate, HOUR } from '../src/weather.js';
-import { BERTHS, berthPose, berthKinds, inHarbor, SELL_W, SHELF_W, BOARD_STAND_W, SPAWN_W, SWITCHES_W, LIGHT_ZONES } from '../src/layout.js';
+import { BERTHS, berthPose, berthKinds, inHarbor, SELL_W, SELL_REACH, SHELF_W, BOARD_STAND_W, SPAWN_W, SWITCHES_W, LIGHT_ZONES } from '../src/layout.js';
 import { BOAT_TYPES, BOAT_ORDER, newKit, shopItem } from '../src/boatdata.js';
 import { SPECIES, rollCatch, minFightTime, biteDelay, castRange, money } from '../src/fishdata.js';
 import { dangerAt, isWater, fishingSpot } from './world.js';
@@ -327,7 +327,7 @@ export class Room {
 
       // ---- 買賣 ----
       case 'sell': {
-        if (!Array.isArray(m.uids) || !this.near(p, SELL_W.button.x, SELL_W.button.z, 6)) return this.send(p, { t: 'no', msg: '要站在籃子旁邊才能賣' });
+        if (!Array.isArray(m.uids) || !this.near(p, SELL_W.button.x, SELL_W.button.z, SELL_REACH)) return this.send(p, { t: 'no', msg: '要站在籃子旁邊才能賣' });
         let total = 0, best = null;
         const sold = [];
         for (const u of new Set(m.uids.slice(0, 250))) {

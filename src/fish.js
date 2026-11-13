@@ -286,6 +286,7 @@ export class FishWorld {
   }
 
   get basketTotal() { return this.basket.reduce((s, it) => s + it.value, 0); }
+  get basketKg() { return this.basket.reduce((s, it) => s + it.kg, 0); }   // 磅秤的指針用
 
   // 賣掉籃子裡的魚（uids：伺服器說賣掉了哪幾條；沒給就是全部），回傳金額
   sell(uids = null) {
