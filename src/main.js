@@ -8,7 +8,7 @@ import { Player } from './player.js';
 import { ShallowWater, SWE } from './shallow.js';
 import { makeSwimFx } from './swimfx.js';
 import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SELL, setBoard, BOLLARDS, MoorLine, SHELF, setTag, LAMPS, UNLIT, WET, ROOM_LIGHTS, ROOM_LAMPS, setRoomLights, GLOW_KEEP, lightBulbs, updateFlags, updateScale, PORCHES, HOME_LAND } from './harbor.js';
-import { WORLD } from './config.js';
+import { WORLD, THROW } from './config.js';
 import { HOME_U, placeInHome } from './homeGl.js';
 import { HOME_YAW, toWorld, toLocal, headingToWorld } from './frame.js';
 import { HOME_GROUND, ZONE_LABEL } from './lowpoly/harborPlan.js';
@@ -330,6 +330,18 @@ function landAt(x, z, hx, hz) {
 }
 // 正在走的那個人的腳在多高（只有玩家自己移動的那一下有值；其他地方問地面高度時是 null，石頭照「比地面高半公尺就擋」）
 const walker = { feet: null, air: false };
+// 丟出去、還在飛的東西底下的地面（y：東西的底在多高）：木箱、木桶、石頭照東西的高度看落不落得上去（跟跳起來的人一樣）；
+// 繫船柱、燈桿、樁這類沒記高度的細東西只擋低低飛過去的（離棧板一公尺內），飛得比它高就過去
+function flyGround(x, z, y) {
+  const f = walker.feet, air = walker.air;
+  walker.feet = y; walker.air = true;
+  const g = walkGround(x, z);
+  walker.feet = f; walker.air = air;
+  if (g < 90 || y < DECK_Y + 1) return g;
+  const [hx, hz] = toLocal(x, z);
+  if (BLOCKS.some((r) => inWall(r, hx, hz)) || !SOLIDS.some((c) => c.top === undefined && (x - c.x) ** 2 + (z - c.z) ** 2 < c.r * c.r)) return g;
+  return deckY(x, z) ?? g;
+}
 // 石頭表面在這一點有多陡（高度每公尺變多少）；旁邊沒石頭的方向不算
 function rockSlope(x, z) {
   const e = 0.2, c = rockAt(x, z);
@@ -1108,6 +1120,12 @@ const fish = new FishWorld({
   player, boats, scene, ground: walkGround, splash, toast, basket: SELL_W.basket,
   waveAt: (x, z) => ocean.sampleCached(x, z) * waveK(x, z) + tsuAt(x, z),
   onLost: (uids) => net.send({ t: 'fishGone', uids }),   // 魚掉回海裡、跟著船沉了：告訴伺服器這幾條沒了
+  ownBoat: () => myBoat,   // 丟出去的魚只會掉進自己船上的魚箱
+  flyGround,
+  landed(it, where, pos) {   // 丟出去的東西落地了：where = deck / ground / basket / box / water
+    if (where === 'basket') refreshBoard(it);
+    audio.play(where === 'water' ? 'plop' : 'drop', 1, pos);
+  },
 });
 // 釣魚：這裡只管手感和畫面。魚什麼時候咬、是哪條、多大、值多少、算不算釣起來，都由伺服器決定
 const fishing = new Fishing({
@@ -1898,7 +1916,7 @@ function aimTarget() {
   }
   // 放在甲板或地上的魚、油桶
   for (const it of fish.items) {
-    if (it.boat && it.boat.stored) continue;   // 在收進倉庫的船上
+    if (it.fly || (it.boat && it.boat.stored)) continue;   // 還在飛／在收進倉庫的船上
     const v = fish.worldPos(it, new THREE.Vector3());
     if (Math.hypot(v.x - player.pos.x, v.z - player.pos.z) > 1.8 || Math.abs(v.y - player.pos.y) > 1.3) continue;
     v.y += it.can ? 0.2 : it.thick / 2;
@@ -2002,6 +2020,38 @@ function interact() {
   }
 }
 
+// ---- 丟：拿著魚或油桶時按住右鍵（手機按住「丟」鈕）蓄力，放開就往準心的方向丟出去 ----
+// 蓄越久丟越遠（THROW.charge 秒蓄滿）；從手的位置出手，飛出去之後的落地、彈跳、掉進籃子魚箱或海裡見 fish.js 的 _fly
+let throwT = -1;   // 蓄力了多久（秒）；-1 = 沒在蓄力
+const canThrow = () => inGame && mode === 'walk' && !!fish.held && !player.swim && !drown && !mapOpen && !chat.isOpen && !wheel.isOpen && !$('panel').open;
+const _thO = new THREE.Vector3(), _thD = new THREE.Vector3();
+function throwStart() { if (canThrow()) throwT = 0; }
+function throwCancel() { throwT = -1; $('throwBar').style.display = 'none'; }
+function throwEnd() {
+  if (throwT < 0) return;
+  const k = clamp(throwT / THROW.charge, 0, 1);
+  throwCancel();
+  if (!canThrow()) return;
+  const it = fish.held;
+  camera.getWorldDirection(_thD);
+  // 人先轉向要丟的方向（第三人稱時人不一定面對準心），東西才會從胸前正對著準心出手
+  if (!player.seat) { player.yaw = Math.atan2(_thD.z, _thD.x); player.mesh.rotation.y = -player.yaw; player.mesh.updateMatrixWorld(true); }
+  it.mesh.getWorldPosition(_thO);
+  _thD.multiplyScalar(THROW.minSpeed + (THROW.maxSpeed - THROW.minSpeed) * k);
+  const b = player.boat;   // 站在開著的船上：東西也帶著船的速度
+  if (b) { _thD.x += Math.cos(b.heading) * b.speed; _thD.z += Math.sin(b.heading) * b.speed; }
+  fish.throwHeld(_thO, _thD);
+  audio.play('cast', 0.6);
+}
+function throwTick(dt) {
+  if (throwT < 0) return;
+  if (!canThrow()) return throwCancel();
+  throwT += dt;
+  const bar = $('throwBar');
+  bar.style.display = 'block';
+  bar.firstChild.style.width = `${Math.round(clamp(throwT / THROW.charge, 0, 1) * 100)}%`;
+}
+
 // 畫面下方的提示：能做什麼就顯示什麼
 let promptText = null, aimHit = false;
 function updatePrompt() {
@@ -2016,11 +2066,11 @@ function updatePrompt() {
     } else if (fish.held && fish.held.can) {
       const b = kind === 'tank' ? ab : null;
       text = b && b.spec.tank - b.fuel >= 0.1 ? `按 E 把油倒進油箱（${litres(b.fuel)} / ${b.spec.tank} 公升）`
-        : `${itemLabel(fish.held)}${b ? '　油箱是滿的' : ''}　按 E 放下${!b && nearTank() ? '（對準油箱可以加油）' : ''}`;
+        : `${itemLabel(fish.held)}${b ? '　油箱是滿的' : ''}　按 E 放下${!b && nearTank() ? '（對準油箱可以加油）' : ''}，右鍵蓄力丟出去`;
     } else if (fish.held) {
       text = kind === 'basket' ? '按 E 把魚放進籃子'
-        : kind === 'box' ? (ab.boxFish.length < ab.boxCap ? `按 E 放進魚箱（${ab.boxFish.length}/${ab.boxCap}）` : `魚箱滿了（${ab.boxCap}/${ab.boxCap}）　按 E 放在地上`)
-          : `${fishLabel(fish.held)}　按 E 放下${nearBox() ? '（對準魚箱可以放進去）' : nearBasket() ? '（對準籃子可以放進去）' : ''}`;
+        : kind === 'box' ? (ab.boxFish.length < ab.boxCap ? `按 E 放進魚箱（${ab.boxFish.length}/${ab.boxCap}）` : `魚箱滿了（${ab.boxCap}/${ab.boxCap}）　按 E 放在地上，右鍵蓄力丟出去`)
+          : `${fishLabel(fish.held)}　按 E 放下${nearBox() ? '（對準魚箱可以放進去）' : nearBasket() ? '（對準籃子可以放進去）' : ''}，右鍵蓄力丟出去`;
     } else if (fishing.state === 'wait') text = '等魚上鉤…（按 F 收回）';
     else if (fishing.state === 'bite') text = '魚咬了！快按 F';
     else if (fishing.state !== 'idle') text = '';
@@ -2071,7 +2121,7 @@ function updatePrompt() {
     $('prompt').style.display = text ? 'block' : 'none';
   }
   touch.update({
-    on: inGame && !mapOpen && !chat.isOpen && !wheel.isOpen, helm: mode === 'helm', sink: mode === 'sink',
+    on: inGame && !mapOpen && !chat.isOpen && !wheel.isOpen, helm: mode === 'helm', sink: mode === 'sink', held: !!fish.held && !player.swim,
     target: !!a || mode === 'helm' || !!fish.held || !!player.seat,
     act: mode === 'helm' ? '放手' : fish.held ? (kind === 'tank' || kind === 'basket' || kind === 'box' ? '放進去' : '放下') : player.seat && !a ? '站起來' : '互動',
   });
@@ -2307,6 +2357,8 @@ const touch = new TouchUI({
   fishDown() { if (!inGame) return; keys.f = true; fishing.press(); },
   fishUp() { keys.f = false; fishing.release(); },
   jump(on) { keys.space = on && inGame; },
+  throwDown: () => throwStart(),
+  throwUp: () => throwEnd(),
   map: () => { if (inGame) toggleMap(); },
   chat: () => chat.open(),
   emote() { if (wheel.isOpen) closeWheel(false); else if (inGame && mode === 'walk' && !mapOpen) wheel.open(); },
@@ -2346,7 +2398,7 @@ window.addEventListener('keyup', (e) => {
   if (e.code === 'KeyG') closeWheel(mode === 'walk');
   if (e.code === 'Space' && !(e.target instanceof HTMLInputElement)) e.preventDefault();
 });
-window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; closeWheel(false); });
+window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; closeWheel(false); throwCancel(); });
 
 // 按住滑鼠拖曳轉視角；滾輪調整第三人稱的距離
 canvas.addEventListener('pointerdown', (e) => {
@@ -2356,6 +2408,10 @@ canvas.addEventListener('pointerdown', (e) => {
   if (e.button === 0) { if (!locked()) canvas.setPointerCapture(e.pointerId); keys.mouse = true; }
 });
 canvas.addEventListener('pointerup', () => { keys.mouse = false; });
+// 右鍵：拿著東西時按住蓄力、放開丟出去（用 mousedown／mouseup：左鍵按著拖曳視角時再按右鍵，pointerdown 不會再來一次）
+canvas.addEventListener('mousedown', (e) => { if (!TOUCH && e.button === 2) throwStart(); });
+window.addEventListener('mouseup', (e) => { if (e.button === 2) throwEnd(); });
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('pointercancel', () => { keys.mouse = false; });
 // 瀏覽器偶爾會回報一筆大得離譜的滑鼠位移（滑鼠鎖在畫面裡時，游標被拉回中央的那一下漏進來；
 // 剛鎖上、剛放開、視窗剛切回來的第一筆也常常是這樣），照單全收的話鏡頭會自己猛轉一大圈。
@@ -3249,6 +3305,7 @@ function advance(dt) {
 
   // 魚與釣魚
   fish.update(dt);
+  throwTick(dt);
   fishing.reel = keys.f || keys.mouse;
   fishing.update(dt);
   updateFishUi();

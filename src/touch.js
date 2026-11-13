@@ -19,7 +19,8 @@ export function touchText(s) {
   if (!TOUCH || !s) return s;
   return s.replace(/按 Enter 可以聊天/g, '點右上角的對話框圖示可以聊天').replace(/按住 F（或滑鼠左鍵）/g, '按住「釣魚」').replace(/按住 F ?/g, '按住「釣魚」').replace(/放開 F ?/g, '放開「釣魚」').replace(/按 F ?/g, '按「釣魚」')
     .replace(/再按一次 E ?/g, '再按一次「互動」').replace(/按 E ?/g, '按「互動」')
-    .replace(/按移動鍵、空白鍵/g, '推搖桿、按「跳」');
+    .replace(/按移動鍵、空白鍵/g, '推搖桿、按「跳」')
+    .replace(/右鍵蓄力丟出去/g, '按住「丟」鈕丟出去');
 }
 
 // 把提示文字放進元素裡；手機上「互動」「釣魚」「跳」這幾個按鈕名稱換成按鈕上的那個圖示
@@ -62,7 +63,7 @@ const el = (tag, id, text) => { const e = document.createElement(tag); if (id) e
 // env：
 //   canvas
 //   look(dx, dy)：手指滑了這麼多像素，轉視角；zoom(k)：鏡頭遠近乘上 k
-//   interact()、fishDown()、fishUp()、jump(on)
+//   interact()、fishDown()、fishUp()、jump(on)、throwDown()、throwUp()（拿著東西時按住「丟」蓄力、放開丟出去）
 //   map()、chat()、emote()、view()：右上角四顆按鈕
 export class TouchUI {
   constructor(env) {
@@ -94,6 +95,8 @@ export class TouchUI {
     this.bAct = hold('tAct', '互動', () => env.interact());
     this.bFish = hold('tFish', '釣魚', () => env.fishDown(), () => env.fishUp());
     this.bJump = hold('tJump', '跳', () => env.jump(true), () => env.jump(false));
+    this.bThrow = hold('tThrow', '丟', () => env.throwDown(), () => env.throwUp());
+    this.bThrow.textContent = '丟';
     this.bFish.innerHTML = ICON.fish; this.bJump.innerHTML = ICON.jump;
     // 右上角：小按鈕
     const bar = this.bar = el('div', 'tBar');
@@ -106,7 +109,7 @@ export class TouchUI {
     };
     tap('map', '地圖', () => env.map()); tap('chat', '聊天', () => env.chat()); this.bEmote = tap('emote', '表情', () => env.emote()); tap('view', '視角', () => env.view());
     if (canFullscreen) tap('full', '全螢幕', () => setFullscreen(!isFullscreen()));
-    root.append(this.base, this.bAct, this.bFish, this.bJump, bar);
+    root.append(this.base, this.bAct, this.bFish, this.bJump, this.bThrow, bar);
     // 直著拿的時候蓋住整個畫面
     const rot = el('div', 'tRotate');
     rot.append(el('div', null, '請把手機橫過來'));
@@ -178,7 +181,7 @@ export class TouchUI {
     this.run = m > 0.92;
   }
 
-  // 每隔幾幀：照現在的狀況顯示該有的按鈕。st：{ on 在遊戲裡而且沒被選單、地圖、聊天蓋住, helm 掌舵中, sink 船正在沉, target 準心對著可以互動的東西, act 互動鈕上的字 }
+  // 每隔幾幀：照現在的狀況顯示該有的按鈕。st：{ on 在遊戲裡而且沒被選單、地圖、聊天蓋住, helm 掌舵中, sink 船正在沉, held 手上拿著東西（可以丟）, target 準心對著可以互動的東西, act 互動鈕上的字 }
   update(st) {
     if (!TOUCH) return;
     const on = !!st.on;
@@ -190,6 +193,7 @@ export class TouchUI {
     if (!on) return;
     const walk = !st.helm && !st.sink;
     this.bFish.style.display = this.bJump.style.display = walk ? 'block' : 'none';
+    this.bThrow.style.display = walk && st.held ? 'block' : 'none';
     this.bEmote.style.display = walk ? '' : 'none';
     this.bAct.style.display = st.sink ? 'none' : 'block';
     this.bAct.classList.toggle('hit', !!st.target);
