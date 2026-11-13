@@ -125,12 +125,13 @@ export function setRoomLights(state) {
     for (const p of z.pools) p.visible = z.on;
   }
 }
-// 路燈的燈罩、關掉的室內燈泡：關著或白天是灰灰的玻璃（跟著天色變暗），路燈開著又天黑了就亮到會暈開
+// 路燈的燈罩、關掉的室內燈泡：關著是灰灰的玻璃（跟著天色變暗），路燈開著白天微微透暖光（DAY_LIT）、天黑了就亮到會暈開
 const _bc = new THREE.Color();
+const DAY_LIT = 0.4;   // 路燈開著、白天的時候：燈罩也看得出是暖暖亮著的（不暈開）；關掉就是灰灰的玻璃。不然白天按開關完全看不出差別
 export function lightBulbs(glow, lit) {
   for (const z of Object.values(ROOM_LIGHTS)) {
     if (!z.night && z.on) continue;   // 室內燈開著：一直是亮的（setRoomLights 設好了）
-    _bc.copy(BULB_OFF).multiplyScalar(lit * lit * 1.3).lerp(BULB_ON, z.on ? glow : 0);   // 關著的燈泡跟著天色變暗，晚上不會白白一顆
+    _bc.copy(BULB_OFF).multiplyScalar(lit * lit * 1.3).lerp(BULB_ON, z.on ? Math.max(glow, DAY_LIT) : 0);   // 關著的燈泡跟著天色變暗，晚上不會白白一顆
     for (const m of z.bulbs) m.color.copy(_bc);
   }
 }
