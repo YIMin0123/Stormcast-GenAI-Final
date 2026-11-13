@@ -3,7 +3,7 @@
 // 美術的方向（參考盜賊之海的做法，不照抄）：形狀簡單粗壯、「真實的歪」——木板長短高低差一點、木樁歪歪的、
 // 有換過的新木板和曬白的舊木板、樁腳泡水的地方顏色變深長苔；比信箱小的東西不放
 import * as THREE from 'three';
-import { FaceBuilder, rng, mirrored, SColor } from './kit.js';
+import { FaceBuilder, rng, mirrored, SColor, SURF, withSurf } from './kit.js';
 import { jitter } from './palette.js';
 import { rockGeo, broadleafGeo, tuftGeo, terrainGeo, groundKind } from './shapes.js';
 import * as H from './harborPlan.js';
@@ -154,19 +154,111 @@ function barrelGeo(P, seed) {
   for (const y of [0.22, 0.98]) { const g = new THREE.CylinderGeometry(0.39, 0.39, 0.07, 8); g.translate(0, y, 0); fb.addGeometry(g, () => jitter(P.lampPole, r, 0.05)); }
   return fb.build();
 }
-function floatGeo(P) {
-  const fb = new FaceBuilder(), r = rng(9);
-  const g = new THREE.IcosahedronGeometry(0.28, 0); g.translate(0, 0.25, 0);
-  fb.addGeometry(g, () => jitter(P.float, r, 0.06));
+// 魚箱（塑膠的）：中空、上緣一圈加厚的箱口、外面一條條直的補強肋、短邊靠上挖一個提把孔、底下一圈內縮的箱腳。
+// filled：裝了碎冰和兩三條魚（從上面看得到）
+function fishboxGeo(P, seed, filled) {
+  const fb = new FaceBuilder(), r = rng(seed);
+  const W = 0.42, Dd = 0.28, Hh = 0.45, t = 0.03;   // 84×56 公分、高 45（擺放的間距 0.95 公尺，箱子之間才不會互相穿過去）
+  const blue = P.fishbox, dark = blue.clone().multiplyScalar(0.55), inner = blue.clone().multiplyScalar(0.78);
+  box(fb, -W + 0.04, W - 0.04, 0, 0.05, -Dd + 0.04, Dd - 0.04, blue, dark, r, 0.02);                 // 箱腳
+  box(fb, -W + t, W - t, 0.05, 0.08, -Dd + t, Dd - t, inner, inner, r, 0.02);                          // 箱底
+  for (const sg of [-1, 1]) {
+    const zo = sg > 0 ? [Dd - t, Dd] : [-Dd, -Dd + t], xo = sg > 0 ? [W - t, W] : [-W, -W + t];
+    box(fb, -W, W, 0.04, Hh - 0.05, zo[0], zo[1], inner, blue, r, 0.02);                  // 長邊的牆
+    box(fb, xo[0], xo[1], 0.04, Hh - 0.05, -Dd + t, Dd - t, inner, blue, r, 0.02);        // 短邊的牆
+    // 箱口：一圈加厚、往外凸一點
+    const zr = sg > 0 ? [Dd - t, Dd + 0.015] : [-Dd - 0.015, -Dd + t], xr = sg > 0 ? [W - t, W + 0.015] : [-W - 0.015, -W + t];
+    box(fb, -W - 0.015, W + 0.015, Hh - 0.05, Hh, zr[0], zr[1], blue, blue, r, 0.02);
+    box(fb, xr[0], xr[1], Hh - 0.05, Hh, -Dd + t, Dd - t, blue, blue, r, 0.02);
+    // 長邊外面的補強肋
+    const zf = sg > 0 ? [Dd - 0.004, Dd + 0.016] : [-Dd - 0.016, -Dd + 0.004];
+    for (const x of [-0.3, -0.15, 0, 0.15, 0.3]) box(fb, x - 0.016, x + 0.016, 0.06, Hh - 0.05, zf[0], zf[1], blue, blue, r, 0.03);
+    // 短邊：兩條肋、中間靠上一個提把孔（深色的凹槽）
+    const xf = sg > 0 ? [W - 0.004, W + 0.016] : [-W - 0.016, -W + 0.004], xh = sg > 0 ? [W - 0.003, W + 0.004] : [-W - 0.004, -W + 0.003];
+    for (const z of [-0.16, 0.16]) box(fb, xf[0], xf[1], 0.06, Hh - 0.05, z - 0.016, z + 0.016, blue, blue, r, 0.03);
+    box(fb, xh[0], xh[1], Hh - 0.17, Hh - 0.09, -0.09, 0.09, dark, dark, r, 0.01);
+  }
+  if (filled) {
+    const ice = withSurf(new THREE.Color('#e4eef2'), SURF.ice), y = Hh - 0.13;
+    box(fb, -W + t, W - t, 0.08, y, -Dd + t, Dd - t, ice, ice, r, 0.03);
+    for (let i = 0; i < 9; i++) {   // 一顆一顆的碎冰
+      const g = new THREE.IcosahedronGeometry(0.035 + r() * 0.025, 0);
+      g.translate((r() - 0.5) * (2 * W - 0.15), y + 0.01, (r() - 0.5) * (2 * Dd - 0.15));
+      fb.addGeometry(g, () => jitter(ice, r, 0.04));
+    }
+    const fishCol = [new THREE.Color('#8fa6b8'), new THREE.Color('#c9584a'), new THREE.Color('#9aa9a0')];
+    for (let i = 0; i < 3; i++) {   // 魚：扁長的身體＋尾巴，斜斜地躺在冰上
+      const len = 0.28 + r() * 0.08, col = fishCol[i], back = col.clone().multiplyScalar(0.6);
+      const g = new THREE.OctahedronGeometry(1, 0); g.scale(len / 2, 0.035, 0.07);
+      const tail = new THREE.ConeGeometry(0.06, 0.08, 3); tail.rotateZ(Math.PI / 2); tail.scale(1, 0.4, 1); tail.translate(-len / 2 - 0.03, 0, 0);
+      const yaw = (i - 1) * 0.5 + (r() - 0.5) * 0.3, cx = (i - 1) * 0.22 + (r() - 0.5) * 0.04, cz = (r() - 0.5) * 0.2;
+      for (const gg of [g, tail]) { gg.rotateY(yaw); gg.translate(cx, y + 0.045, cz); fb.addGeometry(gg, (m, n) => (n.y > 0.3 ? back : col)); }
+    }
+  }
   return fb.build();
 }
-// 一堆漁網：壓扁的一團
+// 一段繩子：照著幾個點一節一節接起來（細圓柱）
+function ropeAlong(fb, pts, rad, col) {
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1], len = a.distanceTo(b);
+    if (len < 1e-4) continue;
+    const c = new THREE.CylinderGeometry(rad, rad, len, 4);
+    c.translate(0, len / 2, 0);
+    c.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), b.clone().sub(a).normalize()));
+    c.translate(a.x, a.y, a.z);
+    fb.addGeometry(c, () => col);
+  }
+}
+// 浮球：圓的塑膠浮球，赤道一圈接縫、頂上一個穿繩的耳環，拖一小段繩子。white：白色的那種（比較少）
+function floatGeo(P, white) {
+  const fb = new FaceBuilder(), r = rng(white ? 19 : 9);
+  const R = 0.2, body = white ? new THREE.Color('#ece8de') : P.float, seam = body.clone().multiplyScalar(0.72);
+  const g = new THREE.IcosahedronGeometry(R, 2); g.translate(0, R, 0);
+  fb.addGeometry(g, (m) => (Math.abs(m.y - R) < R * 0.13 ? seam : jitter(body, r, 0.03)));
+  const eye = new THREE.TorusGeometry(0.045, 0.014, 4, 8); eye.translate(0, 2 * R + 0.035, 0);
+  fb.addGeometry(eye, () => seam);
+  ropeAlong(fb, [V(0, 2 * R + 0.02, 0), V(0.12, 2 * R - 0.02, 0.02), V(0.22, R, 0.05), V(0.3, 0.03, 0.08), V(0.55, 0.015, 0.02)], 0.012, jitter(P.rope, r, 0.05));
+  return fb.build();
+}
+// 一堆漁網：堆起來的一大團，表面有一道道皺摺（深淺不一），上面繞著一串浮子繩（一顆顆橘黃的小浮子）、
+// 外緣一圈深灰的沉子繩，一角拖在地上
 function netGeo(P, seed) {
   const fb = new FaceBuilder(), r = rng(seed);
-  const g = new THREE.IcosahedronGeometry(0.7, 0);
-  const p = g.attributes.position;
-  for (let i = 0; i < p.count; i++) p.setY(i, Math.max(0, p.getY(i)) * 0.45 + 0.02);
-  fb.addGeometry(g, () => jitter(P.net, r, 0.08));
+  const NR = 7, NA = 18, A = 0.68, B = 0.52, Ht = 0.4;   // 擺放的間距 1.3 公尺：兩堆不疊在一起
+  const ph = [r() * 6.28, r() * 6.28, r() * 6.28];
+  const at = (k, j) => {
+    const rho = k / NR, th = (j / NA) * Math.PI * 2;
+    const wob = 1 + 0.13 * Math.sin(3 * th + ph[0]) + 0.07 * Math.sin(5 * th + ph[1]);
+    const fold = 0.05 * Math.sin(rho * 9 + 2 * th + ph[2]) * rho;
+    const y = Math.max(0.02, Ht * Math.pow(Math.max(0, 1 - rho * rho), 0.7) * (1 + 0.15 * Math.sin(4 * th) * rho) + fold);
+    return V(A * rho * wob * Math.cos(th), y, B * rho * wob * Math.sin(th));
+  };
+  const net = P.net, deep = net.clone().multiplyScalar(0.7), pale = net.clone().multiplyScalar(1.18);
+  const col = (k, j) => { const f = Math.sin((k / NR) * 9 + 2 * (j / NA) * Math.PI * 2 + ph[2]); return jitter(f < -0.35 ? deep : f > 0.6 ? pale : net, r, 0.05); };
+  const up = (a, b, c, cl) => { const n = V(0, 0, 0).subVectors(b, a).cross(V(0, 0, 0).subVectors(c, a)); if (n.y < 0) fb.tri(a, c, b, cl); else fb.tri(a, b, c, cl); };
+  for (let k = 0; k < NR; k++) for (let j = 0; j < NA; j++) {
+    const j2 = (j + 1) % NA, cl = col(k, j);
+    if (k === 0) { up(at(0, 0), at(1, j), at(1, j2), cl); continue; }
+    up(at(k, j), at(k + 1, j), at(k + 1, j2), cl); up(at(k, j), at(k + 1, j2), at(k, j2), cl);
+  }
+  // 拖在地上的一角：薄薄一片網子
+  const e0 = at(NR, 1), e1 = at(NR, 3);
+  const fl = jitter(deep, r, 0.04), fm = V((e0.x + e1.x) * 0.62, 0.035, (e0.z + e1.z) * 0.62);
+  up(V(e0.x, 0.03, e0.z), fm, V(e0.x * 1.22, 0.015, e0.z * 1.22), fl);
+  up(V(e0.x, 0.03, e0.z), V(e1.x, 0.03, e1.z), fm, fl);
+  up(V(e1.x, 0.03, e1.z), V(e1.x * 1.18, 0.015, e1.z * 1.18), fm, fl);
+  // 浮子繩：從外圈螺旋繞到頂上，一顆顆小浮子
+  const cork = [new THREE.Color('#e8843c'), new THREE.Color('#e9c34a')];
+  for (let i = 0; i < 26; i++) {
+    const u = i / 25, k = NR * (0.95 - u * 0.75), j = u * NA * 1.6;
+    const p = at(Math.min(NR, Math.round(k)), Math.round(j) % NA);
+    const g = new THREE.SphereGeometry(0.032, 5, 3); g.scale(1.6, 1, 1); g.rotateY(-(j / NA) * Math.PI * 2);
+    g.translate(p.x, p.y + 0.03, p.z);
+    fb.addGeometry(g, () => cork[i % 2]);
+  }
+  // 沉子繩：沿著外緣一圈深灰的粗繩
+  const ring = []; for (let j = 0; j <= NA; j++) { const q = at(NR - 0.4, j % NA); ring.push(V(q.x, q.y + 0.015, q.z)); }
+  ropeAlong(fb, ring, 0.022, jitter(P.lampPole, r, 0.05));
   return fb.build();
 }
 
@@ -461,7 +553,9 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
 
   // ---- 繫船柱、木箱、木桶、魚箱、浮球、漁網 ----
   templates.push({ mesh: place(bollardGeo(P), H.BOLLARDS.map((b) => ({ pos: V(b.x, D, b.z), scl: V(1, 1, 1), rot: r() * 6.28, flip: false, tint: 0.9 + r() * 0.15 })), true, true), hue: 0.02 });
-  const geos = { crates: crateGeo(P.crate, 1.0, 0.8, 0.8, 11, P), fishboxes: crateGeo(P.fishbox, 1.0, 0.45, 0.7, 12), floats: floatGeo(P), barrels: barrelGeo(P, 13), nets: netGeo(P, 14) };
+  const geos = { crates: crateGeo(P.crate, 1.0, 0.8, 0.8, 11, P), fishboxes: fishboxGeo(P, 12, false), floats: floatGeo(P, false), barrels: barrelGeo(P, 13), nets: netGeo(P, 14) };
+  // 同一種東西的第二個樣子：魚箱每兩個有一個裝了冰和魚、浮球每三顆有一顆是白的（照擺放的順序輪流，不用亂數）
+  const alt = { fishboxes: [fishboxGeo(P, 22, true), 2], floats: [floatGeo(P, true), 3] };
   const lists = Object.fromEntries(Object.keys(geos).map((k) => [k, []]));
   const stackH = { crates: 0.8, fishboxes: 0.45, barrels: 1.2, floats: 0, nets: 0 };
   // 一堆一堆擺：地上的彼此不重疊（離太近就換個位置），疊上去的那幾個放在下面某一個的正上方
@@ -480,13 +574,21 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
       let x, z, ok = false;
       for (let t = 0; t < 30 && !ok; t++) { x = p.x + (r() - 0.5) * p.w; z = p.z + (r() - 0.5) * p.d; ok = ground.every((g) => Math.hypot(g.x - x, g.z - z) > gap[p.kind]); }
       if (!ok) continue;
-      const solid = p.kind !== 'floats' && p.kind !== 'nets' ? { x, z, r: { barrels: 0.4, crates: 0.47, fishboxes: 0.43 }[p.kind], top: D + stackH[p.kind] } : null;   // top：跳上去站的高度
+      const solid = p.kind !== 'floats' && p.kind !== 'nets' ? { x, z, r: { barrels: 0.4, crates: 0.47, fishboxes: 0.36 }[p.kind], top: D + stackH[p.kind] } : null;   // top：跳上去站的高度
       ground.push({ x, z, rot, solid });
       lists[p.kind].push({ pos: V(x, D, z), scl: V(s, s, s), rot, flip: false, tint: 0.88 + r() * 0.18 });
       if (solid) out.solids.push(solid);
     }
   }
-  Object.keys(geos).forEach((k, i) => templates.push({ mesh: place(geos[k], lists[k], true, true), hue: 0.05 + i * 0.12 }));
+  Object.keys(geos).forEach((k, i) => {
+    let list = lists[k];
+    if (alt[k]) {
+      const [g2, n] = alt[k];
+      templates.push({ mesh: place(g2, list.filter((_, j) => j % n === n - 1), true, true), hue: 0.05 + i * 0.12 });
+      list = list.filter((_, j) => j % n !== n - 1);
+    }
+    templates.push({ mesh: place(geos[k], list, true, true), hue: 0.05 + i * 0.12 });
+  });
 
   // ---- 海岸一圈大岩石、東邊岩岬一堆、山上幾顆 ----
   const rg = []; for (let k = 0; k < 3; k++) { const g = rockGeo(k, P, 100 + k * 13); rg.push(g, mirrored(g)); }
