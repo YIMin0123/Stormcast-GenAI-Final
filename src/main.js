@@ -7,11 +7,11 @@ import { BOAT_ORDER, CAN, newKit, shopItem } from './boatdata.js';
 import { Player } from './player.js';
 import { ShallowWater, SWE } from './shallow.js';
 import { makeSwimFx } from './swimfx.js';
-import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SHOP, SELL, setBoard, BOLLARDS, MoorLine, SHELF, setTag, LAMPS, UNLIT, WET, ROOM_LIGHTS, ROOM_LAMPS, setRoomLights } from './harbor.js';
+import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SELL, setBoard, BOLLARDS, MoorLine, SHELF, setTag, LAMPS, UNLIT, WET, ROOM_LIGHTS, ROOM_LAMPS, setRoomLights } from './harbor.js';
 import { WORLD } from './config.js';
 import { HOME_U, placeInHome } from './homeGl.js';
 import { HOME_YAW, toWorld, toLocal, headingToWorld } from './frame.js';
-import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SWITCHES_W, ROOFS_W, underRoof, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, SHOP_FRONT_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
+import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SWITCHES_W, ROOFS_W, underRoof, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
 import { fishLabel, FishWorld } from './fish.js';
 import { money as cash } from './fishdata.js';
 import { Fishing } from './fishing.js';
@@ -1786,9 +1786,6 @@ function updatePrompt() {
       text = types.length > 1 ? `按 E 換船：${myBoat.spec.name} → ${BOAT_TYPES[types[(types.indexOf(kit.active) + 1) % types.length]].name}` : `你的${myBoat.spec.name}停在 ${berth.label}`;
     } else if (player.boat && player.boat.remote && nearHelm()) text = `這是 ${player.boat.owner.name} 的${player.boat.spec.name}：可以搭，只有船主能開`;
     else if (player.seat) text = '坐著（按 E 或移動鍵站起來）';
-    else if (!player.boat && Math.hypot(player.x - SHOP_FRONT_W.x, player.z - SHOP_FRONT_W.z) < 3.2) {
-      text = `${SHOP.name}　${SHOP.hint}`;
-    }
   } else if (mode === 'helm') {
     $('hBoat').textContent = boat.aground ? '擱淺' : `${(Math.abs(boat.speed) * 1.944).toFixed(1)} 節`;
   }
