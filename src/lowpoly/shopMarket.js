@@ -527,8 +527,10 @@ export function buildShopMarket({ fb, fd, P, box, obox, gableRoof, boatGeo, out,
     box(fb, B.x - 0.76, B.x + 0.76, D + 1.95, D + 2.02, B.z - 0.1, B.z + 0.22, Q.dark, Q.dark, r);   // 板子上一片小遮簷
     // 磅秤：金屬平台、後面一根柱子頂著圓形的錶
     box(fb, Ba.x - 0.55, Ba.x + 0.55, D, D + 0.1, Ba.z - 0.5, Ba.z + 0.5, Q.steel, Q.dark, r);
-    box(fb, Ba.x - 0.05, Ba.x + 0.05, D + 0.1, D + 1.0, Ba.z - 0.5, Ba.z - 0.4, Q.dark, Q.dark, r);
+    // 柱子收在錶殼的厚度裡（錶殼 z -0.48 ~ -0.40），頂到錶的中心為止：不然柱子的正面會跟錶面同一個深度，從錶面中間穿出來
+    box(fb, Ba.x - 0.04, Ba.x + 0.04, D + 0.1, D + 1.0, Ba.z - 0.47, Ba.z - 0.43, Q.dark, Q.dark, r);
     cyl(fb, Ba.x, D + 1.0, Ba.z - 0.48, 0.2, 0.2, 0.08, 14, (m, n) => (n.z > 0.5 ? Q.plWhite : Q.dark), r, Math.PI / 2);
+    cyl(fb, Ba.x, D + 1.0, Ba.z - 0.4, 0.025, 0.025, 0.02, 8, Q.dark, r, Math.PI / 2);   // 指針的軸心
     obox(fb, Ba.x + 0.05, D + 1.06, Ba.z - 0.39, 0.7, 0.7, 0.16, 0.02, 0.01, Q.red, Q.red, r, 0.01, Math.PI / 2, 0.8);
     // 籃子：編織的（電腦版有布紋），四面＋底
     // 籃壁的頂比籃口那一圈低一點、包在它裡面（同一個高度的話兩個面會搶著畫，一閃一閃像穿模）；籃底也離磅秤台面一點點

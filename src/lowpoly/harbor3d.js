@@ -8,6 +8,7 @@ import { jitter } from './palette.js';
 import { rockGeo, broadleafGeo, tuftGeo, terrainGeo, groundKind } from './shapes.js';
 import * as H from './harborPlan.js';
 import { buildShopMarket } from './shopMarket.js';
+import { buildHouses, buildFlagPoles } from './houses.js';
 import { BOAT_TYPES } from '../boatdata.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -176,7 +177,7 @@ function netGeo(P, seed) {
 export function buildHarbor({ P, r, place, mat, group, templates, game = false, detail = true }) {
   // camBoxes：給鏡頭判斷「會不會被擋住」用的簡單方塊（建築的牆和屋頂、小屋、燈塔）。
   // 不拿真正的模型去打射線：整座港合起來十幾萬個三角形，手機每幀打好幾條會慢到只剩十幾幀
-  const out = { rocks: [], piles: [], solids: [], camBoxes: [], bulbs: [] };   // bulbs：室內燈的燈泡 { zone, x, y, z, r }
+  const out = { rocks: [], piles: [], solids: [], camBoxes: [], bulbs: [], porches: [] };   // bulbs：室內燈的燈泡 { zone, x, y, z, r }
   const camBox = (x0, x1, y0, y1, z0, z1, rot = 0, cx = (x0 + x1) / 2, cz = (z0 + z1) / 2) => out.camBoxes.push({ cx, cy: (y0 + y1) / 2, cz, w: x1 - x0, h: y1 - y0, d: z1 - z0, rot });
   const D = H.DECK_Y;
   const HG = H.HOME_GROUND;
@@ -222,6 +223,56 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
   const ORDER = [H.BOARDWALK, H.CORNER, H.SEG1, H.SEG2, ...H.FINGERS, ...H.FLOORS];
   const inRect = (x, z, R) => { const dx = x - R.cx, dz = z - R.cz; return Math.abs(dx * R.ux + dz * R.uz) <= R.hl && Math.abs(-dx * R.uz + dz * R.ux) <= R.hw; };
   const before = (R) => ORDER.slice(0, ORDER.indexOf(R));
+  // 木板伸到前面那幾塊棧板上的那一頭，沿著那塊棧板的邊切掉（斜著接的也切成斜的，像真的鋸齊）：
+  // 兩條長邊各自算在前面那塊裡面的那一段，剩下的就是要鋪的。回傳 null（不用切）、'gone'（整片都在上面）或四個角
+  const clipPlank = (R, c, off, len, w, prev) => {
+    const wx = -R.uz, wz = R.ux, t0 = off - len / 2, t1 = off + len / 2;
+    const ends = [];
+    let cut = false;
+    for (const a of [-(w - 0.006) / 2, (w - 0.006) / 2]) {
+      const bx = R.cx + R.ux * (c + a), bz = R.cz + R.uz * (c + a);
+      let lo = t0, hi = t1;
+      for (const Q of prev) {
+        // 這條邊在 Q 裡面的那一段 [a0, a1]（兩組平行邊各夾一次）
+        let a0 = -Infinity, a1 = Infinity;
+        for (const [px, pz, half] of [[Q.ux, Q.uz, Q.hl], [-Q.uz, Q.ux, Q.hw]]) {
+          const d0 = (bx - Q.cx) * px + (bz - Q.cz) * pz, dd = wx * px + wz * pz;
+          if (Math.abs(dd) < 1e-9) { if (Math.abs(d0) > half) { a0 = Infinity; a1 = -Infinity; } continue; }
+          const u = (-half - d0) / dd, v = (half - d0) / dd;
+          a0 = Math.max(a0, Math.min(u, v)); a1 = Math.min(a1, Math.max(u, v));
+        }
+        if (a1 <= lo || a0 >= hi) continue;
+        if (a0 <= lo + 1e-6) { lo = Math.max(lo, a1); cut = true; }
+        else if (a1 >= hi - 1e-6) { hi = Math.min(hi, a0); cut = true; }
+      }
+      ends.push([bx, bz, lo, Math.max(lo, hi)]);
+    }
+    if (!cut) return null;
+    if (ends.every(([, , lo, hi]) => hi - lo < 0.02)) return 'gone';
+    const [m, p] = ends;
+    const at = (e, t) => V(e[0] + wx * t, 0, e[1] + wz * t);
+    return [at(m, m[2]), at(m, m[3]), at(p, p[3]), at(p, p[2])];
+  };
+  // 切過的木板：四個角圍成的板面（可能是斜的梯形），厚 TH。顏色的亂數照 obox 的用法抽（個數一樣）
+  const plankPrism = (q, wx, wz, col, rr) => {
+    const ct = jitter(col, rr, 0.05), cs = jitter(col.clone().multiplyScalar(0.82), rr, 0.05), cb = cs.clone().multiplyScalar(0.7);
+    const top = q.map((v) => V(v.x, D, v.z)), bot = q.map((v) => V(v.x, D - TH, v.z));
+    const mid = q.reduce((m, v) => m.add(v), V(0, 0, 0)).multiplyScalar(0.25);
+    const face = (a, b, c, col, n) => {
+      const nn = V(0, 0, 0).subVectors(b, a).cross(V(0, 0, 0).subVectors(c, a));
+      if (nn.lengthSq() < 1e-10) return;
+      if (nn.dot(n) < 0) fb.tri(a, c, b, col); else fb.tri(a, b, c, col);
+    };
+    fb.grain = V(wx, 0, wz);
+    face(top[0], top[1], top[2], ct, V(0, 1, 0)); face(top[0], top[2], top[3], ct, V(0, 1, 0));
+    face(bot[0], bot[1], bot[2], cb, V(0, -1, 0)); face(bot[0], bot[2], bot[3], cb, V(0, -1, 0));
+    for (let i = 0; i < 4; i++) {
+      const j = (i + 1) % 4, out = V(0, 0, 0).addVectors(q[i], q[j]).multiplyScalar(0.5).sub(mid);
+      face(top[i], top[j], bot[j], cs, out); face(top[i], bot[j], bot[i], cs, out);
+    }
+    fb.grain = null;
+  };
+  const r2 = rng(6161);   // 原本整片不鋪、現在切一段來鋪的木板用這個抽顏色（不動到 r，後面的石頭、樹才不會換位置）
 
   // ---- 一塊棧板：木板（跨短邊、沿長邊一片一片排）、底下兩三根縱樑、每 3 公尺一根橫樑和一排木樁 ----
   // flush：跟這幾塊棧板接在一起的那一頭，木板剛好切齊邊界（不伸出去、不長短不齊），兩邊的木板才不會疊在一起
@@ -248,7 +299,11 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
       r(); r(); r();
       const jy = 0, roll = 0, pitch = 0;
       s += w;
-      if (prev.some((Q) => inRect(cx, cz, Q))) continue;
+      const centerIn = prev.some((Q) => inRect(cx, cz, Q));
+      const q = prev.length ? clipPlank(R, c, off, len, w, prev) : null;
+      if (q === 'gone') continue;
+      if (q) { plankPrism(q, wx, wz, col, centerIn ? r2 : r); continue; }
+      if (centerIn) continue;
       // 四個角有沒有伸到前面那幾塊上
       let over = false;
       for (const a of [-w / 2, w / 2]) for (const b of [-len / 2, len / 2]) if (prev.some((Q) => inRect(cx + R.ux * a + wx * b, cz + R.uz * a + wz * b, Q))) over = true;
@@ -285,8 +340,10 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
     }
   };
   // 燈籠：方形的燈罩、上下兩片蓋子（s：大小）
-  const lantern = (x, y, z, s = 1) => {
-    box(fb, x - 0.2 * s, x + 0.2 * s, y - 0.22 * s, y + 0.22 * s, z - 0.2 * s, z + 0.2 * s, P.bulb, P.bulb, r, 0.01);
+  // zone：有開關的燈（路燈）。燈罩的玻璃另外做（harbor.js，會亮會暗），這裡照樣算一次（亂數用掉的個數不變）但不畫
+  const lantern = (x, y, z, s = 1, zone = null) => {
+    if (zone) out.bulbs.push({ zone, x, y, z, box: [0.4 * s, 0.44 * s, 0.4 * s] });
+    box(zone ? new FaceBuilder() : fb, x - 0.2 * s, x + 0.2 * s, y - 0.22 * s, y + 0.22 * s, z - 0.2 * s, z + 0.2 * s, P.bulb, P.bulb, r, 0.01);
     box(fb, x - 0.26 * s, x + 0.26 * s, y + 0.22 * s, y + 0.3 * s, z - 0.26 * s, z + 0.26 * s, P.lampPole, P.lampPole, r);
     box(fb, x - 0.24 * s, x + 0.24 * s, y - 0.3 * s, y - 0.22 * s, z - 0.24 * s, z + 0.24 * s, P.lampPole, P.lampPole, r);
   };
@@ -341,13 +398,13 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
   }
 
   // ---- 會亮的燈：木頭燈桿、往棧橋中間伸出去的橫桿、掛著一盞方形的燈籠 ----
-  for (const l of H.LAMPS) {
+  H.LAMPS.forEach((l, li) => {
     box(fb, l.x - 0.11, l.x + 0.11, CAP_Y, D + 3.75, l.z - 0.11, l.z + 0.11, P.woodDark, P.woodDark, r);
     obox(fb, l.x + l.ax * 0.45, D + 3.65, l.z + l.az * 0.45, l.ax, l.az, 1.0, 0.1, 0.1, P.woodDark, P.woodDark, r);
     box(fb, l.x + l.ax * 0.75 - 0.02, l.x + l.ax * 0.75 + 0.02, D + 3.5, D + 3.6, l.z + l.az * 0.75 - 0.02, l.z + l.az * 0.75 + 0.02, P.lampPole, P.lampPole, r);   // 吊燈籠的短繩
-    lantern(l.x + l.ax * 0.75, D + 3.2, l.z + l.az * 0.75);
+    lantern(l.x + l.ax * 0.75, D + 3.2, l.z + l.az * 0.75, 1, `dock${li}`);
     out.solids.push({ x: l.x, z: l.z, r: 0.17 });
-  }
+  });
 
   // ---- 橋頭的商店（港口漁具行）、魚市場、收購站：在 shopMarket.js 蓋（自己的亂數）----
   // 原本這一段直接在這裡蓋、用掉 1041 個亂數；照樣跳過這麼多個，後面的石頭、樹、草才會長在原本的位置
@@ -355,34 +412,11 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
   const fd = new FaceBuilder();   // 小東西（貨架上的雜貨、魚乾、工具…）：手機不畫
   buildShopMarket({ fb, fd, P, box, obox, gableRoof, boatGeo, out, camBox });
 
-  // ---- 坡上的小屋：石砌地基、灰泥或木板牆、斜屋頂、門、窗、煙囪 ----
-  H.HOUSES.forEach((hs, k) => {
-    const c = Math.cos(hs.rot), s = Math.sin(hs.rot), hw = hs.w / 2, hd = hs.d / 2;
-    const ys = [[-hw, -hd], [hw, -hd], [-hw, hd], [hw, hd]].map(([a, b]) => harborHeight(hs.x + a * c + b * s, hs.z - a * s + b * c));
-    const lo = Math.min(...ys), y0 = Math.max(...ys) + 0.35;
-    const sub = new FaceBuilder();
-    box(sub, -hw - 0.15, hw + 0.15, lo - y0 - 0.5, 0, -hd - 0.15, hd + 0.15, P.stone, P.stone, r);
-    const wall = k % 2 ? P.plaster : P.wood;
-    box(sub, -hw, hw, 0, hs.h, -hd, hd, wall, wall, r);
-    for (const sx of [-hw - 0.05, hw - 0.1]) box(sub, sx, sx + 0.15, 0, hs.h, -hd - 0.05, hd + 0.05, P.woodDark, P.woodDark, r);   // 四角的木柱
-    gableRoof(sub, -hw, hw, -hd, hd, hs.h, 1.8, 0.45, k === 1 ? P.roofSlate : P.roofRed, r);
-    box(sub, -0.5, 0.5, 0, 1.9, hd, hd + 0.08, P.woodDark, P.woodDark, r);                              // 門（朝海）
-    for (const wx of [-hw + 1.1, hw - 1.1]) box(sub, wx - 0.4, wx + 0.4, 1.1, 1.8, hd, hd + 0.06, P.window, P.woodDark, r, 0.01);
-    box(sub, hw - 1.4, hw - 0.7, hs.h + 0.4, hs.h + 2.3, -0.6, 0.1, P.stone, P.stone, r);              // 煙囪
-    merge(fb, sub, hs.rot, hs.x, y0, hs.z);
-    out.camBoxes.push({ cx: hs.x, cy: y0 + (hs.h + 1.8) / 2, cz: hs.z, w: hs.w + 0.9, h: hs.h + 1.8, d: hs.d + 0.9, rot: hs.rot });
-  });
-
-  // ---- 大漁旗：橋頭後面的坡地 ----
-  H.FLAGS.forEach((f, i) => {
-    const y0 = harborHeight(f.x, f.z) - 0.2;
-    box(fb, f.x - 0.08, f.x + 0.08, y0, y0 + f.h, f.z - 0.08, f.z + 0.08, P.white, P.white, r);
-    out.solids.push({ x: f.x, z: f.z, r: 0.13 });
-    box(fb, f.x - 0.14, f.x + 0.14, y0 + f.h, y0 + f.h + 0.25, f.z - 0.14, f.z + 0.14, P.yellow, P.yellow, r);
-    const col = [P.flagRed, P.yellow, P.flagRed][i];
-    box(fb, f.x + 0.08, f.x + 3.0, y0 + f.h - 2.0, y0 + f.h - 0.1, f.z - 0.03, f.z + 0.03, col, col, r, 0.02);
-    box(fb, f.x + 0.08, f.x + 3.0, y0 + f.h - 2.0, y0 + f.h - 1.55, f.z - 0.04, f.z + 0.04, P.flagBlue, P.flagBlue, r, 0.02);
-  });
+  // ---- 坡上的小屋、大漁旗的旗桿：在 houses.js 蓋（自己的亂數；旗面在 harbor.js 做成會飄的布）----
+  // 原本這兩段直接在這裡蓋、用掉 444 個亂數；照樣跳過，後面的石頭、樹、草才會長在原本的位置
+  for (let i = 0; i < 444; i++) r();
+  buildHouses({ fb, fd, P, box, obox, gableRoof, merge, harborHeight, out });
+  buildFlagPoles({ fb, P, box, harborHeight, out });
 
   // ---- 白燈塔：東邊岩岬上，石砌的矮墩、白色的塔、一圈陽台＋欄杆、玻璃燈室、深色圓頂 ----
   {
@@ -439,15 +473,17 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
       const s = p.kind === 'floats' ? 1.4 : 1, rot = (r() - 0.5) * 0.4 + (r() < 0.5 ? Math.PI / 2 : 0);
       if (up) {
         const b = ground[Math.floor(r() * ground.length)];
+        if (b.solid) b.solid.top = D + 2 * stackH[p.kind];   // 疊了兩層：站上去的高度
         lists[p.kind].push({ pos: V(b.x + (r() - 0.5) * 0.08, D + stackH[p.kind], b.z + (r() - 0.5) * 0.08), scl: V(s, s, s), rot: b.rot + (r() - 0.5) * 0.25, flip: false, tint: 0.88 + r() * 0.18 });
         continue;
       }
       let x, z, ok = false;
       for (let t = 0; t < 30 && !ok; t++) { x = p.x + (r() - 0.5) * p.w; z = p.z + (r() - 0.5) * p.d; ok = ground.every((g) => Math.hypot(g.x - x, g.z - z) > gap[p.kind]); }
       if (!ok) continue;
-      ground.push({ x, z, rot });
+      const solid = p.kind !== 'floats' && p.kind !== 'nets' ? { x, z, r: { barrels: 0.4, crates: 0.47, fishboxes: 0.43 }[p.kind], top: D + stackH[p.kind] } : null;   // top：跳上去站的高度
+      ground.push({ x, z, rot, solid });
       lists[p.kind].push({ pos: V(x, D, z), scl: V(s, s, s), rot, flip: false, tint: 0.88 + r() * 0.18 });
-      if (p.kind !== 'floats' && p.kind !== 'nets') out.solids.push({ x, z, r: { barrels: 0.4, crates: 0.47, fishboxes: 0.43 }[p.kind] });
+      if (solid) out.solids.push(solid);
     }
   }
   Object.keys(geos).forEach((k, i) => templates.push({ mesh: place(geos[k], lists[k], true, true), hue: 0.05 + i * 0.12 }));

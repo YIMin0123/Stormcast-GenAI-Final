@@ -13,6 +13,7 @@ const CLIMB = 1.5;                // 從岸邊攀上船舷的高度
 const CLIMB_SWIM = 2.7;           // 從水裡攀上船
 const DROP = 0.35;                // 落差比這個大就算踩空，會掉下去
 const HOPS = [0.5, 1.0, 1.5];     // 碼頭與船之間的空隙，一步能跨多遠
+const BODY = 0.32;                // 身體的半徑：牆、柱子、箱子離身體中心這麼近就擋住（不然鏡頭、半個身體會鑽進牆裡）
 const SUBMERGE = 0.95;             // 浮在水裡時，腳在水面下多深（只露出頭和肩膀）
 
 export class Player {
@@ -145,24 +146,36 @@ export class Player {
     const tx = this.x + dx, tz = this.z + dz;
     const s = this._probe(tx, tz, world);
     if (s === 'wall') return false;
+    if (!s.boat && this._bump(tx, tz, dx / len, dz / len, s.swim, world)) return false;
     // 站在碼頭或船上、前面是要掉下去的水：如果只是碼頭和船之間的空隙就一步跨過去；
-    // 否則邊緣擋著，走路不會掉下水（要下水就用跳的）
+    // 跨不過去（前面整片是水）就直接走下去、掉進水裡
     if (s.swim && !this.onWater && this.h <= 0 && s.y < this.base - DROP) {
       for (const hop of HOPS) {
         const hx = this.x + (dx / len) * hop, hz = this.z + (dz / len) * hop;
         const t = this._probe(hx, hz, world);
-        if (t === 'wall') return false;
+        if (t === 'wall') break;
         if (t.swim) continue;
-        if (t.boat === this.boat || !this._reach(t)) return false;
+        if (t.boat === this.boat || !this._reach(t)) break;
         this.off.x += this.x - hx; this.off.z += this.z - hz;
         this._enter(t, hx, hz);
         return true;
       }
-      return false;
     }
     if (!this._reach(s)) return false;
     this._enter(s, tx, tz);
     return true;
+  }
+
+  // 身體的寬度：往前走時，前方和斜前方離中心 BODY 的地方碰到牆就停（只看前面：已經貼著牆的人還是走得開）。
+  // 船上不看（船上的走道窄，船自己的擋牆已經留了餘裕）；游泳時看水面底下的東西（棧橋的樁），不看棧板上的
+  _bump(tx, tz, ux, uz, swim, world) {
+    for (const a of [0, 0.75, -0.75]) {
+      const c = Math.cos(a), s = Math.sin(a);
+      const px = tx + (ux * c - uz * s) * BODY, pz = tz + (ux * s + uz * c) * BODY;
+      if (world.boats.some((b) => { if (b.sinking) return false; const l = b.toLocal(px, pz); return b.deckContains(l.x, l.z); })) continue;
+      if (world.ground(px, pz, swim) > 90) return true;
+    }
+    return false;
   }
 
   // 被水流帶著走（漩渦、水龍捲）
@@ -215,6 +228,7 @@ export class Player {
     }
 
     // 跳躍與重力。游泳時也能跳：用力一蹬，整個人竄出水面（腳離水面約半公尺）
+    if (jump && swim && !this.boat && world.ground(this.x, this.z) > this.base + 1.5) jump = false;   // 在棧橋底下游：頭上是棧板，跳不起來
     if (jump && this.h <= 0) { this.vy = swim ? JUMP_SWIM : JUMP; this.h = 1e-3; }
     if (this.h > 0) {
       this.vy -= GRAVITY * dt;

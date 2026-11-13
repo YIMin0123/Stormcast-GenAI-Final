@@ -6,7 +6,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { buildBoatMesh, BOAT_TYPES } from './boat.js';
 import { makeCanMesh } from './fish.js';
 import { HOME_U, homeGlsl } from './homeGl.js';
-import { toWorld, HOME_YAW } from './frame.js';
+import { toWorld, toLocal, HOME_YAW } from './frame.js';
 import { bulb, softDisc, softSquare } from './toon.js';
 import { DECK_Y, DECKS, WALLS, SHOP, LIGHTHOUSE, SELL, SHELF, PLAYER_SPAWN } from './layout.js';
 import * as H from './lowpoly/harborPlan.js';
@@ -111,17 +111,94 @@ export const EXTRA_LAMPS = [
   { x: (H.MARKET.x0 + H.MARKET.x1) / 2, z: -9.5, k: 0.5 },                                     // 魚市場棚下的燈泡
 ];
 export const GLOW = [];   // 晚上會透出燈光的材質（窗戶）
+export const GLOW_KEEP = new Set();   // 會換顏色的材質（燈泡）：合併港口時不能跟外觀一樣的其他材質併在一起
 // 室內燈（店裡、魚市場）：每一區的燈泡材質、手機版地上的光圈。開關是整間房共用的（伺服器記著），setRoomLights 照著換亮暗
 export const ROOM_LAMPS = H.ROOM_LAMPS;   // 室內燈打光的位置（港座標）
-export const ROOM_LIGHTS = Object.fromEntries(H.LIGHT_ZONES.map((z) => [z, { on: true, bulbs: [], pools: [] }]));
+// night：路燈（天黑了才亮，燈泡的顏色由 main.js 每幀照天色調，見 lightBulbs）
+export const ROOM_LIGHTS = Object.fromEntries(H.LIGHT_ZONES.map((z) => [z, { on: true, bulbs: [], pools: [], night: z.startsWith('dock') }]));
 const BULB_ON = new THREE.Color(1.0, 0.82, 0.5).multiplyScalar(2.4), BULB_OFF = new THREE.Color(0.42, 0.39, 0.33);
 export function setRoomLights(state) {
   for (const [zone, z] of Object.entries(ROOM_LIGHTS)) {
     if (!(zone in state)) continue;
     z.on = !!state[zone];
-    for (const m of z.bulbs) m.color.copy(z.on ? BULB_ON : BULB_OFF);
+    if (!z.night) for (const m of z.bulbs) m.color.copy(z.on ? BULB_ON : BULB_OFF);
     for (const p of z.pools) p.visible = z.on;
   }
+}
+// 路燈的燈罩、關掉的室內燈泡：關著或白天是灰灰的玻璃（跟著天色變暗），路燈開著又天黑了就亮到會暈開
+const _bc = new THREE.Color();
+export function lightBulbs(glow, lit) {
+  for (const z of Object.values(ROOM_LIGHTS)) {
+    if (!z.night && z.on) continue;   // 室內燈開著：一直是亮的（setRoomLights 設好了）
+    _bc.copy(BULB_OFF).multiplyScalar(lit * lit * 1.3).lerp(BULB_ON, z.on ? glow : 0);   // 關著的燈泡跟著天色變暗，晚上不會白白一顆
+    for (const m of z.bulbs) m.color.copy(_bc);
+  }
+}
+
+// 大漁旗的布：會跟著風飄。頂點在著色器裡動（離旗桿越遠擺得越大、風越大波越密越快），整面旗子轉到下風處。
+// 影子也用同一套動法（customDepthMaterial）
+const FLAG_T = { value: 0 };
+const FLAG_LIST = [];   // { mesh, amp(uniform), yaw }
+function flagPatch(sh, amp, seed, W) {
+  sh.uniforms.uFlagT = FLAG_T; sh.uniforms.uFlagAmp = amp;
+  sh.vertexShader = sh.vertexShader
+    .replace('#include <common>', `#include <common>
+uniform float uFlagT;
+uniform float uFlagAmp;`)
+    .replace('#include <begin_vertex>', `vec3 transformed = vec3( position );
+{
+  float u = clamp( position.x / ${W.toFixed(2)}, 0.0, 1.0 );   // 0 在旗桿、1 在尾端
+  float a = uFlagAmp, k = 1.4 + 0.6 * a, sp = 3.0 + 4.0 * a;
+  float ph = position.x * k - uFlagT * sp + ${seed.toFixed(2)};
+  float w = sin( ph ) * 0.2 + sin( ph * 1.9 + position.y * 1.4 + 1.3 ) * 0.07;
+  transformed.z += w * u * ( 0.35 + a );
+  transformed.x -= u * u * 0.12 * ( 0.35 + a );                     // 波浪把布收短一點
+  transformed.y -= u * u * max( 0.0, 1.0 - a ) * 0.9;                 // 風小：尾端垂下來
+  transformed.x -= u * u * max( 0.0, 1.0 - a ) * 0.35;
+}`);
+}
+export function updateFlags(dt, windX, windZ) {
+  FLAG_T.value += dt;
+  if (!FLAG_LIST.length) return;
+  const [ax, az] = toLocal(windX, windZ), [ox, oz] = toLocal(0, 0);
+  const lx = ax - ox, lz = az - oz, v = Math.hypot(lx, lz);
+  const want = Math.atan2(-lz, lx);   // 旗子的 +x 朝下風處
+  for (const f of FLAG_LIST) {
+    f.amp.value += (Math.min(v / 9, 1.6) - f.amp.value) * Math.min(1, dt * 1.5);
+    if (f.yaw === null) f.yaw = want;   // 第一次：直接朝下風
+    let d = want - f.yaw; d = Math.atan2(Math.sin(d), Math.cos(d));
+    if (v > 0.3) f.yaw += d * Math.min(1, dt * 0.8);   // 慢慢轉過去（沒風就停在原來的方向）
+    f.mesh.rotation.y = f.yaw + Math.sin(FLAG_T.value * 0.7 + f.seed) * 0.08 * f.amp.value;
+  }
+}
+function makeFlag(f) {
+  const g0 = new THREE.PlaneGeometry(f.w, f.h, 14, 8), p0 = g0.attributes.position;
+  for (let i = 0; i < p0.count; i++) if (Math.abs(p0.getY(i) - (-f.h / 2 + f.h / 4)) < 1e-4) p0.setY(i, -f.h / 2 + 0.45);   // 從下面數第二排的格線挪到藍邊上緣：邊是直的
+  const g = g0.toNonIndexed();
+  g.translate(f.w / 2, -f.h / 2, 0);   // 左上角在旗桿頂：布往 +x 伸出去、往下垂
+  const pos = g.attributes.position, col = new Float32Array(pos.count * 3);
+  const main = new THREE.Color(f.col), stripe = new THREE.Color(f.stripe);
+  for (let i = 0; i < pos.count; i += 3) {
+    const y = (pos.getY(i) + pos.getY(i + 1) + pos.getY(i + 2)) / 3;
+    const c = y < -f.h + 0.45 ? stripe : main;   // 下緣一道藍邊
+    for (let k = 0; k < 3; k++) c.toArray(col, (i + k) * 3);
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const amp = { value: 0.5 };
+  const m = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, flatShading: true });
+  m.onBeforeCompile = (sh) => flagPatch(sh, amp, f.seed, f.w);
+  m.customProgramCacheKey = () => 'flag' + f.seed;
+  m.userData.noReceive = true;   // main.js 的 shade() 照這個決定收不收影子
+  const mesh = new THREE.Mesh(g, m);
+  const dm = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.DoubleSide });
+  dm.onBeforeCompile = (sh) => flagPatch(sh, amp, f.seed, f.w);
+  dm.customProgramCacheKey = () => 'flagdepth' + f.seed;
+  mesh.customDepthMaterial = dm;
+  mesh.position.set(f.x + 0.06, f.top, f.z);
+  mesh.castShadow = true;   // 不收影子：會動的布自己擋自己，滿面都是斑點
+  mesh.frustumCulled = false;   // 頂點會動；也不跟港口的其他零件合併
+  FLAG_LIST.push({ mesh, amp, yaw: null, seed: f.seed });
+  return mesh;
 }
 
 // 畫貼圖用的亂數（固定種子：每次開遊戲畫出來的都一樣）
@@ -570,6 +647,7 @@ const flagTexture = (text, bg) => canvasTex(256, 160, (g) => {
 
 // 立在水裡的木樁（給淺水模擬當障礙物）
 export const PILES = [];
+export const PORCHES = [];   // 小屋的門廊、石階（港座標的斜放矩形 { cx, cz, ux, uz, hl, hw, y0 內緣高, y1 外緣高 }）
 export const BOLLARDS = [];  // 岸壁上的繫纜樁：{ x, z, y }（y 是纜繩套在樁上的高度）。船的纜繩可以綁在上面
 
 // 繫船的纜繩：從船舷拉到岸上的繫纜樁。繩子比兩頭的距離長時中間垂下去（垂到水面就浮在水上），拉緊了就是直的
@@ -624,7 +702,7 @@ export class MoorLine {
   }
 }
 
-export const SOLIDS = [];   // 棧板上擋路的東西（高出棧板的樁、燈柱、木桶、木箱、繫纜樁）：{ x, z, r }
+export const SOLIDS = [];   // 棧板上擋路的東西（高出棧板的樁、燈柱、木桶、木箱、繫纜樁）：{ x, z, r, top? }（top：跳得上去的高度，木箱、木桶、魚箱才有）
 
 // 蓋整座港口（港座標）：低面平塗的小島漁港（lowpoly/harbor3d.js：島的地形、岸壁、建築、消波塊、岩石、樹、草），
 // 再加上遊戲才需要的東西（賣魚的電子板、價格牌），順便把擋路的東西、繫纜樁記進清單
@@ -657,6 +735,7 @@ export function makeHarbor() {
   HARBOR_ROCKS.push(...out.rocks);   // 海岸的大岩石：船和人都過不去
   PILES.push(...out.piles);          // 立在水裡的木樁（淺水模擬的障礙物）
   SOLIDS.push(...out.solids);        // 燈桿、高出棧板的樁、魚市場的柱子、木箱木桶
+  PORCHES.push(...out.porches);      // 小屋的門廊、石階
   // 鏡頭用的擋牆（看不見，只給 main.js 的 camBlockers 打射線）
   const pm = new THREE.MeshBasicMaterial({ visible: false });
   for (const b of out.camBoxes) {
@@ -666,6 +745,8 @@ export function makeHarbor() {
     group.add(m);
   }
 
+  for (const f of out.flags ?? []) group.add(makeFlag(f));
+
   // 繫船柱：每格停船格的棧橋邊一根（纜繩套在樁頂下面一點）
   for (const b of H.BOLLARDS) {
     BOLLARDS.push({ x: b.x, z: b.z, y: DECK_Y + 0.42 });
@@ -673,13 +754,19 @@ export function makeHarbor() {
   }
 
   // 室內燈的燈泡：開著的時候很亮（會暈開），關掉變成灰灰的玻璃
+  // 每一區共用一個材質（同一區的燈泡可以合併成一塊，換顏色時整區一起換）；main.js 合併港口時照材質本身分（不照外觀），
+  // 不然店裡和魚市場的燈泡外觀一樣會被併在一起、共用店裡那個材質，魚市場關燈燈泡還亮著
   const bulbGeo = new THREE.IcosahedronGeometry(1, 1);
+  const boxGeo = new THREE.BoxGeometry(1, 1, 1);   // 路燈的方形燈罩
+  const zoneMat = {};
   for (const b of out.bulbs) {
-    const m = new THREE.MeshBasicMaterial({ color: BULB_ON.clone() });
-    const mesh = new THREE.Mesh(bulbGeo, m);
-    mesh.position.set(b.x, b.y, b.z); mesh.scale.setScalar(b.r);
+    const m = zoneMat[b.zone] ??= new THREE.MeshBasicMaterial({ color: BULB_ON.clone() });
+    if (!ROOM_LIGHTS[b.zone].bulbs.includes(m)) ROOM_LIGHTS[b.zone].bulbs.push(m);
+    GLOW_KEEP.add(m);
+    const mesh = new THREE.Mesh(b.box ? boxGeo : bulbGeo, m);
+    mesh.position.set(b.x, b.y, b.z);
+    if (b.box) mesh.scale.set(...b.box); else mesh.scale.setScalar(b.r);
     group.add(mesh);
-    ROOM_LIGHTS[b.zone].bulbs.push(m);
   }
   // 手機不打真的光（每多一盞光源，整個畫面每一點都要多算一次）：燈下的地板鋪一圈淡淡的暖色光暈代替
   if (TOUCH) {

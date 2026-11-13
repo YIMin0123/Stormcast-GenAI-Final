@@ -150,6 +150,10 @@ export const LAMPS = [
   { x: B0[0] + D2[0] * 34 + D2[1] * (HW - 0.25), z: B0[1] + D2[1] * 34 - D2[0] * (HW - 0.25), ax: -D2[1], az: D2[0] },
   { x: B0[0] + D2[0] * (SEG2_LEN - 0.5) + D2[1] * (HW - 0.25), z: B0[1] + D2[1] * (SEG2_LEN - 0.5) - D2[0] * (HW - 0.25), ax: -D2[1], az: D2[0] },
 ];
+// 路燈也有開關：每根燈桿朝棧橋中間那一面一個，一盞燈一區（整間房共用，跟室內燈一樣伺服器記著）。天黑了開著的才亮
+LIGHT_ZONES.push(...LAMPS.map((_, i) => `dock${i}`));
+SWITCHES.push(...LAMPS.map((l, i) => ({ zone: `dock${i}`, x: l.x + l.ax * 0.125, z: l.z + l.az * 0.125, y: DECK_Y + 1.3, nx: l.ax, nz: l.az })));
+export const ZONE_LABEL = (zone) => (zone === 'shop' ? '店裡的燈' : zone === 'market' ? '魚市場的燈' : '這盞路燈');
 // 梯子：從棧橋邊爬下水、落水的人從這裡爬上來。{ x, z 棧橋邊上的點, nx, nz 往外（水）的方向 }
 // 放在沒有停船格的地方：橋頭兩側、轉角平台東西兩邊、橋尾
 export const LADDERS = [

@@ -7,11 +7,11 @@ import { BOAT_ORDER, CAN, newKit, shopItem } from './boatdata.js';
 import { Player } from './player.js';
 import { ShallowWater, SWE } from './shallow.js';
 import { makeSwimFx } from './swimfx.js';
-import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SELL, setBoard, BOLLARDS, MoorLine, SHELF, setTag, LAMPS, UNLIT, WET, ROOM_LIGHTS, ROOM_LAMPS, setRoomLights } from './harbor.js';
+import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SELL, setBoard, BOLLARDS, MoorLine, SHELF, setTag, LAMPS, UNLIT, WET, ROOM_LIGHTS, ROOM_LAMPS, setRoomLights, GLOW_KEEP, lightBulbs, updateFlags, PORCHES } from './harbor.js';
 import { WORLD } from './config.js';
 import { HOME_U, placeInHome } from './homeGl.js';
 import { HOME_YAW, toWorld, toLocal, headingToWorld } from './frame.js';
-import { HOME_GROUND } from './lowpoly/harborPlan.js';
+import { HOME_GROUND, ZONE_LABEL } from './lowpoly/harborPlan.js';
 import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SWITCHES_W, ROOFS_W, underRoof, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
 import { fishLabel, FishWorld } from './fish.js';
 import { money as cash } from './fishdata.js';
@@ -261,16 +261,52 @@ function walkGround(x, z, under = false) {
   const [hx, hz] = toLocal(x, z);   // 商店、牆這些矩形是用港座標寫的
   for (const r of BLOCKS) if (inWall(r, hx, hz)) return 99;
   if (Math.hypot(x - LIGHTHOUSE_W.x, z - LIGHTHOUSE_W.z) < LIGHTHOUSE_W.r) return 99;
-  if (!under) for (const c of SOLIDS) if ((x - c.x) ** 2 + (z - c.z) ** 2 < c.r * c.r) return 99;   // 棧板上的樁、燈柱、木桶…（在棧板底下游泳時不算）
+  // 棧板上的樁、燈柱、木桶…（在棧板底下游泳時不算）。有 top 的（木箱、木桶、魚箱）跳得上去：跟石頭一樣看玩家的腳（walker）——
+  // 腳已經在箱頂的高度、或跳起來離箱頂不到 0.35 公尺就站得上去；矮的（不到半公尺）直接踏上去
+  if (!under) {
+    let top = null;
+    for (const c of SOLIDS) {
+      if ((x - c.x) ** 2 + (z - c.z) ** 2 >= c.r * c.r) continue;
+      const f = walker.feet;
+      if (c.top === undefined || f === null || c.top > f + (walker.air ? 0.35 : 0.5)) return 99;
+      if (top === null || c.top > top) top = c.top;
+    }
+    if (top !== null) return top;
+  } else for (const p of PILES) if ((x - p.x) ** 2 + (z - p.z) ** 2 < p.r * p.r) return 99;   // 在棧板底下游：水裡的樁擋著
+  for (const p of PORCHES) if (inWall(p, hx, hz)) {   // 小屋的門廊（平的）和門前石階（從門廊往外一路斜下去）；上面的長椅、水桶照上面擋著
+    const v = -(hx - p.cx) * p.uz + (hz - p.cz) * p.ux;
+    return p.y0 + (p.y1 - p.y0) * (v + p.hw) / (2 * p.hw);
+  }
   const ly = ladderY(x, z);   // 梯子：落水的人從這裡爬上棧板
   if (ly !== null) return ly;
   const dy = deckY(x, z);   // 木棧板（岸邊平台、棧橋、指棧、店裡的地板）
-  if (dy !== null) return under ? 99 : dy;   // 棧板比水面高 1 公尺多，游泳的人直接爬不上去、也不從底下鑽過去：要找梯子
-  // 石頭：比地面高不到半公尺的地方（石頭低低的邊緣）踩得上去，再高就是擋住。
-  // 不能只靠「一步踏不上 0.6 公尺」：石頭表面是連續變高的，一小步一小步會一路走到頂上
+  if (dy !== null && !under) return dy;   // 棧板比水面高 1 公尺多，游泳的人直接爬不上去（要找梯子），可以從底下游過去
+  // 石頭：比地面高不到半公尺的地方（石頭低低的邊緣）直接踩得上去。
+  // 再高的地方不能只靠「一步踏不上 0.6 公尺」：石頭表面是連續變高的，一小步一小步會一路走到頂上，所以看玩家的腳（walker）：
+  //   跳起來、腳離石頭頂不到 0.3 公尺 → 落得上去；已經站在石頭上 → 平的、往下的地方照走，往上只走得上不陡的坡
   const rk = rockAt(x, z), g = bedAt(x, z);
   if (rk === null || rk <= g) return g;
-  return rk - g < ROCK_STAND ? rk : 99;
+  if (rk - g < ROCK_STAND) return rk;
+  const f = walker.feet;
+  if (f !== null) {
+    if (rk <= f + 0.02) return rk;
+    if (rk <= f + 0.3 && (walker.air || rockSlope(x, z) < 0.7)) return rk;
+  }
+  return 99;
+}
+// 正在走的那個人的腳在多高（只有玩家自己移動的那一下有值；其他地方問地面高度時是 null，石頭照「比地面高半公尺就擋」）
+const walker = { feet: null, air: false };
+// 石頭表面在這一點有多陡（高度每公尺變多少）；旁邊沒石頭的方向不算
+function rockSlope(x, z) {
+  const e = 0.2, c = rockAt(x, z);
+  let m = 0;
+  for (const [ax, az] of [[e, 0], [0, e]]) {
+    const a = rockAt(x + ax, z + az), b = rockAt(x - ax, z - az);
+    if (a !== null && b !== null) m = Math.max(m, Math.abs(a - b) / (2 * e));
+    else if (a !== null) m = Math.max(m, Math.abs(a - c) / e);
+    else if (b !== null) m = Math.max(m, Math.abs(c - b) / e);
+  }
+  return m;
 }
 // 船眼中的地面：棧橋也算障礙物
 const boatGround = (x, z) => {
@@ -1278,7 +1314,7 @@ const camBlockers = [];
 // 鏡像擺放的、底下還掛著東西的。鏡頭的遮擋判斷（camBlockers）在上面已經用原本的零件建好，不受影響
 {
   harbor.updateMatrixWorld(true);
-  const keep = new Set([...GLOW, ...UNLIT]);
+  const keep = new Set([...GLOW, ...UNLIT, ...GLOW_KEEP]);
   const shown = (o) => { for (let p = o; p; p = p.parent) if (!p.visible) return false; return true; };
   const look = (m) => (keep.has(m) || m.onBeforeCompile.toString().length > 30 ? m.uuid
     : [m.type, m.color?.getHex(), m.emissive?.getHex(), m.map?.uuid, m.side, m.flatShading, m.vertexColors, m.alphaTest, m.opacity].join());
@@ -1934,7 +1970,7 @@ function updatePrompt() {
     else if (kind === 'seat') text = player.seat && player.seat.src === a.seat ? '按 E 站起來' : '按 E 坐下';
     else if (kind === 'button') text = fish.basket.length ? `按 E 按下按鈕賣出（$${fish.basketTotal}）` : '把魚拿過來放進籃子，就會顯示價格';
     else if (kind === 'basket') text = '把魚拿過來放進籃子，就會顯示價格';
-    else if (kind === 'switch') text = `按 E ${ROOM_LIGHTS[a.sw.zone].on ? '關掉' : '打開'}${a.sw.zone === 'shop' ? '店裡' : '魚市場'}的燈`;
+    else if (kind === 'switch') text = `按 E ${ROOM_LIGHTS[a.sw.zone].on ? '關掉' : '打開'}${ZONE_LABEL(a.sw.zone)}`;
     else if (kind === 'shelf') {
       const o = offer(a.shelf.id);
       text = o.price === null ? `${o.lines[0]}：${o.lines[1]}` : money >= o.price ? `按 E ${o.act || `購買${o.name}`}　$${o.price}` : `${o.name}　$${o.price}（錢不夠）`;
@@ -2396,8 +2432,9 @@ function updateWeather(dt) {
   if (boatLight.parent !== boat.mesh) { boat.mesh.add(boatLight); boatLight.position.copy(boat.parts.lamp); }
   boatLight.intensity = boat.lampOn ? 10 * glow : 0;   // 船燈可以自己關掉
   lampLights.forEach((l, i) => {
-    l.intensity = 10 * glow;
-    shared.uLamp.value[i].set(l.position.x, l.position.z, 0.55 * glow);
+    const on = ROOM_LIGHTS[`dock${i}`]?.on !== false ? glow : 0;   // 路燈可以由玩家關掉
+    l.intensity = 10 * on;
+    shared.uLamp.value[i].set(l.position.x, l.position.z, 0.55 * on);
   });
   EXTRA_LAMPS.forEach((p, i) => shared.uLamp.value[5 + i].set(p.x, p.z, p.k * glow));
   for (const m of BULBS) m.color.copy(m.userData.base).multiplyScalar(0.7 + 1.5 * glow * m.userData.k);   // 燈泡：天黑後亮到會暈開
@@ -2408,6 +2445,7 @@ function updateWeather(dt) {
   shared.uLampOn.value = shared.uLamp.value.reduce((m, l) => Math.max(m, l.z), 0);
   const lit = clamp(0.3 + L.amb[1], 0, 1);
   for (const m of UNLIT) m.color.setScalar(lit);
+  lightBulbs(glow, lit);
   boards.light(lit, glow);   // 看板晚上自己打燈
   for (const m of GLOW) m.emissiveIntensity = 1.3 * glow;   // 天黑了，窗戶透出燈光
   scenery.beam.visible = glow > 0.02;
@@ -3122,7 +3160,9 @@ function advance(dt) {
     // 人在水邊或水裡才需要知道浪高
     swimWave = !player.boat && bedAt(player.x, player.z) < -0.4 ? ocean.sampleHeight(player.x, player.z) : 0;
     player.look(v.yaw, v.pitch);
+    walker.feet = player.boat ? null : player.y; walker.air = player.h > 0;
     player.update(dt, cy * f - sy * r, sy * f + cy * r, keys.shift || touch.run, keys.space && !drown, walkWorld);
+    walker.feet = null;
     if (v.fp) { player.yaw = v.yaw; player.mesh.rotation.y = -v.yaw; } // 第一人稱時身體跟著視線
     if (player.onWater && !drown) waveRide(dt);
     // 腳步聲：腳每落地一次（走路動作每半圈）播一聲，木板和草地沙地各一組
@@ -3288,6 +3328,7 @@ function drawFrame(dt) {
   // 樹搖的幅度跟著風：平常微微晃，暴風圈裡晃得厲害
   WIND.amp.value = clamp(gale.steady / 14, 0.15, 2.6);   // 樹搖得多厲害跟著風速
   WIND.t.value += dt * (0.75 + 0.45 * WIND.amp.value);
+  updateFlags(dt, gale.x, gale.z);   // 大漁旗跟著風飄
   shared.uCenter.value.set(target.x, target.z);
   camera.updateMatrixWorld();
   scenery.cull(camera);   // 被山擋住的那幾塊樹不畫
