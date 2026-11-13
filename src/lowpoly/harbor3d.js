@@ -322,6 +322,20 @@ export function buildHarbor({ P, r, place, mat, group, templates }) {
     const cap = new THREE.ConeGeometry(0.55, 0.5, 8); cap.translate(B.x, D + B.h + 0.85, B.z);
     fb.addGeometry(cap, () => P.flagRed);
   }
+  // 白燈塔：方墩上一座白色的塔、一圈陽台＋欄杆、玻璃燈室、深色圓頂
+  {
+    const L = H.LIGHTHOUSE, y0 = D + L.base, y1 = y0 + L.h;
+    const add = (g, x, y, z, col) => { g.translate(x, y, z); fb.addGeometry(g, typeof col === 'function' ? col : () => col); };
+    add(new THREE.CylinderGeometry(0.85, 1.15, L.h, 10).rotateY(Math.PI / 10), L.x, y0 + L.h / 2, L.z, (m, n) => (n.y > 0.5 ? P.white : jitter(P.white, r, 0.02)));
+    box(fb, L.x - 0.4, L.x + 0.4, y0, y0 + 1.9, L.z + 1.0, L.z + 1.17, P.woodDark, P.woodDark, r);   // 門（朝港外）
+    for (const k of [0.32, 0.62]) box(fb, L.x - 0.22, L.x + 0.22, y0 + L.h * k, y0 + L.h * k + 0.55, L.z + 0.98 - k * 0.3, L.z + 1.12 - k * 0.3, P.window, P.window, r);   // 小窗
+    add(new THREE.CylinderGeometry(1.35, 1.2, 0.25, 10), L.x, y1 + 0.12, L.z, P.white);           // 陽台
+    add(new THREE.CylinderGeometry(1.3, 1.3, 0.55, 10, 1, true), L.x, y1 + 0.52, L.z, P.lampPole);  // 欄杆
+    add(new THREE.CylinderGeometry(0.62, 0.62, 1.0, 8), L.x, y1 + 0.75, L.z, P.bulb);               // 燈室（玻璃）
+    add(new THREE.CylinderGeometry(0.7, 0.7, 0.15, 8), L.x, y1 + 1.32, L.z, P.white);
+    add(new THREE.ConeGeometry(0.75, 0.7, 8), L.x, y1 + 1.75, L.z, P.roofSlate);                  // 圓頂
+    add(new THREE.CylinderGeometry(0.05, 0.05, 0.6, 4), L.x, y1 + 2.35, L.z, P.lampPole);          // 避雷針
+  }
   // 堤頭的方墩
   box(fb, -14, -10.8, D, D + 1.4, H.BASIN.z1 + 0.4, H.BASIN.z1 + 4.5, P.parapet, P.parapet, r);
   // 跳板與浮橋（浮橋底下一排浮筒）

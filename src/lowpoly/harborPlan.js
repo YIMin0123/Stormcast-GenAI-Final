@@ -25,6 +25,7 @@ export const SEAWARD = [
   [[44, 44.5], [10.8, 44.5]], [[52.5, 36], [44, 44.5]], [[52.5, 16], [52.5, 36]],
 ];
 export const BEACON = { x: ENTRANCE.x1 + 2.6, z: BASIN.z1 + 2.3, h: 5 };   // 紅燈標：東邊堤頭
+export const LIGHTHOUSE = { x: -12.4, z: BASIN.z1 + 2.45, base: 1.4, h: 8 };   // 白燈塔：西邊堤頭的方墩上（和東邊的紅燈標一對）
 
 // ---- 陸地：一整塊圓潤的島，後面一座山丘；兩側陸地沿著側邊岸壁的上半段往下收，海岸是一圈岩石 ----
 export const ISLAND = { x: 0, z: -24, rx: 66, rz: 30 };            // 島的主體（橢圓）

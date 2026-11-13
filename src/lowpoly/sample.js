@@ -12,7 +12,8 @@ import { ShadePass } from '../ao.js';
 import { SunRaysPass } from '../glow.js';
 import { rng, mirrored, makeMaterial, lpUniforms, FaceBuilder } from './kit.js';
 import { palette, PALETTE_KEYS, jitter } from './palette.js';
-import { buildHarbor } from './harbor3d.js';
+import { buildHarbor, harborHeight, onPlatform } from './harbor3d.js';
+import { makeRealSea } from './realSea.js';
 import * as HP from './harborPlan.js';
 import { rockGeo, broadleafGeo, tuftGeo, terrainGeo, waterGeo, heightAt, groundKind } from './shapes.js';
 
@@ -21,7 +22,9 @@ const isPhone = matchMedia('(pointer: coarse)').matches && Math.min(innerWidth, 
 
 // ---- 畫面 ----
 const renderer = new THREE.WebGLRenderer({ antialias: false });
-renderer.setPixelRatio(devicePixelRatio);   // 不降解析度
+// 像素比：手機跟遊戲一樣用 1（遊戲從做手機版起就是這樣，見 main.js 的 ratioFor）；電腦照螢幕。?pr=數字 可以強制指定，比較用
+const PR = +(new URLSearchParams(location.search).get('pr') || 0) || (isPhone ? 1 : devicePixelRatio);
+renderer.setPixelRatio(PR);
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.NeutralToneMapping;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -68,7 +71,7 @@ scene.add(sky);
 
 // ---- 場景內容（換色板、換擺法時整個重建）----
 let group = null, templates = [];   // templates：{ mesh, tint }，「顯示複用」用
-const state = { pal: 'warm', seed: 1, reuse: false, wire: false, scene: new URLSearchParams(location.search).get('scene') || 'harbor' };
+const state = { refl: !isPhone /* 海面倒影：手機拿掉、電腦保留 */, sea: new URLSearchParams(location.search).get('sea') || (isPhone ? 'lite' : 'real'), pal: 'warm', seed: 1, reuse: false, wire: false, scene: new URLSearchParams(location.search).get('scene') || 'harbor' };
 
 function place(mesh, list, cast, recv) {
   const m = new THREE.InstancedMesh(mesh, mat, Math.max(1, list.length));
@@ -89,16 +92,38 @@ function place(mesh, list, cast, recv) {
   return m;
 }
 
+// 遊戲裡的海：每個場景各算一份（海床跟著島的形狀），算好就留著
+const seas = {};
+let sea = null;
+function seaFor(scn) {
+  const lite = state.sea === 'lite', key = scn + (lite ? '-lite' : '');
+  if (!seas[key]) {
+    seas[key] = scn === 'harbor'
+      ? makeRealSea(renderer, { heightAt: (x, z) => (onPlatform(x, z) ? HP.DECK_Y : harborHeight(x, z)), quays: [[-48, -14, 48, 0], [-52.5, 0, -48, 44.5], [48, 0, 52.5, 44.5]], fft16: isPhone, lite })
+      : makeRealSea(renderer, { heightAt, fft16: isPhone, lite });
+    if (state.hour != null) seas[key].setHour(state.hour, sun.position.clone().normalize());
+  }
+  return seas[key];
+}
+
 function build() {
-  if (group) { group.traverse((o) => o.geometry?.dispose()); scene.remove(group); }
+  if (group) {
+    for (const k in seas) group.remove(seas[k].water);   // 海面留著重用，不要被清掉
+    group.traverse((o) => o.geometry?.dispose());
+    scene.remove(group);
+  }
+  sea = state.sea !== 'flat' ? seaFor(state.scene) : null;
   group = new THREE.Group();
   templates = [];
   const P = palette(state.pal);
   const r = rng(state.seed * 7919);
 
-  const water = new THREE.Mesh(waterGeo(P), mat);
-  water.receiveShadow = true;
-  group.add(water);
+  if (state.sea !== 'flat') group.add(seaFor(state.scene).water);
+  else {
+    const water = new THREE.Mesh(waterGeo(P), mat);
+    water.receiveShadow = true;
+    group.add(water);
+  }
   if (state.scene === 'harbor') buildHarbor({ P, r, place, mat, group, templates });
   else buildIsland(P, r);
   addFigure(P);
@@ -254,6 +279,7 @@ function setHour(h) {
   skyU.uSunCol.value.copy(sunCol);
   skyU.uSunK.value = smooth(-0.08, 0.02, elev);
   lpUniforms.uRimCol.value.copy(sunCol).multiplyScalar(day);
+  if (sea) sea.setHour(h, dir);
 }
 
 // ---- 抗鋸齒 ----
@@ -276,7 +302,7 @@ function buildComposer() {
   composer.addPass(new OutputPass());
   if (state.aa === 'fxaa') composer.addPass(new FXAAPass());
   if (state.aa === 'smaa') composer.addPass(new SMAAPass());
-  composer.setPixelRatio(devicePixelRatio);
+  composer.setPixelRatio(PR);
   composer.setSize(innerWidth, innerHeight);
 }
 
@@ -317,6 +343,8 @@ function segment(id, items, get, set) {
   return sync;
 }
 segment('scene', [['harbor', '港口島'], ['island', '樣品島']], () => state.scene, (v) => { state.scene = v; build(); makeCamButtons(); Object.values(CAMS())[0](); });
+segment('sea', [['real', '電腦版的海'], ['lite', '手機輕量版'], ['flat', '平塗']], () => state.sea, (v) => { state.sea = v; build(); setHour(state.hour); });
+segment('refl', [[true, '開'], [false, '關']], () => state.refl, (v) => { state.refl = v; });
 segment('pal', PALETTE_KEYS.map((k) => [k, palette(k).name]), () => state.pal, (v) => { state.pal = v; build(); });
 const hourSync = segment('hours', [[6.4, '清晨'], [12, '正午'], [17.4, '黃昏'], [21.5, '夜晚']], () => state.hour, (v) => { setHour(v); $('hour').value = v; });
 $('hour').oninput = (e) => { setHour(+e.target.value); hourSync(); };
@@ -378,7 +406,7 @@ addEventListener('resize', () => {
 
 // ---- 每幀 ----
 const clock = new THREE.Clock();
-let ema = 16, last = performance.now();
+let ema = 16, last = performance.now(), prevT = performance.now();
 function frame() {
   const now = performance.now();
   ema += (now - last - ema) * 0.05; last = now;
@@ -393,14 +421,30 @@ function frame() {
     const facing = camera.getWorldDirection(new THREE.Vector3()).dot(sunDir);
     rays.strength = 0.55 * smooth(0.15, 0.5, facing) * skyU.uSunK.value;
   }
+  if (sea) { sea.update(Math.min(0.05, (now - prevT) / 1000), controls.target, camera, sun); sea.reflect(state.refl, scene, camera, [sky]); }
+  else renderer.clippingPlanes = [];
+  prevT = now;
   renderer.info.reset();
   composer.render();
+  if (sea) sea.check();
   const inf = renderer.info.render;
-  $('stats').textContent = `${(1000 / ema).toFixed(0)} fps  ${ema.toFixed(1)} ms\n繪製 ${inf.calls} 次\n三角形 ${(inf.triangles / 1000).toFixed(0)}k\n著色器 ${renderer.info.programs.length} 種\n解析度 ×${devicePixelRatio}`;
+  $('stats').textContent = `${(1000 / ema).toFixed(0)} fps  ${ema.toFixed(1)} ms\n繪製 ${inf.calls} 次\n三角形 ${(inf.triangles / 1000).toFixed(0)}k\n著色器 ${renderer.info.programs.length} 種\n像素比 ×${PR}`;
   requestAnimationFrame(frame);
 }
 frame();
-window.__lp = { scene, camera, controls, renderer, state, setHour, build };
+window.__lp = { scene, camera, controls, renderer, state, setHour, build, seas };
+// 量測實際每幀成本（毫秒）：連續畫 n 幀、每幀等顯示晶片畫完（跟遊戲的 __sim.bench 一樣的量法，不受螢幕更新率限制）
+window.__lp.bench = (n = 20) => {
+  const gl = renderer.getContext(), px = new Uint8Array(4), t0 = performance.now();
+  for (let i = 0; i < n; i++) {
+    controls.update();
+    sky.position.copy(camera.position);
+    if (sea) { sea.update(1 / 60, controls.target, camera, sun); sea.reflect(state.refl, scene, camera, [sky]); }
+    composer.render();
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  }
+  return (performance.now() - t0) / n;
+};
 // 測試用：從指定位置畫一張、直接拿圖（不受滑鼠操作影響）
 window.__lp.snap = (pos, tgt) => {
   const p0 = camera.position.clone(), t0 = controls.target.clone();
