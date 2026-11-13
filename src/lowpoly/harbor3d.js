@@ -217,7 +217,10 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false }
       const col = k < 0.06 ? P.woodFresh : k < 0.14 ? P.woodGrey : k < 0.55 ? P.woodLight : P.wood;   // 偶爾一片新換的、一片曬白的
       const off = (r() - 0.5) * 0.12, len = plankLen + (r() - 0.5) * 0.1;   // 木板左右長短不齊
       const cx = R.cx + R.ux * c + wx * off, cz = R.cz + R.uz * c + wz * off;
-      const jy = (r() - 0.5) * 0.012, roll = (r() - 0.5) * 0.012, pitch = (r() - 0.5) * 0.012;
+      // 板面完全平齊（不上下、不歪）：一公分的小台階都會被陰影和角落暗影抓到，變成很多細碎的邊，鏡頭一動就閃。
+      // 木板的「歪」只留在長短不齊和顏色深淺上（亂數照樣抽，後面的木板才不會整片換掉樣子）
+      r(); r(); r();
+      const jy = 0, roll = 0, pitch = 0;
       s += w;
       if (prev.some((Q) => inRect(cx, cz, Q))) continue;
       // 四個角有沒有伸到前面那幾塊上
@@ -225,7 +228,7 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false }
       for (const a of [-w / 2, w / 2]) for (const b of [-len / 2, len / 2]) if (prev.some((Q) => inRect(cx + R.ux * a + wx * b, cz + R.uz * a + wz * b, Q))) over = true;
       // 木板之間不留縫、側面跟板面同色系（只暗一點）：細細的深色縫在遠處比一個像素還細，會變成一閃一閃的鋸齒線。
       // 一片一片靠每片木板深淺不同分出來
-      obox(fb, cx, D - TH / 2 + (over ? 0.03 : jy), cz, wx, wz, len, w - 0.006, TH, col, col.clone().multiplyScalar(0.82), r, 0.05, over ? 0 : roll, over ? 0 : pitch);
+      obox(fb, cx, D - TH / 2 + (over ? 0.012 : jy), cz, wx, wz, len, w - 0.006, TH, col, col.clone().multiplyScalar(0.82), r, 0.05, over ? 0 : roll, over ? 0 : pitch);
     }
     // 縱樑
     const rows = R.hw > 2.5 ? [-(R.hw - 0.35), 0, R.hw - 0.35] : [-(R.hw - 0.3), R.hw - 0.3];
