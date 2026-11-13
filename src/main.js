@@ -33,6 +33,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { SunRaysPass } from './glow.js';
 import { ShadePass } from './ao.js';
 import { Net, TEST } from './net.js';
+import { bakeClouds } from './clouds.js';
 import { Others } from './others.js';
 import { Chat } from './chat.js';
 import { Boards } from './boards.js';
@@ -425,7 +426,7 @@ const shared = {
   uHullSize: { value: Array.from({ length: 3 }, () => new THREE.Vector3(1, 1, 0)) },
   uDanger: { value: dangerTex }, uTsuK: { value: tsuKTex }, uStorm: { value: 0 }, uTsu: { value: new THREE.Vector4(0, 1, 0, 0) }, uTsu2: { value: new THREE.Vector2() }, uGloom: { value: 0 },
   uSunCol: { value: new THREE.Vector3(1, 0.93, 0.8) }, uAmbient: { value: new THREE.Vector3(1, 1, 1) },
-  uDay: { value: 1 }, uDusk: { value: 0 }, uFog: { value: 0 }, uHazeK: { value: 1 }, uFlash: { value: 0 }, uFlashDir: { value: new THREE.Vector3(0, 1, 0) }, uRain: { value: 0 }, uCloudT: { value: new THREE.Vector2() }, uSwell: { value: 0 }, uSurge: { value: 0 },
+  uDay: { value: 1 }, uDusk: { value: 0 }, uFog: { value: 0 }, uHazeK: { value: 1 }, uFlash: { value: 0 }, uFlashDir: { value: new THREE.Vector3(0, 1, 0) }, uRain: { value: 0 }, uCloudMap: { value: null }, uPaint: { value: new THREE.Vector3(0, 1, 0) }, uCloudT: { value: new THREE.Vector2() }, uSwell: { value: 0 }, uSurge: { value: 0 },
   uVortex: { value: Array.from({ length: 3 }, () => new THREE.Vector4()) },
   uLamp: { value: Array.from({ length: 8 }, () => new THREE.Vector3()) },
   uBlob: { value: new THREE.Vector3() }, uWet: { value: 0 }, uRainbow: { value: 0 },
@@ -548,9 +549,19 @@ DECKS.slice(0, 3).forEach((r, i) => shared.uQuay.value[i].set(r.x0, r.z0, r.x1, 
 shared.uHome = HOME_U;
 
 const sky = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), new THREE.ShaderMaterial({
-  vertexShader: skyVert, fragmentShader: skyFrag, uniforms: shared,
+  vertexShader: skyVert, fragmentShader: skyFrag, uniforms: shared, defines: { PAINT_SKY: 1 },
   side: THREE.BackSide, depthWrite: false,
 }));
+// 晴天的積雲：載入時畫成一張環景圖（clouds.js），之後只是查圖。手機和陰影「低」用小一半的圖。
+// 電腦的海面倒影也映得出這些雲；手機的海面程式已經很吃緊（見上面 WATER_SPLIT），倒影維持原本那套
+// 網址加 ?nopaint 可以關掉，換回舊的雲（比較用）
+let cloudAng = 0;
+if (!new URLSearchParams(window.location.search).has('nopaint')) {
+  const baked = bakeClouds(renderer, TOUCH || gfx.lite ? 512 : 1024);
+  shared.uCloudMap.value = baked.texture;
+  shared.uPaint.value.x = 1;
+  if (!TOUCH) for (const m of [water.material, waterFlag.material]) m.defines.PAINT_SKY = 1;
+}
 sky.frustumCulled = false;
 // 天空在所有不透明的東西（地形、港口、樹、船）畫完之後才畫，而且做深度測試：被山和房子擋住的地方就不用算天空。
 // 以前天空最先畫、不做深度測試，整個畫面每一點都算一次雲，佔了一幀三分之一左右的時間。
@@ -2201,6 +2212,9 @@ function updateWeather(dt) {
   gale.x = WDX * gale.v; gale.z = WDZ * gale.v;
   // 雲跟著風飄：平常慢慢的，颱風時低雲整片飛過去
   shared.uCloudT.value.x -= WDX * 0.0005 * gale.steady * dt; shared.uCloudT.value.y -= WDZ * 0.0005 * gale.steady * dt;
+  // 畫好的積雲整片繞著天頂慢慢轉（平常大約一個半小時轉一圈，看起來就是在飄）
+  cloudAng += 0.00035 * gale.steady * dt;
+  shared.uPaint.value.y = Math.cos(cloudAng); shared.uPaint.value.z = Math.sin(cloudAng);
   shared.uSwell.value = SWELL.amp * sea.swell;
   // 雨被風吹斜：颱風時幾乎是橫著飛的
   const cpos = camera.position, wk = windK(cpos.x, cpos.z);
