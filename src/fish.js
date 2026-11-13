@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 
 import { SPECIES, typicalLength, fishValue } from './fishdata.js';
+import { THROW } from './config.js';
 // 魚種資料、「釣到什麼、多大、值多少」的規則在 fishdata.js（伺服器也用同一份）
 export { SPECIES, SPECIALTY, pickSpecies, rollFish, fishValue, fishLabel } from './fishdata.js';
 
@@ -193,28 +194,29 @@ export class FishWorld {
     this._pose(it, 0);
   }
 
-  _toGround(it, x, z) {
+  _toGround(it, x, z, y = this.env.ground(x, z)) {
     this._release(it);
-    it.state = 'ground'; it.boat = null; it.x = x; it.z = z; it.y = this.env.ground(x, z);
+    it.state = 'ground'; it.boat = null; it.x = x; it.z = z; it.y = y;
     this.env.scene.add(it.mesh);
     if (!this.items.includes(it)) this.items.push(it);
     this._pose(it, 0);
   }
 
   // 某個位置能不能放魚：回傳 { boat, lx, lz } / { x, z } / null（牆）/ 'water'
-  _spot(x, z) {
+  // y：丟出去還在飛的東西的高度（木箱頂、石頭上落不落得上去要看它飛多高，見 env.flyGround）
+  _spot(x, z, y) {
     for (const b of this.env.boats) {
       if (b.sinking) continue;
       const l = b.toLocal(x, z);
       if (b.deckContains(l.x, l.z)) return b.blockedLocal(l.x, l.z) ? null : { boat: b, lx: l.x, lz: l.z };
     }
-    const g = this.env.ground(x, z);
+    const g = y !== undefined && this.env.flyGround ? this.env.flyGround(x, z, y) : this.env.ground(x, z);
     if (g > 90) return null;
     if (g < -0.2) return 'water';
     return { x, z };
   }
 
-  _put(it, s) { if (s.boat) this._toBoat(it, s.boat, s.lx, s.lz); else this._toGround(it, s.x, s.z); }
+  _put(it, s, y) { if (s.boat) this._toBoat(it, s.boat, s.lx, s.lz); else this._toGround(it, s.x, s.z, y); }
 
   // 放下手上的魚：放在面前，面前不能放就放在腳邊
   drop() {
@@ -253,11 +255,12 @@ export class FishWorld {
     return best;
   }
 
-  // 把手上的魚放進船上的魚箱：在箱子裡不會跳、不會滑、不會被浪捲走
-  toBox(boat) {
-    const it = this.held, B = boat.spec.box;
+  // 把手上的魚放進船上的魚箱：在箱子裡不會跳、不會滑、不會被浪捲走（it：丟過來掉進箱子的那條）
+  toBox(boat, it = this.held) {
+    const B = boat.spec.box;
     if (!it || boat.boxFish.length >= boat.boxCap) return false;
     this._release(it);
+    this._unlist(it);
     it.state = 'box'; it.boat = boat;
     boat.mesh.add(it.mesh);
     it.mesh.position.set(B.x + rand(-0.25, 0.25) * B.w, boat.spec.deck + 0.1 + 0.05 * boat.boxFish.length, B.z + rand(-0.25, 0.25) * B.d);
@@ -272,11 +275,12 @@ export class FishWorld {
     this._hold(boat.boxFish.pop());
   }
 
-  // 把手上的魚放進商店的籃子
-  toBasket() {
-    const it = this.held, k = this.env.basket;
+  // 把手上的魚放進商店的籃子（it：丟過來掉進籃子的那條）
+  toBasket(it = this.held) {
+    const k = this.env.basket;
     if (!it) return null;
     this._release(it);
+    this._unlist(it);
     it.state = 'basket'; it.boat = null;
     this.env.scene.add(it.mesh);
     it.mesh.position.set(k.x + rand(-0.2, 0.2), k.y + 0.36 + 0.07 * this.basket.length, k.z + rand(-0.2, 0.2));
@@ -299,14 +303,136 @@ export class FishWorld {
     return total;
   }
 
+  _unlist(it) {
+    const i = this.items.indexOf(it);
+    if (i >= 0) this.items.splice(i, 1);
+  }
+
   _lose(it, text) {
     const v = this.worldPos(it, new THREE.Vector3());
     this.env.splash(v.x, Math.max(v.y - 0.6, 0.1), v.z);
     it.mesh.removeFromParent();
-    const i = this.items.indexOf(it);
-    if (i >= 0) this.items.splice(i, 1);
+    this._unlist(it);
     this.env.toast(`${it.sp.name}${text}`);
     this._gone([it]);
+  }
+
+  // ---- 丟出去 ----
+  // 手上的東西從 o（世界座標，手的位置）以速度 v 丟出去：之後照拋物線飛，落地的處理見 _fly
+  throwHeld(o, v) {
+    const it = this.held, p = this.env.player;
+    if (!it) return null;
+    this._release(it);
+    it.mesh.removeFromParent();
+    this.env.scene.add(it.mesh);
+    it.state = 'fly'; it.boat = null;
+    it.x = o.x; it.z = o.z; it.y = o.y - it.thick / 2;   // y 是東西的底
+    if (!this._spot(it.x, it.z, it.y)) { it.x = p.x; it.z = p.z; }   // 手伸進牆裡：從人站的地方出手
+    it.fly = { vx: v.x, vy: v.y, vz: v.z, t: 0, spin: rand(7, 12) * (Math.random() < 0.5 ? -1 : 1), a: 0, okx: it.x, okz: it.z };
+    this.items.push(it);
+    this._flyPose(it);
+    return it;
+  }
+
+  // 某個位置底下的地面高度：甲板、地面、海面（'water' 時是浪高）；牆是 null。y 同 _spot
+  _floor(s, x, z, y) {
+    if (!s) return null;
+    if (s === 'water') return this.env.waveAt ? this.env.waveAt(x, z) : 0;
+    if (s.boat) return s.boat.deckY(x, z);
+    return y !== undefined && this.env.flyGround ? this.env.flyGround(x, z, y) : this.env.ground(x, z);
+  }
+
+  // (x, z) 在不在籃子、自己船上魚箱的範圍裡（那一塊對人來說是牆）：
+  // 回傳 { rim 口的高度, into 從口掉下去會落進哪裡（'basket' 或那艘船；油桶、魚箱滿了、打在邊上是 null） }
+  _over(it, x, z) {
+    const k = this.env.basket;
+    if (k) {
+      const d = Math.hypot(x - k.x, z - k.z);
+      if (d < 0.75) return { rim: k.y + 0.53, into: !it.can && d < 0.4 ? 'basket' : null };
+    }
+    const b = this.env.ownBoat && this.env.ownBoat();
+    if (b && !b.sinking && b.boxCap > 0) {
+      const B = b.spec.box, l = b.toLocal(x, z), ax = Math.abs(l.x - B.x), az = Math.abs(l.z - B.z);
+      if (ax < B.w / 2 + 0.1 && az < B.d / 2 + 0.1) {
+        const room = !it.can && b.boxFish.length < b.boxCap && ax < B.w / 2 && az < B.d / 2;
+        return { rim: b.deckY(x, z) + B.h, into: room ? b : null };
+      }
+    }
+    return null;
+  }
+
+  _flyPose(it) {
+    const F = it.fly, m = it.mesh;
+    m.position.set(it.x, it.y + it.thick / 2, it.z);
+    const yaw = -Math.atan2(F.vz, F.vx);
+    if (it.can) m.rotation.set(F.a * 0.4, yaw, F.a);       // 油桶慢慢翻
+    else m.rotation.set(F.a, yaw, Math.atan2(F.vy, Math.hypot(F.vx, F.vz)));   // 魚：頭朝飛的方向、身體打轉
+  }
+
+  _fly(it, dt) {
+    const F = it.fly, G = THROW.gravity, n = Math.max(1, Math.ceil(dt / (1 / 120))), h = dt / n;
+    F.t += dt; F.a += F.spin * dt * (it.can ? 0.4 : 1);
+    for (let i = 0; i < n; i++) {
+      F.vy -= G * h;
+      const nx = it.x + F.vx * h, nz = it.z + F.vz * h, ny = it.y + F.vy * h;
+      // 籃子、魚箱：比口高就照飛；從口掉下去就算放進去
+      const c = this._over(it, nx, nz);
+      if (c) {
+        if (ny > c.rim) { it.x = nx; it.z = nz; it.y = ny; continue; }
+        if (c.into && it.y >= c.rim - 0.1) {
+          it.fly = null;
+          if (c.into === 'basket') this.toBasket(it); else this.toBox(c.into, it);
+          if (this.env.landed) this.env.landed(it, c.into === 'basket' ? 'basket' : 'box', new THREE.Vector3(nx, ny, nz));
+          return;
+        }
+        // 掉不進去（油桶、魚箱滿了、打在邊上）：跟撞到牆一樣彈開
+      }
+      const s0 = this._spot(it.x, it.z, it.y), f0 = this._floor(s0, it.x, it.z, it.y);
+      let s = this._spot(nx, nz, ny), f = this._floor(s, nx, nz, ny);
+      // 撞到牆、船艙、或是比自己高的碼頭邊、船舷：水平方向彈回來，照樣往下掉
+      if (f === null || (f > ny + 0.25 && (f0 === null || f > f0 + 0.25))) {
+        F.vx *= -THROW.bounce; F.vz *= -THROW.bounce;
+        it.y = ny;
+        s = s0; f = f0;
+        // 腳下也是牆（從籃子、魚箱上方掉下來卻掉不進去，或是船開過來把船艙移到底下）：推回上一個落得了地的地方
+        if (f === null) { it.x = F.okx; it.z = F.okz; s = this._spot(it.x, it.z, it.y); f = this._floor(s, it.x, it.z, it.y); }
+      } else { it.x = nx; it.z = nz; it.y = ny; }
+      if (f === null) continue;
+      F.okx = it.x; F.okz = it.z;
+      if (it.y > f) continue;
+      // ---- 落地 ----
+      it.fly = null;
+      if (s === 'water') { this._lose(it, '掉進海裡了'); if (this.env.landed) this.env.landed(it, 'water', new THREE.Vector3(it.x, f, it.z)); return; }
+      const hv = Math.hypot(F.vx, F.vz), imp = -F.vy;
+      this._put(it, s, f);
+      if (this.env.landed) this.env.landed(it, s.boat ? 'deck' : 'ground', new THREE.Vector3(it.x, f, it.z));
+      if (it.can || (hv < 0.5 && imp < 2)) return;   // 油桶重，不會跳；輕輕落下的魚也不跳
+      // 魚落地彈一下：往飛的方向再跳一小段（彈出船外、碼頭外就掉進海裡）
+      let dx = F.vx, dz = F.vz;
+      if (s.boat) { const a = s.boat.toLocal(it.x, it.z), b = s.boat.toLocal(it.x + F.vx, it.z + F.vz); dx = b.x - a.x; dz = b.z - a.z; }
+      const d = Math.min(hv * 0.07, 0.9) / Math.max(hv, 1e-3);
+      this._bounce(it, dx * d, dz * d, Math.min(0.12 + imp * 0.03, 0.45), '彈進海裡了');
+      return;
+    }
+    if (F.t > 8 || it.y < -20) { it.fly = null; this._lose(it, '掉進海裡了'); return; }   // 保險：怎麼都落不了地
+    this._flyPose(it);
+  }
+
+  // 在甲板或地上跳一下：(dx, dz) 是跳多遠（在船上時是船身座標）；跳出去落在海裡就沒了
+  _bounce(it, dx, dz, h, msg) {
+    const boat = it.boat, onBoat = it.state === 'boat';
+    let end = null, ok = true;
+    if (onBoat) {
+      const lx = it.lx + dx, lz = it.lz + dz;
+      if (boat.deckContains(lx, lz)) ok = !boat.blockedLocal(lx, lz);
+      else { const w = boat.toWorld(lx, lz), s = this._spot(w.x, w.z); end = s && s !== 'water' ? s : 'lost'; }
+    } else {
+      const s = this._spot(it.x + dx, it.z + dz);
+      if (!s) ok = false; else end = s === 'water' ? 'lost' : s;
+    }
+    const x0 = onBoat ? it.lx : it.x, z0 = onBoat ? it.lz : it.z;
+    it.hop = ok ? { t: 0, dur: 0.3 + h * 0.4, h, dx, dz, end, msg, x0, z0 }
+      : { t: 0, dur: 0.25, h: h * 0.6, dx: 0, dz: 0, end: null, x0, z0 };
   }
 
   // 側躺在甲板或地上；hop = 跳起來的高度
@@ -328,6 +454,7 @@ export class FishWorld {
     for (const it of [...this.items]) {
       if (it.boat && it.boat.stored) continue;   // 收在倉庫裡的船：上面的東西原封不動
       it.t += dt; it.lively -= dt;
+      if (it.fly) { this._fly(it, dt); continue; }   // 丟出去還在飛
       const boat = it.boat, onBoat = it.state === 'boat';
 
       // ---- 正在跳 ----

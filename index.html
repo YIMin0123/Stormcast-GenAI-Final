@@ -73,6 +73,9 @@
     #aim { position: fixed; left: 50%; top: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; display: none;
       pointer-events: none; border-radius: 50%; border: 1.5px solid rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
       transition: transform 0.1s, border-color 0.1s; }
+    #throwBar { position: fixed; left: 50%; top: 50%; width: 96px; height: 7px; margin: 22px 0 0 -48px; display: none; pointer-events: none;
+      background: rgba(20, 14, 8, 0.55); border: 1px solid rgba(240, 214, 160, 0.7); border-radius: 4px; overflow: hidden; }
+    #throwBar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #f3ead6, #ffd24a 70%, #ff8a3a); }
     #aim.hit { transform: scale(1.55); border-color: #ffd24a; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 0 8px rgba(255, 210, 74, 0.55); }
     #aim::after { content: ''; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px;
       border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45); }
@@ -172,6 +175,7 @@
     #tAct.hit { border-color: #ffd24a; box-shadow: 0 0 0 4px rgba(255, 210, 74, 0.35); }
     #tFish { right: calc(98px + env(safe-area-inset-right)); bottom: 30px; width: 76px; height: 76px; }
     #tJump { right: calc(18px + env(safe-area-inset-right)); bottom: 20px; }
+    #tThrow { right: calc(98px + env(safe-area-inset-right)); bottom: 118px; font-size: 22px; }
     #tBar { position: absolute; top: 48px; right: calc(12px + env(safe-area-inset-right)); display: flex; gap: 6px; }
     #tBar button { padding: 6px 9px; line-height: 0; background: rgba(46, 30, 16, 0.72); }
     #tBar .ic { width: 22px; height: 22px; }
@@ -290,6 +294,7 @@
   <div id="fishui" class="card"><div id="fishLabel"></div><div id="bar"><div id="barSafe"></div><div id="barFill"></div><div id="barMark"></div></div><div id="prog"><div id="progFill"></div></div><div id="strain">釣竿負荷<div id="strainBar"><div id="strainFill"></div></div></div><div id="fishHint"></div></div>
   <div id="toast" class="card"></div>
   <div id="aim"></div>
+  <div id="throwBar"><i></i></div>
   <div id="prompt" class="card"></div>
   <div id="stam" class="card"><i data-ic="bolt" title="體力"></i><div id="stamBar"><div id="stamFill"></div></div></div>
   <div id="map" class="card"><canvas id="mapCv" width="560" height="560"></canvas><div id="mapNote">紅色箭頭是你，黃色是你的船，白色是其他人　按 M 或 Esc 關閉</div></div>
