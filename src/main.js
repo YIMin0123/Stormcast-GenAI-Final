@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { makeTerrain, computeShelter, computeShoreDist, ISLANDS } from './terrain.js';
-import { waterVert, waterFrag, terrainVert, terrainFrag, grassVert, grassFrag, skyVert, skyFrag, diagVert, diagFrag, diagPtFrag, HAZE, RAIN_HAZE } from './renderShaders.js';
+import { waterVert, waterFrag, liteWaterVert, liteWaterFrag, terrainVert, terrainFrag, grassVert, grassFrag, skyVert, skyFrag, diagVert, diagFrag, diagPtFrag, HAZE, RAIN_HAZE } from './renderShaders.js';
 import { FftOcean, makeFoamTexture } from './ocean.js';
 import { Boat, BOAT_TYPES, BOX_CAP } from './boat.js';
 import { BOAT_ORDER, CAN, newKit, shopItem } from './boatdata.js';
@@ -22,7 +22,7 @@ import { makeScenery, SHADOW_LAYER } from './scenery.js';
 import { makeGroundDetail, makeGrassGeometry, WIND, SIGHT } from './foliage.js';
 import { Spray } from './spray.js';
 import { OceanAudio } from './audio.js';
-import { Sea, Climate, computeDanger, computeOffshore, computeTsuK, TSU, SWELL, swellAt, WAVE_LOOP } from './weather.js';
+import { Sea, Climate, computeDanger, computeOffshore, computeTsuK, TSU, SWELL, swellAt, WAVE_LOOP, windWave, seaLevel, seaOpen, shoreSea, openOf, windSpeed, tideAt, tsuHK, TSU_H } from './weather.js';
 import { Rain, Bolt, Spindrift, Spout, WaveSpray } from './skyfx.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -33,6 +33,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { SunRaysPass } from './glow.js';
 import { ShadePass } from './ao.js';
 import { Net, TEST } from './net.js';
+import { bakeClouds } from './clouds.js';
 import { Others } from './others.js';
 import { Chat } from './chat.js';
 import { Boards } from './boards.js';
@@ -155,6 +156,19 @@ bedTex.needsUpdate = true;
 const shelterTex = new THREE.DataTexture(shelterData, N, N, THREE.RedFormat, THREE.UnsignedByteType);
 shelterTex.minFilter = shelterTex.magFilter = THREE.LinearFilter;
 shelterTex.needsUpdate = true;
+// 風向變了，背風面跟著換邊：在背景執行緒重算避浪圖（要算一兩百毫秒，不能卡住畫面），算好了整張換掉
+let shelterTurn = 0, shelterBusy = false, shelterWorker = null;
+try {
+  shelterWorker = new Worker(new URL('./shelterWorker.js', import.meta.url), { type: 'module' });
+  shelterWorker.postMessage({ bed: bedCoarse, N, L });
+  shelterWorker.onmessage = (ev) => { shelterData.set(ev.data.out); shelterTex.needsUpdate = true; shelterTurn = ev.data.turn; shelterBusy = false; };
+  shelterWorker.onerror = () => { shelterWorker = null; };
+} catch (err) { shelterWorker = null; }
+function turnShelter(turn) {
+  if (!shelterWorker || shelterBusy || Math.abs(turn - shelterTurn) < 0.05) return;
+  shelterBusy = true;
+  shelterWorker.postMessage({ angle: WAVE_ANGLE + turn, turn });
+}
 
 // 離陸地越遠越危險：風暴與巨浪只在外海發威，島的周圍與港口不受影響
 const dangerData = computeDanger(bedCoarse, N, L);
@@ -271,7 +285,8 @@ function makeTerrainGeometry() {
 }
 
 // 海面網格：以鏡頭注視點為中心的極座標網格，近處密、遠處疏，一路鋪到地平線
-function makePolarGeometry(nA = 384, nR = 420, r0 = 0.8, rMax = 34000) {
+// 遠處（rFull 公尺外）的三角形照「方位」一條一條排：只畫前面幾條，就是只鋪某個方向的一片扇形（見 fitWater）
+function makePolarGeometry(nA = 384, nR = 420, r0 = 0.8, rMax = 34000, rFull = 150) {
   const pos = new Float32Array((1 + nA * nR) * 3);
   for (let i = 0; i < nR; i++) {
     const r = r0 * Math.pow(rMax / r0, i / (nR - 1));
@@ -283,23 +298,64 @@ function makePolarGeometry(nA = 384, nR = 420, r0 = 0.8, rMax = 34000) {
   const idx = new Uint32Array(nA * 3 + (nR - 1) * nA * 6);
   let t = 0;
   for (let j = 0; j < nA; j++) { idx[t++] = 0; idx[t++] = 1 + ((j + 1) % nA); idx[t++] = 1 + j; }
-  for (let i = 0; i < nR - 1; i++) {
-    for (let j = 0; j < nA; j++) {
-      const a = 1 + i * nA + j, b = 1 + i * nA + ((j + 1) % nA), c = a + nA, d = b + nA;
-      idx[t++] = a; idx[t++] = b; idx[t++] = c;
-      idx[t++] = b; idx[t++] = d; idx[t++] = c;
-    }
-  }
+  const quad = (i, j) => {
+    const a = 1 + i * nA + j, b = 1 + i * nA + ((j + 1) % nA), c = a + nA, d = b + nA;
+    idx[t++] = a; idx[t++] = b; idx[t++] = c;
+    idx[t++] = b; idx[t++] = d; idx[t++] = c;
+  };
+  // 近處：一圈一圈排（整圈都要）
+  let iF = 0;
+  while (iF < nR - 1 && r0 * Math.pow(rMax / r0, iF / (nR - 1)) < rFull) iF++;
+  for (let i = 0; i < iF; i++) for (let j = 0; j < nA; j++) quad(i, j);
+  const inner = t;
+  // 遠處：一條一條排
+  for (let j = 0; j < nA; j++) for (let i = iF; i < nR - 1; i++) quad(i, j);
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setIndex(new THREE.BufferAttribute(idx, 1));
+  g.userData = { nA, inner, perCol: (nR - 1 - iF) * 6, rFull: r0 * Math.pow(rMax / r0, iF / (nR - 1)) };
   return g;
+}
+
+// 手機版海面用的海床高度：16 位元浮點、可以線性取樣（原本那張是 32 位元的，手機不一定能線性取樣，要自己取四格內插）
+function makeBed16() {
+  const t = new THREE.DataTexture(Uint16Array.from(bedData, (v) => THREE.DataUtils.toHalfFloat(v)), NF, NF, THREE.RedFormat, THREE.HalfFloatType);
+  t.minFilter = t.magFilter = THREE.LinearFilter;
+  t.needsUpdate = true;
+  return t;
+}
+// 手機版海面的細碎波紋：一張可以無縫拼接的圖，存的是坡度（紅 = x、綠 = z）。二十幾道方向、長短不一的小波疊起來
+function makeRippleTexture(size = 128) {
+  let seed = 7331;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const waves = Array.from({ length: 26 }, () => {
+    const kx = Math.round((rnd() - 0.5) * 22), kz = Math.round((rnd() - 0.5) * 22), k = Math.hypot(kx, kz) || 1;
+    return { kx, kz, a: 1 / (2 + k), p: rnd() * Math.PI * 2 };
+  });
+  const sx = new Float32Array(size * size), sz = new Float32Array(size * size);
+  let mx = 1e-6;
+  for (let j = 0; j < size; j++) for (let i = 0; i < size; i++) {
+    let x = 0, z = 0;
+    for (const w of waves) { const c = w.a * Math.cos(2 * Math.PI * (w.kx * i + w.kz * j) / size + w.p); x += c * w.kx; z += c * w.kz; }
+    sx[j * size + i] = x; sz[j * size + i] = z;
+    mx = Math.max(mx, Math.abs(x), Math.abs(z));
+  }
+  const data = new Uint8Array(size * size * 4);
+  for (let k = 0; k < size * size; k++) { data[k * 4] = Math.round((sx[k] / mx * 0.5 + 0.5) * 255); data[k * 4 + 1] = Math.round((sz[k] / mx * 0.5 + 0.5) * 255); data[k * 4 + 3] = 255; }
+  const t = new THREE.DataTexture(data, size, size, THREE.RGBAFormat, THREE.UnsignedByteType);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.generateMipmaps = true;
+  t.needsUpdate = true;
+  return t;
 }
 
 // 手機：海浪的 FFT 用 16 位元算（每幀要搬的資料少一半，手機的記憶體頻寬吃不消 32 位元；浪高的誤差在毫米等級）。
 // ?fft16 / ?fft32：強制用哪一種，比較用
 const FFT16 = /[?&]fft16/.test(location.search) || (TOUCH && !/[?&]fft32/.test(location.search));
-const ocean = new FftOcean(renderer, { hs: HS, windAngle: WAVE_ANGLE, fft16: FFT16 });
+// 手機版的海面（另一套便宜很多的畫法，浪還是同一片；見 renderShaders.js 的 liteWaterVert）。
+// 手機一律用它；?litesea 在電腦上也用（測試）、?fullsea 讓手機用回電腦版（比較用）
+const LITE_SEA = /[?&]litesea/.test(location.search) || (TOUCH && !/[?&]fullsea/.test(location.search));
+const ocean = new FftOcean(renderer, { hs: HS, windAngle: WAVE_ANGLE, fft16: FFT16, lite: LITE_SEA });
 // 太陽的水平方向跟著港口轉：港座標裡太陽在西南方，店面與碼頭是向陽面，轉過去之後光照關係不變
 const homeSun = (x, y, z) => [x * Math.cos(HOME_YAW) + z * Math.sin(HOME_YAW), y, -x * Math.sin(HOME_YAW) + z * Math.cos(HOME_YAW)];
 const sunDir = new THREE.Vector3(...homeSun(-0.5, 0.52, 0.6)).normalize();
@@ -311,17 +367,17 @@ const climate = new Climate();   // 時間與每天的天氣
 sea.remote = climate.remote = true;   // 時間、天氣、海上事件都聽伺服器的（這裡只負責演出來）
 const seaEnv = { near: { x: 0, z: 0 }, dangerAt };   // 給海上事件用：玩家的船在哪、哪裡算外海
 let wind = climate.wind;         // 今天的風浪強度（由天氣決定，慢慢變）
-// 這裡的風浪比平常大幾倍（風暴時外海變大，颱風時連島邊也變大）；與 shader 的 waveScale() 一致
-const FAR_SEA = 0.8;   // 離陸地越遠浪越大：島周圍 60 公尺內是原本的大小，到 320 公尺外多八成
-const stormK = (x, z) => {
-  const d = dangerAt(x, z);
-  return Math.min(1 + FAR_SEA * d + sea.storm * (d + (1 - d) * sea.surge), 3.4 / Math.max(ocean.scale, 0.1));
-};
+// 這裡的浪高倍率（1 = 示性波高 HS 公尺；還沒乘避浪係數）：外海比島邊大、迎風面一路大到岸邊，風暴另外加上去。
+// 式子在 weather.js 的 seaLevel()，與 shader 的 waveScale() 一致
+const levelAt = (x, z) => seaLevel(ocean.scale, sea.storm, sea.surge, dangerAt(x, z), openOf(shelterAt(x, z)));
+// 這裡的浪是「今天島邊的浪」的幾倍
+const stormK = (x, z) => levelAt(x, z) / Math.max(ocean.scale, 0.02);
+let tideNow = 0;   // 潮汐：現在的海平面（公尺）
 const waveK = (x, z) => shelterAt(x, z) * stormK(x, z);
 // 巨浪在這裡的高度：外海是整道水牆，靠岸變矮，沖上岸、淹進港口（浪腳前面是負的：海水先退下去）
-const surgeAt = (x, z) => { if (!sea.tsu.on) return 0; const k = tsuKAt(x, z); return sea.heightCurl(x, z, k, shared.uTime.value) * k + sea.ebbAt(x, z, k); };
+const surgeAt = (x, z) => { if (!sea.tsu.on) return 0; const k = tsuKAt(x, z); return sea.heightCurl(x, z, k, shared.uTime.value) * tsuHK(k) + sea.ebbAt(x, z, k); };
 // 風浪以外的水面起伏：巨浪的浪牆、漩渦的漏斗、水龍捲腳下的隆起
-const WDX = Math.cos(WAVE_ANGLE), WDZ = Math.sin(WAVE_ANGLE);
+let WDX = Math.cos(WAVE_ANGLE), WDZ = Math.sin(WAVE_ANGLE);   // 風（和浪）往哪邊走：每天偏一點，颱風時一路轉
 // 風：平常每秒幾公尺，風暴二十上下，颱風平均三十幾、陣風五十。v 是當下的風速（含陣風），x、z 是它的向量
 const gale = { v: 3, x: WDX * 3, z: WDZ * 3, steady: 3 };
 const windK = (x, z) => 0.5 + 0.5 * shelterAt(x, z);   // 島的背風面風小一半（雨、風聲、飛沫用；船受的風另外算，港內吹不動船）
@@ -335,7 +391,7 @@ const swellH = (x, z) => {
   const a = swellAmp(x, z);
   return a > 0 ? a * swellAt(x, z, shared.uTime.value, WDX, WDZ) : 0;
 };
-const tsuAt = (x, z) => surgeAt(x, z) + (sea.vortices.length ? sea.vortexH(x, z) : 0) + swellH(x, z);
+const tsuAt = (x, z) => surgeAt(x, z) + (sea.vortices.length ? sea.vortexH(x, z) : 0) + swellH(x, z) + tideNow;
 
 WIND.dir.value.set(Math.cos(WAVE_ANGLE), Math.sin(WAVE_ANGLE));   // 樹被風吹的方向跟風浪一致
 const groundDetail = makeGroundDetail();
@@ -344,8 +400,8 @@ const TIME_U = { value: 0 };
 const shared = {
   uBed: { value: bedTex }, uShelter: { value: shelterTex }, uShore: { value: shoreTex }, uN: { value: NF }, uL: { value: L },
   uSunDir: { value: sunDir }, uTime: TIME_U, uSwellT: TIME_U,
-  uCenter: { value: new THREE.Vector2() }, uWaveScale: { value: 1 },
-  uPixelAngle: { value: 0.001 }, uWake: { value: wake }, uRip: { value: null }, uSwimmer: { value: null },
+  uCenter: { value: new THREE.Vector2() }, uMeshRot: { value: new THREE.Vector2(1, 0) }, uWaveScale: { value: 1 },
+  uPixelAngle: { value: 0.001 }, uWake: { value: wake }, uWakeBox: { value: new THREE.Vector4() }, uLampOn: { value: 0 }, uWaveRot: { value: new THREE.Vector2(1, 0) }, uTide: { value: 0 }, uRip: { value: null }, uSwimmer: { value: null },
   uDisp0: { value: null }, uDisp1: { value: null },
   uSlope0: { value: ocean.cascades[0].slope.texture },
   uSlope1: { value: ocean.cascades[1].slope.texture },
@@ -353,6 +409,11 @@ const shared = {
   uPatch: { value: new THREE.Vector3(...ocean.patches) }, uTexN: { value: ocean.N },
   uSlopeVar: { value: new THREE.Vector3(...ocean.cascades.map((c) => c.slopeVar)) },
   uFoamTex: { value: makeFoamTexture() }, uHs: { value: HS },
+  // 手機版的海面用的：兩層浪各有前後兩張（位移、斜率＋白浪），海床高度的 16 位元版，細碎波紋的貼圖
+  uLD0A: { value: null }, uLD0B: { value: null }, uLD1A: { value: null }, uLD1B: { value: null },
+  uLS0A: { value: null }, uLS0B: { value: null }, uLS1A: { value: null }, uLS1B: { value: null },
+  uLK: { value: new THREE.Vector2() }, uLOff: { value: 0.5 / 128 - 0.5 / ocean.N }, uVortexOn: { value: 0 },
+  uBed16: { value: LITE_SEA ? makeBed16() : null }, uRipTex: { value: LITE_SEA ? makeRippleTexture() : null },
   uDetail: { value: groundDetail.detail }, uDetailN: { value: groundDetail.normal },
   uWindT: WIND.t, uWindAmp: WIND.amp, uWindDir: WIND.dir,
   uUnder: { value: 0 }, uCamDepth: { value: 0 },
@@ -365,7 +426,7 @@ const shared = {
   uHullSize: { value: Array.from({ length: 3 }, () => new THREE.Vector3(1, 1, 0)) },
   uDanger: { value: dangerTex }, uTsuK: { value: tsuKTex }, uStorm: { value: 0 }, uTsu: { value: new THREE.Vector4(0, 1, 0, 0) }, uTsu2: { value: new THREE.Vector2() }, uGloom: { value: 0 },
   uSunCol: { value: new THREE.Vector3(1, 0.93, 0.8) }, uAmbient: { value: new THREE.Vector3(1, 1, 1) },
-  uDay: { value: 1 }, uDusk: { value: 0 }, uFog: { value: 0 }, uHazeK: { value: 1 }, uFlash: { value: 0 }, uFlashDir: { value: new THREE.Vector3(0, 1, 0) }, uRain: { value: 0 }, uCloudT: { value: new THREE.Vector2() }, uSwell: { value: 0 }, uSurge: { value: 0 },
+  uDay: { value: 1 }, uDusk: { value: 0 }, uFog: { value: 0 }, uHazeK: { value: 1 }, uFlash: { value: 0 }, uFlashDir: { value: new THREE.Vector3(0, 1, 0) }, uRain: { value: 0 }, uCloudMap: { value: null }, uPaint: { value: new THREE.Vector3(0, 1, 0) }, uCloudT: { value: new THREE.Vector2() }, uSwell: { value: 0 }, uSurge: { value: 0 },
   uVortex: { value: Array.from({ length: 3 }, () => new THREE.Vector4()) },
   uLamp: { value: Array.from({ length: 8 }, () => new THREE.Vector3()) },
   uBlob: { value: new THREE.Vector3() }, uWet: { value: 0 }, uRainbow: { value: 0 },
@@ -404,8 +465,8 @@ const terrain = new THREE.Group();
 }
 scene.add(terrain);
 
-const water = new THREE.Mesh(makePolarGeometry(), new THREE.ShaderMaterial({
-  vertexShader: waterVert, fragmentShader: waterFrag, uniforms: shared, transparent: true,
+const water = new THREE.Mesh(LITE_SEA ? makePolarGeometry(160, 150) : makePolarGeometry(), new THREE.ShaderMaterial({
+  vertexShader: LITE_SEA ? liteWaterVert : waterVert, fragmentShader: LITE_SEA ? liteWaterFrag : waterFrag, uniforms: shared, transparent: true,
   blending: THREE.CustomBlending, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneMinusSrcAlphaFactor, // 畫面的 alpha 是「這裡是不是天空」的記號（光暈用）：海面要把它蓋成 1。
   // 以前海面不動 alpha，底下沒有海床模型的深海就被當成天空加亮，有海床的地方沒有，結果把每座島在水面下的輪廓描了出來
   blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
@@ -416,7 +477,7 @@ water.renderOrder = 2;
 // 海面的記號：海面畫完之後，同一張網格再畫一次，只把畫面的 alpha 寫成 3（顏色不動、只蓋在看得到海面的像素上）。
 // 環境光遮蔽靠這個記號跳過海面：它是從深度反推表面的，貼著海面往遠處看時會誤判，在海上壓出一塊塊有直線邊的暗影
 const waterFlag = new THREE.Mesh(water.geometry, new THREE.ShaderMaterial({
-  vertexShader: waterVert, fragmentShader: 'void main() { gl_FragColor = vec4(0.0, 0.0, 0.0, 3.0); }', uniforms: shared, transparent: true,
+  vertexShader: LITE_SEA ? liteWaterVert : waterVert, fragmentShader: 'void main() { gl_FragColor = vec4(0.0, 0.0, 0.0, 3.0); }', uniforms: shared, transparent: true,
   blending: THREE.CustomBlending, blendSrc: THREE.ZeroFactor, blendDst: THREE.OneFactor, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.ZeroFactor,
   depthWrite: false, depthFunc: THREE.LessEqualDepth, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2, side: THREE.DoubleSide,
 }));
@@ -455,6 +516,25 @@ function checkWater() {
   }, 3000);
 }
 let waterWarm = null;   // 留著，編好的程式才不會被丟掉
+// 海面的網格只鋪看得到的地方：身邊 150 公尺內整圈都鋪；更遠的只鋪鏡頭朝的那個方向（背後那一大半本來每一幀都白算）。
+// 整張網格轉過去對準，轉的角度是「一格」的整數倍——每個頂點落在的位置跟整圈鋪的時候一模一樣，所以畫面不會因此抖動。
+// 鏡頭很高、離中心很遠、幾乎垂直往下看、在水裡，或是有巨浪、漩渦（它們會把網格往旁邊拉）的時候，照舊整圈鋪
+const _wd = new THREE.Vector3();
+function fitWater(under) {
+  const ud = water.geometry.userData, cp = camera.position, c = shared.uCenter.value, step = Math.PI * 2 / ud.nA;
+  let cols = ud.nA, rot = 0;
+  const off = Math.hypot(cp.x - c.x, cp.z - c.y);
+  camera.getWorldDirection(_wd);
+  if (!under && !NO_FIT && !sea.tsu.on && !sea.vortices.length && cp.y < 25 && off < 0.45 * ud.rFull && Math.hypot(_wd.x, _wd.z) > 0.3) {
+    // 貼近水平的視線最遠只偏到畫面的半個水平視角（往上往下看都一樣）；再加上鏡頭不在中心的偏差、浪把頂點推歪的餘裕
+    const th = Math.atan(Math.tan(camera.fov * Math.PI / 360) * camera.aspect * 1.07) + Math.asin(off / ud.rFull) + 0.12;
+    const n = Math.ceil(2 * th / step) + 2;
+    if (n < ud.nA) { cols = n; rot = (Math.round((Math.atan2(_wd.z, _wd.x) - th) / step) - 1) * step; }
+  }
+  water.geometry.setDrawRange(0, ud.inner + cols * ud.perCol);
+  shared.uMeshRot.value.set(Math.cos(rot), Math.sin(rot));
+}
+const NO_FIT = new URLSearchParams(window.location.search).has('nofit');   // 測試（?nofit）：海面照舊整圈鋪
 function syncWaterTsu() {
   if (!waterSplit) return;
   const on = shared.uTsu.value.w > 0;
@@ -469,9 +549,19 @@ DECKS.slice(0, 3).forEach((r, i) => shared.uQuay.value[i].set(r.x0, r.z0, r.x1, 
 shared.uHome = HOME_U;
 
 const sky = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), new THREE.ShaderMaterial({
-  vertexShader: skyVert, fragmentShader: skyFrag, uniforms: shared,
+  vertexShader: skyVert, fragmentShader: skyFrag, uniforms: shared, defines: { PAINT_SKY: 1 },
   side: THREE.BackSide, depthWrite: false,
 }));
+// 晴天的積雲：載入時畫成一張環景圖（clouds.js），之後只是查圖。手機和陰影「低」用小一半的圖。
+// 電腦的海面倒影也映得出這些雲；手機的海面程式已經很吃緊（見上面 WATER_SPLIT），倒影維持原本那套
+// 網址加 ?nopaint 可以關掉，換回舊的雲（比較用）
+let cloudAng = 0;
+if (!new URLSearchParams(window.location.search).has('nopaint')) {
+  const baked = bakeClouds(renderer, TOUCH || gfx.lite ? 512 : 1024);
+  shared.uCloudMap.value = baked.texture;
+  shared.uPaint.value.x = 1;
+  if (!TOUCH) for (const m of [water.material, waterFlag.material]) m.defines.PAINT_SKY = 1;
+}
 sky.frustumCulled = false;
 // 天空在所有不透明的東西（地形、港口、樹、船）畫完之後才畫，而且做深度測試：被山和房子擋住的地方就不用算天空。
 // 以前天空最先畫、不做深度測試，整個畫面每一點都算一次雲，佔了一幀三分之一左右的時間。
@@ -649,7 +739,7 @@ function playerWater(x, z) {
   const d = -bedAt(x, z);
   const near = clamp(1 - d / 2.5, 0, 1);   // 岸邊沖上來的水（取平均高度）
   return swimWave * clamp((d - 0.3) / 7.7, 0, 1) * waveK(x, z) + tsuAt(x, z)
-    + 0.2 * clamp(shelterAt(x, z) * ocean.scale / 1.3, 0.18, 1.5) * near * near * (3 - 2 * near);
+    + 0.2 * clamp(shelterAt(x, z) * shoreSea(ocean.scale, sea.storm, sea.surge) / 1.3, 0.18, 1.5) * near * near * (3 - 2 * near);
 }
 // 每艘船都可以直接走上去；水深過胸就浮起來游
 const walkWorld = { ground: walkGround, water: playerWater, boats };
@@ -799,7 +889,7 @@ const BIAS = new THREE.Matrix4().set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 
 let reflTick = 0, drawCount = 0;
 function renderReflection(under, turn = true) {
   const alt = camera.position.y;
-  const on = !under && alt > 0.3 && alt < 700 && gfx.refl;   // 設定裡可以關掉海面倒影
+  const on = !under && alt > 0.3 && alt < 700 && gfx.refl && !LITE_SEA;   // 設定裡可以關掉海面倒影；手機版的海面不映倒影（整個場景少畫一遍）
   if (!on) { shared.uReflOn.value = 0; reflTick = 0; return; }
   // 隔一幀才重畫一次倒影；沒重畫的那幀沿用上一幀的貼圖與投影矩陣
   if (!turn && reflTick > 0) return;
@@ -807,7 +897,8 @@ function renderReflection(under, turn = true) {
   shared.uReflOn.value = 1;
 
   camera.updateMatrixWorld();
-  _rp.set(0, 0, 0);
+  _rp.set(0, tideNow, 0);   // 鏡面跟著潮汐的海平面
+  clipOn[0].constant = -tideNow;
   _cw.setFromMatrixPosition(camera.matrixWorld);
   _rot.extractRotation(camera.matrixWorld);
   _vp.subVectors(_rp, _cw).reflect(UP).negate().add(_rp);
@@ -896,7 +987,7 @@ function renderDeckReflection() {
   renderer.setClearColor(_cc, ca);
   renderer.clippingPlanes = clipOff;
   WET.reflTex.value = deckRT.texture;
-  shared.uReflPass.value = 0; shared.uReflY.value = 0;
+  shared.uReflPass.value = 0; shared.uReflY.value = tideNow;
   water.visible = true; sky.visible = true; spray.points.visible = true;
   rain.lines.visible = rainOn; spindrift.mesh.visible = driftOn;
   scenery.update(camera.position, false, gfx.far);
@@ -2025,6 +2116,15 @@ function updateWeather(dt) {
   seaEnv.near.x = boat.x; seaEnv.near.z = boat.z;
   sea.update(dt, seaEnv);
   wind = climate.wind * (1 + 0.7 * climate.rain);   // 下雨的日子風浪跟著變大（中雨多三成、大雨多四成半）
+  // 風向：每天比盛行風向偏一點，風暴、颱風經過時再被帶著轉。整片風浪、長浪、雨、樹、背風面都跟著
+  const turn = (climate.veer || 0) + (sea.veer || 0);
+  WDX = Math.cos(WAVE_ANGLE + turn); WDZ = Math.sin(WAVE_ANGLE + turn);
+  WIND.dir.value.set(WDX, WDZ);
+  shared.uWaveRot.value.set(Math.cos(turn), Math.sin(turn));
+  ocean.setTurn(turn);
+  turnShelter(turn);
+  tideNow = tideAt(climate.day, climate.hour);
+  shared.uTide.value = tideNow; shared.uReflY.value = tideNow;
   rainNow = Math.max(sea.rain, climate.rain);
   // 下雨的時候天一定是陰的：雨一開始下，雲就蓋滿整片天（不然會是藍天白雲、晚上滿天星星卻在下雨）
   const rainSky = clamp((rainNow - 0.02) / 0.23, 0, 1) * (0.78 + 0.22 * clamp(rainNow / 0.6, 0, 1));
@@ -2052,7 +2152,7 @@ function updateWeather(dt) {
   shared.uDay.value = L.day; shared.uDusk.value = L.dusk;
   shared.uFog.value = fog; shared.uFlash.value = flash; shared.uRain.value = rainNow; shared.uSurge.value = sea.surge;
   shared.uFlashDir.value.copy(flashAt);
-  shared.uWaveScale.value = wind * sea.lull;
+  shared.uWaveScale.value = windWave(wind) * sea.lull;
   shared.uStorm.value = sea.storm;
   shared.uGloom.value = gloom;
   shared.uTsu.value.set(sea.tsu.dx, sea.tsu.dz, sea.tsu.front, sea.tsu.on ? sea.tsu.H : 0);
@@ -2083,6 +2183,7 @@ function updateWeather(dt) {
   for (const p of POOLS) { p.mesh.visible = glow > 0.02; p.mat.opacity = p.k * glow; }
   bloom.strength = 0.22 + 0.16 * glow;
   shared.uLamp.value[4].set(boat.x, boat.z, boat.sinking || !boat.lampOn ? 0 : 0.45 * glow);
+  shared.uLampOn.value = shared.uLamp.value.reduce((m, l) => Math.max(m, l.z), 0);
   const lit = clamp(0.3 + L.amb[1], 0, 1);
   for (const m of UNLIT) m.color.setScalar(lit);
   boards.light(lit, glow);   // 看板晚上自己打燈
@@ -2106,11 +2207,14 @@ function updateWeather(dt) {
   spouts.forEach((m, i) => m.update(list[i]));
   // 風：一陣強一陣弱（幾道快慢不同的起伏疊在一起）
   const sg = clamp(sea.storm, 0, 1.8);
-  gale.steady = 3 + 8 * sg + 7 * sg * sg;
+  gale.steady = windSpeed(wind, sea.storm);   // 風速跟浪對得上：浪大的日子風也大
   gale.v = gale.steady * (1 + 0.28 * Math.sin(time * 0.37) + 0.17 * Math.sin(time * 1.13 + 2) + 0.1 * Math.sin(time * 2.9 + 5));
   gale.x = WDX * gale.v; gale.z = WDZ * gale.v;
   // 雲跟著風飄：平常慢慢的，颱風時低雲整片飛過去
   shared.uCloudT.value.x -= WDX * 0.0005 * gale.steady * dt; shared.uCloudT.value.y -= WDZ * 0.0005 * gale.steady * dt;
+  // 畫好的積雲整片繞著天頂慢慢轉（平常大約一個半小時轉一圈，看起來就是在飄）
+  cloudAng += 0.00035 * gale.steady * dt;
+  shared.uPaint.value.y = Math.cos(cloudAng); shared.uPaint.value.z = Math.sin(cloudAng);
   shared.uSwell.value = SWELL.amp * sea.swell;
   // 雨被風吹斜：颱風時幾乎是橫著飛的
   const cpos = camera.position, wk = windK(cpos.x, cpos.z);
@@ -2142,9 +2246,19 @@ let splashAcc = 0, bowLeft = 0;
 
 function updateOcean(dt) {
   updateWeather(dt);
-  ocean.update(time, dt, shared.uWaveScale.value, shared.uWaveScale.value * (1 + 0.7 * sea.storm));
+  // 白浪照外海的浪去累積；外海的示性波高決定今天是哪一種浪（小浪短而碎、大浪又長又慢）
+  const openLv = seaOpen(shared.uWaveScale.value, sea.storm);
+  ocean.update(time, dt, shared.uWaveScale.value, openLv, Math.round(HS * openLv * 50) / 50);
+  shared.uSlopeVar.value.set(...ocean.shape.slopeVar);
   shared.uDisp0.value = ocean.cascades[0].disp[ocean.cascades[0].cur].texture;
   shared.uDisp1.value = ocean.cascades[1].disp[ocean.cascades[1].cur].texture;
+  if (LITE_SEA && ocean._workers) {
+    const [w0, w1] = ocean._workers;
+    shared.uLD0A.value = w0.ta.d; shared.uLD0B.value = w0.tb.d; shared.uLS0A.value = w0.ta.s; shared.uLS0B.value = w0.tb.s;
+    shared.uLD1A.value = w1.ta.d; shared.uLD1B.value = w1.tb.d; shared.uLS1A.value = w1.ta.s; shared.uLS1B.value = w1.tb.s;
+    shared.uLK.value.set(w0.k, w1.k);
+    shared.uVortexOn.value = sea.vortices.length ? 1 : 0;
+  }
 
   sweEnv.disp0 = shared.uDisp0.value; sweEnv.time = shared.uTime.value;
   sweEnv.waveScale = shared.uWaveScale.value; sweEnv.storm = shared.uStorm.value; sweEnv.surge = shared.uSurge.value;
@@ -2155,13 +2269,16 @@ function updateOcean(dt) {
 }
 updateOcean(0);
 
-const calmEnv = { ground: boatGround, wave: surgeAt, base: surgeAt, limit: L / 2 - 30 };   // 停在港裡、沒人用的船：平常不動，巨浪淹進港口時跟著浮起來
+const tideSurge = (x, z) => surgeAt(x, z) + tideNow;
+const calmEnv = { ground: boatGround, wave: tideSurge, base: tideSurge, limit: L / 2 - 30 };   // 停在港裡、沒人用的船：平常不動，巨浪淹進港口時跟著浮起來
 const boatEnv = {
   ground: boatGround,
   wave: (x, z) => ocean.sampleCached(x, z) * waveK(x, z) + tsuAt(x, z),
   // 畫面上看得到的那片水面（長浪加中浪、含浪頭的水平位移）：船身貼著它浮。fade：淺水裡浪變小幾成
   waveFine: (x, z, fade) => ocean.sampleSurface(x, z, waveK(x, z) * fade) + tsuAt(x, z),
-  base: (x, z) => surgeAt(x, z) + swellH(x, z),   // 巨浪把整艘船托起來的高度
+  base: (x, z) => surgeAt(x, z) + swellH(x, z) + tideNow,   // 巨浪（和潮汐）把整艘船托起來的高度
+  // 浪大的時候開不快：這裡的示性波高一公尺以下不受影響，六公尺時慢四成
+  slow: (x, z) => 0.4 * clamp((HS * shelterAt(x, z) * levelAt(x, z) - 1) / 5, 0, 1),
   bank: (x, z) => (sea.vortices.length ? sea.vortexH(x, z) : 0),   // 大漩渦的漏斗：船貼著斜面跟著水轉，這個坡度不算被浪搖歪
   // 漩渦與水龍捲的拉扯；巨浪的浪頭上，水是往前衝的，船會被帶著走
   flow: (x, z) => {
@@ -2257,7 +2374,7 @@ function waveRide(dt) {
   if (k <= 0) { player.waveSlope(0, 0); return; }
   const eta = swimWave * k;
   const storm = clamp(sea.storm, 0, 1) * clamp(stormK(x, z) - 1, 0, 1);
-  const u = 0.6 * eta + 0.5 * storm + 0.12 * clamp(shared.uWaveScale.value - 1, 0, 2);
+  const u = 0.6 * eta + 0.5 * storm + 0.12 * clamp((levelAt(x, z) - 0.5) / 0.6, 0, 2);
   player.drift(WDX * u * dt, WDZ * u * dt, walkWorld);
   const e = 0.9, gx = (ocean.sampleHeight(x + e, z) - ocean.sampleHeight(x - e, z)) / (2 * e) * k;
   const gz = (ocean.sampleHeight(x, z + e) - ocean.sampleHeight(x, z - e)) / (2 * e) * k;
@@ -2281,7 +2398,7 @@ function updateSwim(dt) {
     }
   } else if (mode === 'walk' && player.swim) {
     // 用力游、捧著東西、浪大都比較累；停著踩水比較省力
-    const rough = clamp(ocean.scale * stormK(player.x, player.z) - 1.3, 0, 2);
+    const rough = clamp((levelAt(player.x, player.z) - 0.45) * 1.5, 0, 2);
     const k = (player.moving ? (keys.shift || touch.run ? 1.45 : 1) : 0.6) * (player.carry ? 1.35 : 1) * (1 + 0.4 * rough);
     stamina -= dt * k / SWIM_SECONDS;
     // 巨浪沖上岸：人浮在湧進來的水裡，被水帶著往浪前進的方向沖
@@ -2755,7 +2872,7 @@ function advance(dt) {
     const tK = tsuKAt(mb.x, mb.z), c = sea.jetAt(mb.x, mb.z, tK, shared.uTime.value), side = c.q > c.land ? 1 : -1;
     if (side < 0 && crestSide > 0 && c.i === crestI && c.q > -20) {
       const jet = c.Bw * c.Hc / (5 + mb.spec.len);         // 捲舌砸下來的力道，1 以上船就沒了
-      const hit = c.B * Math.min(c.k, 1.1) * tK;            // 翻白的浪頭拍在船上（還沒捲起來也算）
+      const hit = c.B * Math.min(c.k, 1.1) * Math.min(1, tsuHK(tK) / TSU_H.peak);            // 翻白的浪頭拍在船上（還沒捲起來也算）
       if (jet >= 1 || hit > 0.15) {
         const aboard = player.boat === mb;
         splash(mb.x, mb.mesh.position.y + 1, mb.z, jet >= 1 ? 90 : 50);
@@ -2828,6 +2945,16 @@ function advance(dt) {
     wake[wakeIdx].set(boat.x - fx * boat.spec.len * 0.46, boat.z - fz * boat.spec.len * 0.46, time, clamp(sp / 5, 0, 1) * Math.min(1, boat.spec.len / 13));
     wakeIdx = (wakeIdx + 1) % wake.length;
   }
+  // 還看得到的航跡圈在一個圓裡：海面的著色器只在圓內才去算那 16 筆（以前整片海的每個像素都算）
+  {
+    let n = 0, cx = 0, cz = 0, r = 0;
+    for (const w of wake) if (w.w > 0 && time - w.z < 30) { n++; cx += w.x; cz += w.y; }
+    if (n) {
+      cx /= n; cz /= n;
+      for (const w of wake) if (w.w > 0 && time - w.z < 30) r = Math.max(r, Math.hypot(w.x - cx, w.y - cz) + 2.6 * (1.8 + (time - w.z) * 0.9));
+    }
+    shared.uWakeBox.value.set(cx, cz, r, n ? 1 : 0);
+  }
 }
 
 function drawFrame(dt) {
@@ -2852,7 +2979,7 @@ function drawFrame(dt) {
   // 巨浪：浪牆逼近時轟鳴越來越大，浪頭從身邊過去的那一下最響、鏡頭跟著震
   let crestRoar = 0;
   if (sea.tsu.on) {
-    const c = sea.crestNear(cp.x, cp.z), big = Math.min(c.k, 1.1) * Math.sqrt(tsuKAt(cp.x, cp.z));   // 在岸上也聽得到、感覺得到
+    const c = sea.crestNear(cp.x, cp.z), big = Math.min(c.k, 1.1) * Math.sqrt(Math.min(1, tsuHK(tsuKAt(cp.x, cp.z)) / TSU_H.peak));   // 在岸上也聽得到、感覺得到
     crestRoar = big * clamp(1 - Math.abs(c.q) / (c.q > 0 ? 650 : 280), 0, 1) ** 2;
     spots.roar = [cp.x - c.q * sea.tsu.dx, cp.y, cp.z - c.q * sea.tsu.dz, clamp(1 - Math.abs(c.q) / 120, 0.2, 1)];   // 浪牆離這裡最近的那一點
     shake = Math.max(shake, 0.9 * big * clamp(1 - Math.abs(c.q) / 150, 0, 1) ** 1.5);
@@ -2893,7 +3020,7 @@ function drawFrame(dt) {
   const fogWanted = under ? underFog : airFog;
   if (scene.fog !== fogWanted) scene.fog = fogWanted;
 
-  audio.set(shared.uWaveScale.value * stormK(cp.x, cp.z) * (0.35 + 0.65 * shelterAt(cp.x, cp.z)), Math.max(sea.rumble * 0.6, 1.5 * crestRoar, 1.3 * whirlRoar), under,
+  audio.set((0.45 + 0.95 * levelAt(cp.x, cp.z) ** 0.8) * (0.35 + 0.65 * shelterAt(cp.x, cp.z)), Math.max(sea.rumble * 0.6, 1.5 * crestRoar, 1.3 * whirlRoar), under,
     boat.fuel > 0 ? Math.abs(boat.throttle) : 0, Math.abs(boat.speed) / 7, rainNow, spoutNear, spoutPan, under ? 0 : clamp((galeHere - 5) / 32, 0, 1.4));
 
   // 實地錄音的那一層：外海的浪、岸邊的小浪、港口的海鷗、雨、引擎、捲線器、腳步
@@ -2921,7 +3048,7 @@ function drawFrame(dt) {
       night: land * clamp((night - 0.45) / 0.35, 0, 1) * clamp(1 - rainNow * 2, 0, 1),
       trees: land * clamp(0.25 + 0.35 * WIND.amp.value, 0, 1),
       under,
-      sea: clamp(0.2 + 0.17 * shared.uWaveScale.value * stormK(cp.x, cp.z), 0, 1) * clamp((off - 15) / 90, 0, 1),   // 平常的外海約五成，暴風雨裡八成
+      sea: clamp(0.3 + 0.16 * levelAt(cp.x, cp.z), 0, 1) * clamp((off - 15) / 90, 0, 1),   // 平常的外海約四成，暴風雨裡六七成，颱風八成
       shore: clamp(1 - off / 70, 0, 1) * clamp(0.4 + 0.6 * shelterAt(cp.x, cp.z), 0, 1),
       gulls: clamp(1 - Math.hypot(cp.x + 4, cp.z - 118) / 260, 0, 1) * clamp(1 - night * 1.6, 0, 1) * clamp(1 - rainNow * 3, 0, 1),
       rain: rainNow,
@@ -2934,7 +3061,7 @@ function drawFrame(dt) {
 
   shared.uTime.value = time;
   // 樹搖的幅度跟著風：平常微微晃，暴風圈裡晃得厲害
-  WIND.amp.value = clamp(0.38 * wind + 1.5 * clamp(sea.storm, 0, 1) * (stormK(cp.x, cp.z) - 1), 0.15, 2.6);
+  WIND.amp.value = clamp(gale.steady / 14, 0.15, 2.6);   // 樹搖得多厲害跟著風速
   WIND.t.value += dt * (0.75 + 0.45 * WIND.amp.value);
   shared.uCenter.value.set(target.x, target.z);
   camera.updateMatrixWorld();
@@ -2982,6 +3109,7 @@ function drawFrame(dt) {
     }
   } else SIGHT.r.value.set(0, 0);
   syncWaterTsu();
+  fitWater(under);
   composer.render();
   checkWater();
 }

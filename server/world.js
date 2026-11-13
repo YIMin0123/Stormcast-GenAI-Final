@@ -1,7 +1,7 @@
 // 伺服器眼中的地圖：跟遊戲用同一套地形，算出每個位置的水深、離岸多遠、算不算外海。
 // 釣魚時用它決定「這裡會釣到什麼」，也用它擋掉不合理的請求（人在陸地卻說釣到深海魚）。
 import { makeTerrain, ISLANDS } from '../src/terrain.js';
-import { computeDanger, computeOffshore } from '../src/weather.js';
+import { computeDanger, computeOffshore, windWave, seaLevel } from '../src/weather.js';
 import { onDeck, pontoonY, BERTHS, berthPose } from '../src/layout.js';
 import { BOAT_TYPES } from '../src/boatdata.js';
 
@@ -30,9 +30,8 @@ export const isWater = (x, z) => bedAt(x, z) < -0.6 && !onDeck(x, z, 0.2) && pon
 export function fishingSpot(x, z, climate, sea) {
   let near = ISLANDS[0], dist = Infinity;
   for (const o of ISLANDS) { const d = Math.hypot(x - o.x, z - o.z); if (d < dist) { dist = d; near = o; } }
-  const scale = climate.wind * (1 + 0.7 * climate.rain) * sea.lull, d = dangerAt(x, z);
-  const stormK = Math.min(1 + 0.8 * d + sea.storm * (d + (1 - d) * sea.surge), 3.4 / Math.max(scale, 0.1));
-  return { depth: -bedAt(x, z), island: near.id, off: offAt(x, z), night: climate.night, rough: clamp((scale * stormK - 1.2) / 1.2, 0, 1) };
+  const d = dangerAt(x, z), level = seaLevel(windWave(climate.wind * (1 + 0.7 * climate.rain)) * sea.lull, sea.storm, sea.surge, d, d);
+  return { depth: -bedAt(x, z), island: near.id, off: offAt(x, z), night: climate.night, rough: clamp((level - 0.5) / 1.5, 0, 1) };
 }
 
 // 開機時檢查每個停船格的水夠不夠深（地形改了、格子擺到淺灘上的話，這裡會講）

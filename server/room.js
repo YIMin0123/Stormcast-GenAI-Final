@@ -15,7 +15,7 @@ export const MAX_PLAYERS = 30;
 export const TICK = 0.1;                 // 世界每 0.1 秒算一次
 export const GRACE = +(process.env.GRACE_SEC || 30) * 1000;   // 斷線後多久內回來可以接回原進度；離開的人的船也是這麼久之後消失
 const WORLD_EVERY = 5;                   // 每 5 次（0.5 秒）把天氣送一次
-const CLIMATE_KEYS = ['hour', 'day', 'wind', 'windGoal', 'cloud', 'cloudGoal', 'rain', 'rainAmt', 'rainFrom', 'rainTo', 'fog', 'fogAmt'];
+const CLIMATE_KEYS = ['hour', 'day', 'wind', 'windGoal', 'cloud', 'cloudGoal', 'rain', 'rainAmt', 'rainFrom', 'rainTo', 'fog', 'fogAmt', 'veer', 'veerGoal'];
 const DEV = !!process.env.STORMCAST_DEV;  // 開發用：允許測試指令（引發海上事件、快轉、加錢）
 const EVENT_NAME = { storm: '風暴', thunder: '雷暴雨', omen: '巨浪', waves: '巨浪', whirl: '漩渦', brew: '颱風', typhoon: '颱風' };
 const inf = (k, v) => (v === Infinity ? 1e9 : v);   // JSON 存不了 Infinity
