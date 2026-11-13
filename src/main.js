@@ -11,7 +11,7 @@ import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_RO
 import { WORLD } from './config.js';
 import { HOME_U, placeInHome } from './homeGl.js';
 import { HOME_YAW, toWorld, toLocal, headingToWorld } from './frame.js';
-import { BERTHS, berthPose, pontoonY, onDeck, PONTOON_Y, inHarbor, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, SHOP_FRONT_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
+import { BERTHS, berthPose, pontoonY, stairY, onDeck, PONTOON_Y, inHarbor, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, SHOP_FRONT_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
 import { fishLabel, FishWorld } from './fish.js';
 import { money as cash } from './fishdata.js';
 import { Fishing } from './fishing.js';
@@ -31,6 +31,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { FXAAPass } from 'three/addons/postprocessing/FXAAPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { SunRaysPass } from './glow.js';
+import { lpUniforms } from './lowpoly/kit.js';
 import { ShadePass } from './ao.js';
 import { Net, TEST } from './net.js';
 import { bakeClouds } from './clouds.js';
@@ -202,8 +203,6 @@ const tsuKAt = (x, z) => sampleGrid(tsuKData, x, z) / 255;
 
 // 商店與櫃檯、燈塔：玩家走不進去（矩形是港座標）
 const BLOCKS = [
-  { x0: SHOP.x - SHOP.w / 2 - 0.3, x1: SHOP.x + SHOP.w / 2 + 0.3, z0: SHOP.z - SHOP.d / 2 - 0.3, z1: SHOP.z + SHOP.d / 2 + 0.3 },
-  { x0: SHOP.x - 0.4, x1: SHOP.x + 3.6, z0: SHOP.z + SHOP.d / 2, z1: SHOP.z + SHOP.d / 2 + 1.1 },
   { x0: SELL.basket.x - 0.5, x1: SELL.basket.x + 0.5, z0: SELL.basket.z - 0.5, z1: SELL.basket.z + 0.5 },   // 籃子
   { x0: SELL.button.x - 0.2, x1: SELL.button.x + 0.2, z0: SELL.button.z - 0.2, z1: SELL.button.z + 0.2 },   // 按鈕柱
   { x0: SHELF_X[0], x1: SHELF_X[1], z0: SHELF_Z - 0.65, z1: SHELF_Z + 0.65 },   // 商品架的長桌
@@ -237,6 +236,8 @@ function walkGround(x, z, under = false) {
   if (rockAt(x, z) !== null) return 99;
   if (Math.hypot(x - LIGHTHOUSE_W.x, z - LIGHTHOUSE_W.z) < LIGHTHOUSE_W.r) return 99;
   if (!under) for (const c of SOLIDS) if ((x - c.x) ** 2 + (z - c.z) ** 2 < c.r * c.r) return 99;   // 棧板上的樁、燈柱、木桶…（在棧板底下游泳時不算）
+  const sy = stairY(x, z);   // 擋土牆前面的樓梯
+  if (sy !== null) return under ? 99 : sy;
   if (onDeck(x, z)) return under ? 99 : DECK_Y;   // 岸壁和防波堤是實心的：游泳的人鑽不到底下
   const py = pontoonY(x, z);
   // 浮在水上的浮橋鑽不過去；從岸壁斜下來的跳板底下是空的，離水面還有一點高度的地方游得過去
@@ -632,6 +633,8 @@ for (const m of terrain.children) m.castShadow = true;
 // 只有鏡頭附近二十公尺左右有立體的草，更遠的地方靠地面的草葉紋理撐著
 const GRASS_T = 48;
 let grassN = gfx.grass;   // 畫質「高」一萬四千叢，中一萬，低六千
+// 舊的草皮（跟著鏡頭的一大片草）：新島的草是低面的草叢（在港口模型裡），舊的先不畫
+const OLD_GRASS = false;
 const grass = new THREE.Mesh(makeGrassGeometry(grassN, GRASS_T), new THREE.ShaderMaterial({
   vertexShader: grassVert, fragmentShader: grassFrag, side: THREE.DoubleSide,
   uniforms: { ...shared, uGrassT: { value: GRASS_T }, uGrassCam: { value: new THREE.Vector3() }, uWindT: WIND.t, uWindAmp: WIND.amp, uWindDir: WIND.dir },
@@ -663,7 +666,10 @@ scenery.group.updateMatrixWorld(true);
 scenery.group.traverse((o) => { o.matrixAutoUpdate = false; });
 scenery.beam.traverse((o) => { o.matrixAutoUpdate = true; });
 
-const harbor = placeInHome(makeHarbor((lx, lz) => bedAt(...toWorld(lx, lz))));   // 港口用港座標蓋，整個擺進世界
+const harbor = placeInHome(makeHarbor());   // 港口（連同整座島的低面地形、樹、岩石）用港座標蓋，整個擺進世界
+// 島的地形改由港口那一份低面模型畫：海床的高度圖只拿來算浪、走路、擱淺，舊的地形網格不畫
+terrain.visible = false;
+scenery.lighthouseMesh.visible = false;   // 舊的燈塔模型（新的白燈塔在港口模型裡；晚上的光束還用舊的那一組）
 worldizeHarborLists();   // 樁、消波塊、繫纜樁、路燈的清單轉成世界座標
 scene.add(harbor);
 addRocks(HARBOR_ROCKS);   // 消波塊
@@ -940,7 +946,7 @@ function renderReflection(under, turn = true) {
   water.visible = true; sky.visible = true; spray.points.visible = true;
   rain.lines.visible = rainOn; spindrift.mesh.visible = driftOn;
   scenery.update(camera.position, false, gfx.far);
-  grass.visible = gfx.grass > 0;
+  grass.visible = OLD_GRASS && gfx.grass > 0;
 }
 
 // ---- 積水的倒影 -------------------------------------------------------------
@@ -991,7 +997,7 @@ function renderDeckReflection() {
   water.visible = true; sky.visible = true; spray.points.visible = true;
   rain.lines.visible = rainOn; spindrift.mesh.visible = driftOn;
   scenery.update(camera.position, false, gfx.far);
-  grass.visible = gfx.grass > 0;
+  grass.visible = OLD_GRASS && gfx.grass > 0;
 }
 let deckReady = false;
 
@@ -2959,6 +2965,7 @@ function advance(dt) {
 
 function drawFrame(dt) {
   updateCamera(dt);
+  lpUniforms.uTime.value = time;   // 低面模型（樹、草）隨風搖
   const cp = camera.position;
 
   // 最近的水龍捲：呼嘯聲的大小與方向；靠得很近時鏡頭被風吹得發抖
@@ -3071,7 +3078,7 @@ function drawFrame(dt) {
   camera.getWorldDirection(_gd);
   _gd.y = 0;
   grass.material.uniforms.uGrassCam.value.copy(cp).addScaledVector(_gd.normalize(), 13);
-  grass.visible = gfx.grass > 0;
+  grass.visible = OLD_GRASS && gfx.grass > 0;
   updateBoatShadow();
   // 倒影隔一幀重畫一次（偶數幀）；陰影平常每一幀都重畫，畫質「手機」只在奇數幀畫，兩個錯開
   const even = (drawCount++ & 1) === 0;

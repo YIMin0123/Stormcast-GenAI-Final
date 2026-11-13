@@ -1,6 +1,6 @@
 // 小島漁港的新配置（草案）：照使用者挑的參考圖（Codex 的等角鳥瞰圖）排，尺寸照實際船隻。只有數字，不碰畫面。
 // 座標：原點在港池北岸（岸壁靠水的那條邊）的正中央；x 向東、z 向南、y 向上（海平面 = 0），單位公尺。
-// 確認後再接到 layout.js（伺服器與遊戲共用的那份）。
+// 遊戲的 layout.js（伺服器與遊戲共用）照這份的數字排。
 import { BOAT_TYPES } from '../boatdata.js';
 
 const TRAWLER = BOAT_TYPES.trawler;   // 18 × 6.2：大船格要停得下最大的船
@@ -43,6 +43,9 @@ export const FENCE = null;
 export const SHOP = { x0: -42, x1: -26, z0: -13, z1: -5, h: 3.4, open: { x0: -41, x1: -33.5 } };
 export const BOARDS = [-31.8, -29.4, -27.0].map((x, i) => ({ id: ['berth', 'room', 'daily'][i], x, w: 2.0, z: SHOP.z1 + 0.15, y0: DECK_Y + 0.5, h: 2.3 }));
 export const SPAWN = { x: -30, z: -2.5, yaw: Math.PI / 2 };   // 商店門口，面向港池
+// 店裡賣東西的長桌：沿著開放的店面擺，玩家走進店裡、站在桌子南邊買
+export const SHELF_Z = -9.0;
+export const SHELF_X = [-40.6, -34.4];
 // 魚市場棚（右邊、靠牆）：開放的鐵皮屋頂；賣魚的籃子、電子價格板、按鈕在棚子前面
 export const MARKET = { x0: 24, x1: 38, z0: -12.5, z1: -5, h: 3.6 };
 export const SELL = { basket: { x: 28, z: -3.6 }, board: { x: 30, z: -4.3 }, button: { x: 32, z: -3.6 } };

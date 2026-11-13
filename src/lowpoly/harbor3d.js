@@ -1,7 +1,7 @@
 // 小島漁港的 3D：照 harborPlan.js 的配置，全部用低面平塗做。
 // 不會動的（岸壁、防波堤、建築、燈、旗）合成一個網格；會重複很多個的（消波塊、船、繫船柱、木箱、樹、岩石、草）用樣板＋實例。
 import * as THREE from 'three';
-import { FaceBuilder, rng, fbm, mirrored } from './kit.js';
+import { FaceBuilder, rng, mirrored } from './kit.js';
 import { jitter } from './palette.js';
 import { rockGeo, broadleafGeo, tuftGeo, terrainGeo, groundKind } from './shapes.js';
 import * as H from './harborPlan.js';
@@ -10,37 +10,9 @@ import { BOAT_TYPES } from '../boatdata.js';
 const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
-function inPoly(x, z, poly) {
-  let c = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const [xi, zi] = poly[i], [xj, zj] = poly[j];
-    if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) c = !c;
-  }
-  return c;
-}
-function segDist(x, z, ax, az, bx, bz) {
-  const dx = bx - ax, dz = bz - az, t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz)));
-  return Math.hypot(x - ax - dx * t, z - az - dz * t);
-}
-export const onPlatform = (x, z) => inPoly(x, z, H.PLATFORM);
-export const inBasin = (x, z) => inPoly(x, z, H.BASIN_EDGE) || (Math.abs(x) < 10.8 && z > H.BASIN.z1 - 3);
-
-// ---- 島的高度：一整塊圓潤的島（主體橢圓＋兩側沿著岸壁往下收的一截）、後面一座圓頂的山丘；
-// 擋土牆後面墊到牆頂；水泥平台底下壓低、港池是海 ----
-export function harborHeight(x, z) {
-  const I = H.ISLAND, L = H.HILL;
-  const nz = fbm(x * 0.05, z * 0.05) - 0.5;
-  let e = Math.hypot((x - I.x) / I.rx, (z - I.z) / I.rz);
-  for (const S of H.SIDES) e = Math.min(e, Math.hypot((x - S.x) / S.rx, (z - S.z) / S.rz));
-  e += nz * 0.16;
-  const eh = Math.hypot((x - L.x) / L.rx, (z - L.z) / L.rz);
-  let land = 2.2 + (L.peak - 2.2) * smooth(0, 1, Math.max(0, 1 - eh * eh)) + (fbm(x * 0.08 + 5, z * 0.08) - 0.5) * 1.2;
-  if (z < -13.5 && z > -21 && Math.abs(x) < 48) land = Math.max(land, H.DECK_Y + H.RETAIN.h + 0.1);   // 擋土牆後面
-  let h = -3.2 + (land + 3.2) * (1 - smooth(0.88, 1.0, e));
-  if (onPlatform(x, z)) h = Math.min(h, 1.1);    // 水泥平台底下（被平台蓋住）
-  else if (inBasin(x, z)) h = -3.2;               // 港池、入口是海
-  return h;
-}
+// 島的形狀（高度、平台、港池）放在 homeShape.js：遊戲和伺服器也要用，不能引入 three.js
+import { onPlatform, inBasin, harborHeight, homeBed, segDist } from './homeShape.js';
+export { onPlatform, inBasin, harborHeight, homeBed };
 const nearPlatform = (x, z, d) => [[d, 0], [-d, 0], [0, d], [0, -d]].some(([a, b]) => onPlatform(x + a, z + b));
 
 // 點到折線的距離（小路上色用）
@@ -204,9 +176,12 @@ function floatGeo(P) {
 }
 
 // ---- 蓋整座港口島 ----
-export function buildHarbor({ P, r, place, mat, group, templates }) {
+// game：放進遊戲裡用（船是遊戲自己的，不擺樣品船）。回傳給遊戲用的清單（港座標）：
+//   tetrapods 消波塊、rocks 海岸的大岩石 { x, z, r, top }
+export function buildHarbor({ P, r, place, mat, group, templates, game = false }) {
+  const out = { tetrapods: [], rocks: [] };
   const D = H.DECK_Y, SEA = -3.2;
-  const terrain = new THREE.Mesh(terrainGeo(P, 170, 2.0, 7, harborHeight, 0, -6, null), mat);
+  const terrain = new THREE.Mesh(terrainGeo(P, 170, 2.0, 7, homeBed, 0, -6, null), mat);
   terrain.castShadow = terrain.receiveShadow = true;
   group.add(terrain);
 
@@ -262,7 +237,9 @@ export function buildHarbor({ P, r, place, mat, group, templates }) {
     box(fb, S.x1 - t, S.x1, D, top, S.z0, S.z1, P.wood, P.wood, r);                 // 東牆
     box(fb, S.open.x1, S.x1, D, top, S.z1 - t, S.z1, P.wood, P.wood, r);            // 正面東半邊
     box(fb, S.x0, S.open.x1, D + 2.6, top, S.z1 - t, S.z1, P.wood, P.wood, r);      // 開口上方
-    box(fb, S.x0, S.open.x1, D, D + 0.9, S.z1 - t - 0.3, S.z1 + 0.2, P.woodLight, P.woodDark, r);   // 開口下方的櫃台
+    // 店裡賣東西的長桌（每樣商品一格，見 harborPlan.js 的 SHELF）
+    box(fb, H.SHELF_X[0], H.SHELF_X[1], D + 0.78, D + 0.86, H.SHELF_Z - 0.45, H.SHELF_Z + 0.45, P.woodLight, P.woodDark, r);
+    for (const x of [H.SHELF_X[0] + 0.15, H.SHELF_X[1] - 0.15]) for (const z of [H.SHELF_Z - 0.35, H.SHELF_Z + 0.35]) box(fb, x - 0.06, x + 0.06, D, D + 0.78, z - 0.06, z + 0.06, P.woodDark, P.woodDark, r);
     for (const x of [S.x0 + 0.1, S.open.x1 - 0.1, S.x1 - 0.1]) box(fb, x - 0.18, x + 0.18, D, top + 0.05, S.z1 - 0.2, S.z1 + 0.15, P.woodDark, P.woodDark, r);   // 柱子
     box(fb, S.x0 + t, S.x1 - t, D, D + 0.05, S.z0 + t, S.z1 - t, P.woodDark, P.woodDark, r);   // 地板
     gableRoof(fb, S.x0, S.x1, S.z0, S.z1, top, 1.9, 0.6, P.roofSlate, r);
@@ -275,7 +252,7 @@ export function buildHarbor({ P, r, place, mat, group, templates }) {
     for (let i = 0; i < 4; i++) box(fb, S.x0 + 0.9 + i * 0.7, S.x0 + 1.4 + i * 0.7, D + 1.08, D + 1.4, S.z0 + 0.5, S.z0 + 1.0, P.hullGreen, P.hullGreen, r);   // 工具箱
     for (let i = 0; i < 7; i++) box(fb, S.x0 + 4.4 + i * 0.35, S.x0 + 4.46 + i * 0.35, D + 0.2, D + 2.4, S.z0 + 0.5, S.z0 + 0.56, P.woodDark, P.woodDark, r);   // 立著的釣竿
     box(fb, S.x0 + 4.6, S.x0 + 6.2, D + 1.98, D + 2.35, S.z0 + 0.55, S.z0 + 1.0, P.white, P.hullBlue, r);   // 船模型
-    for (const b of H.BOARDS) {
+    if (!game) for (const b of H.BOARDS) {   // 遊戲裡的看板由 boards.js 另外立
       box(fb, b.x - b.w / 2 - 0.12, b.x + b.w / 2 + 0.12, b.y0 - 0.12, b.y0 + b.h + 0.12, S.z1, S.z1 + 0.1, P.yellow, P.yellow, r);
       box(fb, b.x - b.w / 2, b.x + b.w / 2, b.y0, b.y0 + b.h, S.z1 + 0.1, S.z1 + 0.14, P.woodDark, P.woodDark, r, 0.02);
     }
@@ -365,12 +342,15 @@ export function buildHarbor({ P, r, place, mat, group, templates }) {
       const t = r(), o = 0.8 + r() * 5.2;
       const x = a[0] + (b[0] - a[0]) * t + nx * o, z = a[1] + (b[1] - a[1]) * t + nz * o;
       const layer = r() < 0.4 ? 1 : 0, s = 1.3 + r() * 0.3;
-      tLists[i % 2].push({ pos: V(x, -0.5 + layer * 1.2 + r() * 0.3, z), scl: V(s, s, s), rot: r() * 6.28, flip: r() < 0.5, tint: 0.92 + r() * 0.14 });
+      const y = -0.5 + layer * 1.2 + r() * 0.3;
+      tLists[i % 2].push({ pos: V(x, y, z), scl: V(s, s, s), rot: r() * 6.28, flip: r() < 0.5, tint: 0.92 + r() * 0.14 });
+      out.tetrapods.push({ x, z, r: 1.1 * s, top: y + 1.0 * s });
     }
   }
   tGeos.forEach((g, i) => templates.push({ mesh: place(g, tLists[i], true, true), hue: 0.08 + i * 0.05 }));
 
-  // ---- 船：停滿大部分的格子（白色上半、彩色下半）----
+  // ---- 船：停滿大部分的格子（白色上半、彩色下半）；遊戲裡的船是玩家自己的，不擺 ----
+  if (!game) {
   const cols = [P.hullRed, P.hullBlue, P.hullGreen, P.hullOrange];
   const bGeo = {
     skiff: [P.hullRed, P.hullBlue, P.yellow, P.hullGreen].map((c, i) => boatGeo('skiff', P, c, 40 + i)),
@@ -386,6 +366,7 @@ export function buildHarbor({ P, r, place, mat, group, templates }) {
     bLists[type][Math.floor(r() * 4)].push({ pos: V(x, 0, b.z), scl: V(1, 1, 1), rot: b.heading, flip: false, tint: 0.95 + r() * 0.08 });
   }
   for (const type of Object.keys(bGeo)) bGeo[type].forEach((g, i) => templates.push({ mesh: place(g, bLists[type][i], true, true), hue: 0.55 + i * 0.1 }));
+  }
 
   // ---- 繫船柱、木箱、魚箱、浮球 ----
   templates.push({ mesh: place(bollardGeo(P), H.BOLLARDS.map((b) => ({ pos: V(b.x, D, b.z), scl: V(1, 1, 1), rot: 0, flip: false })), true, true), hue: 0.02 });
@@ -409,7 +390,9 @@ export function buildHarbor({ P, r, place, mat, group, templates }) {
   const addRock = (x, z, s, sink) => {
     const k = Math.floor(r() * 3);
     const scl = V(s * (0.9 + r() * 0.4), s * (0.65 + r() * 0.45), s * (0.9 + r() * 0.4));
-    rl[k * 2 + (r() < 0.5 ? 1 : 0)].push({ pos: V(x, harborHeight(x, z) - scl.y * sink, z), scl, rot: r() * 6.28, flip: r() < 0.35, tint: 0.88 + r() * 0.16 });
+    const y = harborHeight(x, z) - scl.y * sink;
+    rl[k * 2 + (r() < 0.5 ? 1 : 0)].push({ pos: V(x, y, z), scl, rot: r() * 6.28, flip: r() < 0.35, tint: 0.88 + r() * 0.16 });
+    out.rocks.push({ x, z, r: 0.85 * Math.max(scl.x, scl.z), top: y + scl.y });
   };
   for (let tries = 0, made = 0; made < 230 && tries < 30000; tries++) {
     const x = (r() - 0.5) * 160, z = -66 + r() * 96, h = harborHeight(x, z);
@@ -445,4 +428,5 @@ export function buildHarbor({ P, r, place, mat, group, templates }) {
     gl[made % 2].push({ pos: V(x, h - 0.05, z), scl: V(s, s * (0.8 + r() * 0.5), s), rot: r() * 6.28, flip: false, tint: 0.9 + r() * 0.2 });
   }
   gg.forEach((g, i) => templates.push({ mesh: place(g, gl[i], false, true), hue: 0.5 + i * 0.05 }));
+  return out;
 }
