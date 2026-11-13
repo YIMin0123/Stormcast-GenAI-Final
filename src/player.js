@@ -14,6 +14,7 @@ const CLIMB_SWIM = 2.7;           // 從水裡攀上船
 const DROP = 0.35;                // 落差比這個大就算踩空，會掉下去
 const HOPS = [0.5, 1.0, 1.5];     // 碼頭與船之間的空隙，一步能跨多遠
 const BODY = 0.32;                // 身體的半徑：牆、柱子、箱子離身體中心這麼近就擋住（不然鏡頭、半個身體會鑽進牆裡）
+const BODY_SWIM = 0.5;            // 游泳時：人是趴著的、眼睛貼著水面，第一人稱貼到木樁前會整個畫面都是樁，離遠一點
 const SUBMERGE = 0.95;             // 浮在水裡時，腳在水面下多深（只露出頭和肩膀）
 
 export class Player {
@@ -171,7 +172,7 @@ export class Player {
   _bump(tx, tz, ux, uz, swim, world) {
     for (const a of [0, 0.75, -0.75]) {
       const c = Math.cos(a), s = Math.sin(a);
-      const px = tx + (ux * c - uz * s) * BODY, pz = tz + (ux * s + uz * c) * BODY;
+      const R = swim ? BODY_SWIM : BODY, px = tx + (ux * c - uz * s) * R, pz = tz + (ux * s + uz * c) * R;
       if (world.boats.some((b) => { if (b.sinking) return false; const l = b.toLocal(px, pz); return b.deckContains(l.x, l.z); })) continue;
       if (world.ground(px, pz, swim) > 90) return true;
     }

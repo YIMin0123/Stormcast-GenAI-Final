@@ -306,7 +306,7 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
     seg(y0, Math.min(-0.25, wet), P.moss.clone().lerp(P.woodWet, 0.45), 0);   // 水面下：長苔
     seg(Math.max(y0, -0.25), wet, P.woodWet, 1);                             // 水線附近：泡水的深色
     seg(Math.max(y0, wet), top, r() < 0.3 ? P.woodGrey : P.wood, 1);
-    if (bed < -0.2) out.piles.push({ x, z, r: rr + 0.05 });
+    if (bed < -0.2) out.piles.push({ x: x + lx * (0 - y0), z: z + lz * (0 - y0), r: rr + 0.05 });   // 樁是歪的：記水面那一截的位置（游泳的人、水波碰到的是這裡）
     return { rr, at: (y) => [x + lx * (y - y0), z + lz * (y - y0)] };
   };
 
