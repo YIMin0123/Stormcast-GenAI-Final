@@ -10,6 +10,7 @@ import { BOAT_TYPES, BOAT_ORDER, newKit, shopItem } from '../src/boatdata.js';
 import { SPECIES, rollCatch, minFightTime, biteDelay, castRange, money } from '../src/fishdata.js';
 import { dangerAt, isWater, fishingSpot } from './world.js';
 import { mask } from './words.js';
+import { SERVER } from '../src/config.js';
 
 export const MAX_PLAYERS = 30;
 export const TICK = 0.1;                 // 世界每 0.1 秒算一次
@@ -39,7 +40,31 @@ export function newPlayer(id, ws, token, name, look = 'girl') {
     fishing: null,                              // 正在釣：{ x, z, state, fish, biteAt, biteUntil, fightAt }
     chatAt: [], msgAt: 0, msgN: 0,
     gone: 0, left: false, suspect: 0,
+    owner: true,                                // 進度由這個物件存回檔案（按了離開、被收走之後就不是了，免得蓋掉新進度）
+    resetMsg: null,                             // 斷線時遇到定時刷新：接回來時要補講的話
   };
+}
+
+// 要存進檔案的進度：錢、船、裝備、還沒賣的魚。船的油量、破洞照收進倉庫的方式記著，下次進房停在格子裡照舊
+export function profileOf(p) {
+  const kit = JSON.parse(JSON.stringify(p.kit)), stored = { ...p.stored };
+  let fish = [...p.fish.values()];
+  if (p.boat && p.boat.sunk) {
+    // 船沉了還沒收完就走了：跟沉完一樣，這艘船和魚都沒了；一艘都不剩的話送一艘小舢舨
+    delete kit.boats[kit.active];
+    if (!Object.keys(kit.boats).length) kit.boats.skiff = { engineLv: 0, boxLv: 0 };
+    kit.active = BOAT_ORDER.find((t) => kit.boats[t]);
+    fish = [];
+  } else if (p.boat) stored[p.boat.type] = { fuel: p.boat.s[10], cracks: p.boat.cracks };
+  return { kit, stored, fish };
+}
+// 把存著的進度放回一個剛建好的玩家（魚重新編號：伺服器重開過，舊的編號可能跟別人撞）
+export function applyProfile(p, prof) {
+  if (prof.kit && prof.kit.boats && BOAT_TYPES[prof.kit.active] && prof.kit.boats[prof.kit.active]) p.kit = { ...newKit(), ...prof.kit };
+  p.stored = prof.stored && typeof prof.stored === 'object' ? prof.stored : {};
+  for (const f of Array.isArray(prof.fish) ? prof.fish.slice(0, 200) : []) {
+    if (f && SPECIES[f.id]) p.fish.set(nextUid++, { id: f.id, kg: f.kg, len: f.len, value: f.value });
+  }
 }
 
 export class Room {
@@ -59,6 +84,19 @@ export class Room {
     this.focus = 0;
     this.env = { near: { x: 0, z: 0 }, dangerAt };
     this.lights = Object.fromEntries(LIGHT_ZONES.map((z) => [z, true]));   // 室內燈（店裡、魚市場）：一開始是開著的，之後誰按開關都算數
+    // 遊戲內時間跟著現實時間走，每間房差 SERVER.hourStep 小時（沒人的房也照走，大廳看到的早晚才對）
+    this.offset = ((num - 1) * SERVER.hourStep) % 24;
+    this.skew = 0;               // 測試指令快轉過幾小時
+    this.climate.hour = this.clockHour(Date.now());
+  }
+  get fixed() { return this.id <= SERVER.fixedRooms; }   // 常駐房：沒人也不關、不會被併掉
+
+  clockHour(now) { return ((now / 1000 / HOUR + this.offset + this.skew) % 24 + 24) % 24; }
+  // 把天氣的時鐘推到現在該在的時間（新的一天的天氣也在這裡擲）
+  syncClock(now) {
+    let d = ((this.clockHour(now) - this.climate.hour) % 24 + 24) % 24;
+    if (d > 12) return;   // 跑得比該在的時間快一點點：等它追上
+    while (d > 0) { const s = Math.min(d, 1); this.climate.update(s * HOUR); d -= s; }
   }
 
   // 佔了位置的人數（斷線還在等他回來的也算；已經離開、只剩船還沒收的不算）
@@ -163,11 +201,13 @@ export class Room {
     p.hold = p.line = null;
     this.all({ t: 'leave', id: p.id });
   }
-  // 自己按了離開：進度清掉、不能再接回來；船留到時間到才收
+  // 自己按了離開：進度存回檔案（下次進房從港口出發）、不能再接回這一局；船留到時間到才收
   quit(p) {
     this.drop(p);
     p.left = true;
     this.unboard(p);
+    this.hub.keep(p);
+    p.owner = false;
     this.hub.sessions.delete(p.token);
   }
   unboard(p) {
@@ -177,6 +217,8 @@ export class Room {
   }
   // 時間到了沒回來：收船、騰出停船格、從榜上拿掉
   remove(p) {
+    this.hub.keep(p);   // 斷線太久沒回來：進度存回檔案，下次進房還在
+    p.owner = false;
     this.players.delete(p.id);
     this.freeBerth(p);
     this.unboard(p);
@@ -188,7 +230,8 @@ export class Room {
   // ---- 每 0.1 秒 ----
   step(now) {
     for (const p of [...this.players.values()]) if (p.gone && now - p.gone > GRACE) this.remove(p);
-    if (!this.active) { this.stepAt = 0; return; }   // 沒人連著：世界暫停
+    this.syncClock(now);
+    if (!this.active) { this.stepAt = 0; return; }   // 沒人連著：海暫停（時間照走）
     // 照實際過了多久來推進（計時器不會剛好每 0.1 秒叫一次，用固定的 0.1 秒去加，房間的時鐘會越走越慢，大家的浪就對不起來）
     const dt = this.stepAt ? Math.min(Math.max((now - this.stepAt) / 1000, 0), 0.5) : TICK;
     this.stepAt = now;
@@ -201,7 +244,6 @@ export class Room {
     }
     const fp = this.players.get(this.focus)?.pos;
     if (fp) { this.env.near.x = fp[0]; this.env.near.z = fp[2]; }
-    this.climate.update(dt);
     this.sea.remote = this.hold;
     this.sea.update(dt, this.env);
 
@@ -380,7 +422,7 @@ export class Room {
           if (p.pos) { this.env.near.x = p.pos[0]; this.env.near.z = p.pos[2]; }
           const ok = this.sea.trigger(m.kind, this.env);
           this.send(p, { t: 'sys', text: ok ? `（測試）引發了 ${m.kind}` : '（測試）現在引發不了', kind: 'warn' });
-        } else if (m.cmd === 'calm') { this.sea._calm(); this.sea.vortices.length = 0; this.sea.tsu.on = false; } else if (m.cmd === 'skip') this.climate.update((+m.hours || 3) * HOUR);
+        } else if (m.cmd === 'calm') { this.sea._calm(); this.sea.vortices.length = 0; this.sea.tsu.on = false; } else if (m.cmd === 'skip') { const h = Math.min(Math.max(+m.hours || 3, 0), 24); this.skew += h; for (let k = h; k > 0; k--) this.climate.update(Math.min(k, 1) * HOUR); } else if (m.cmd === 'refresh') return this.hub.refresh(true);
         else if (m.cmd === 'money') { kit.money += Math.round(+m.n || 0); this.send(p, { t: 'kit', kit }); } else if (m.cmd === 'fish') {
           // 直接塞一條魚（測排行榜用）
           const id = SPECIES[m.id] ? m.id : 'tuna', kg = +m.kg || 12, len = +(0.42 * Math.cbrt(kg)).toFixed(2), value = Math.round(100 * SPECIES[id].mult * kg), uid = nextUid++;
@@ -401,6 +443,23 @@ export class Room {
     const f = p.fishing, c = this.climate;
     f.fish = rollCatch(fishingSpot(f.x, f.z, c, this.sea));
     f.biteAt = now + 1000 * biteDelay(p.kit.rodLv, Math.max(this.sea.rain, c.rain));
+  }
+
+  // 定時刷新：家當回到新玩家的樣子（錢、船、裝備、魚都清掉），人送回港口
+  reset(p, text) {
+    p.fishing = null;
+    p.kit = newKit();
+    p.fish.clear();
+    p.stored = {};
+    p.hold = p.line = null;
+    this.freeBerth(p);
+    this.allocBerth(p);
+    this.parkBoat(p);
+    if (!p.ws) p.resetMsg = text;   // 斷線中：接回來時再告訴他
+    this.send(p, { t: 'reset', text, kit: p.kit, berth: this.berthInfo(p), boards: this.boards() });
+    this.all({ t: 'boat', id: p.id, boat: this.boatInfo(p) }, p);
+    this.all({ t: 'h', id: p.id, s: null }, p);
+    this.all({ t: 'fl', id: p.id, s: null }, p);
   }
 
   // 換了一艘船放到世界裡（換船、沉了之後、送的小舢舨）：重新分配停船格

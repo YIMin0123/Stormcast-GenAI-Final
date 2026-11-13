@@ -2317,10 +2317,10 @@ function syncRatio() {
 window.addEventListener('resize', syncRatio);
 window.setInterval(syncRatio, 2000);
 
-// 離開房間：進度清空，回到大廳（船會在原地留 30 秒才被收走）
+// 離開房間：回到大廳（錢、船、裝備、還沒賣的魚都存著，下次進房從港口出發；船會在原地留 30 秒才被收走）
 $('reset').addEventListener('click', () => {
   $('reset').blur();
-  if (!inGame || !window.confirm('確定要離開房間嗎？這一局的進度會清空。')) return;
+  if (!inGame || !window.confirm('確定要離開房間嗎？錢、船、裝備和還沒賣的魚都會留著，下次進房從港口出發。')) return;
   net.leave();
   window.setTimeout(() => window.location.reload(), 200);
 });
@@ -3095,6 +3095,29 @@ net.on('swapped', (m) => {
   if ((w && w.aboard) || wasLost) rescue(`你被救回港口。${text}`); else toast(text);
 });
 
+// 定時刷新（每兩天早上 8 點）：家當變回新玩家的樣子（錢、船、裝備、魚都清掉），人送回港口
+net.on('reset', (m) => {
+  fishing.cancel(null);
+  landing = buying = false;
+  wreck = drown = null;
+  stamina = 1;
+  myBoat._lost = true;   // 舊的船不收進倉庫，直接換一艘新的小舢舨
+  for (const b of garage.values()) b.mesh.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); for (const mat of [].concat(o.material)) mat.dispose(); } });
+  garage.clear();
+  garageState.clear();
+  kit = m.kit;
+  berth = m.berth;
+  useBoat(kit.active, berth);
+  fish.clearAll();
+  applyKit(kit);
+  boards.set(m.boards);
+  player.seat = null;
+  rescue('刷新了：大家從港口重新開始');
+  chat.sys(m.text, 'warn');
+  lastPosMsg = lastBoatMsg = lastBoatDetail = '';
+  lastHold = lastLine = '?';
+});
+
 // ---- 合併房間 ----
 net.on('merge', (m) => {
   if (m.text) { chat.sys(m.text, 'merge'); toast(m.text); }
@@ -3127,7 +3150,7 @@ net.on('status', (st) => {
   if (!inGame) return;   // 還在大廳：選單自己會處理
   if (st === 'offline') { msg.textContent = '連線中斷，正在接回去…（30 秒內接得回來，進度都還在）'; btn.style.display = 'none'; }
   else {
-    msg.textContent = st === 'expired' ? '斷線太久，這一局的進度已經清空了' : st.startsWith('kicked:') ? st.slice(7) : '和伺服器斷線了';
+    msg.textContent = st === 'expired' ? '斷線太久，已經離開房間了（錢、船、裝備和魚都存著，重新進房就好）' : st.startsWith('kicked:') ? st.slice(7) : '和伺服器斷線了';
     btn.style.display = 'inline-block';
     inGame = false;
   }
@@ -3209,7 +3232,7 @@ function enterRoom(j) {
   lastHold = lastLine = '?';
   chat.clear();
   chat.show(true);
-  chat.sys(back ? `回到${room.name}了` : touchText(`歡迎來到${room.name}。按 Enter 可以聊天`), 'info');
+  chat.sys(back ? (pos ? `回到${room.name}了` : `歡迎回到${room.name}，錢、船和還沒賣的魚都還在`) : touchText(`歡迎來到${room.name}。按 Enter 可以聊天`), 'info');
   $('net').style.display = 'none';
   inGame = true;
   fadeIn = 1.2;
@@ -3632,7 +3655,7 @@ window.__sim = {
   net, others, chat, boards, garage, enterRoom, applyWorld, myFishUids, takeHelm, releaseHelm, touch, setGfx, setPixelRatio,
   get gfxLv() { return presetOf(); }, get waterSplit() { return waterSplit; }, get pixelRatio() { return pixelRatio; }, gs, applyGfx, PRESETS, get gfx() { return gfx; }, diag,
   get kit() { return kit; }, get myBoat() { return myBoat; }, get berth() { return berth; }, get room() { return room; }, get inGame() { return inGame; }, get time() { return time; },
-  dev: (cmd, o = {}) => net.send({ t: 'dev', cmd, ...o }),   // 測試指令（伺服器開了開發模式才收）：event / calm / skip / money / fish
+  dev: (cmd, o = {}) => net.send({ t: 'dev', cmd, ...o }),   // 測試指令（伺服器開了開發模式才收）：event / calm / skip / money / fish / refresh（立刻刷新）
   sea, dangerAt, tsuAt, stormK, waterY, nearTank, nearCrack, get wrench() { return wrench; },
   get wreck() { return wreck; }, climate, lightning, updateWeather, boatEnv, rain, bolt, spouts,
   get rainNow() { return rainNow; }, get gloom() { return gloom; }, lampLights, boatLight,
