@@ -45,7 +45,8 @@ export class Net {
   hello(name) {
     this.name = name;
     return new Promise((resolve, reject) => {
-      this._want = { kind: 'hello', resolve, reject };
+      // 伺服器收下這個名字（沒被擋）就記住，下次打開直接填好
+      this._want = { kind: 'hello', resolve: (r) => { setItem('stormcast.name', name); resolve(r); }, reject };
       if (this.ws && this.ws.readyState === 1) this._raw({ t: 'hello', name, look: myLook(), token: this.token });
       else this._connect();
     });
