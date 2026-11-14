@@ -241,10 +241,15 @@ export class Others {
 
   // 地圖用：[{ name, x, z, yaw, boat: { x, z, heading, type } | null, here }]
   list() {
-    return [...this.map.values()].map((o) => ({
-      name: o.name, here: !!(o.fig && o.st), x: o.fig?.x ?? 0, z: o.fig?.z ?? 0, yaw: o.fig?.yaw ?? 0,
-      boat: o.boat && !o.boat.sinking ? o.boat : null,
-    }));
+    return [...this.map.values()].map((o) => {
+      const boat = o.boat && !o.boat.sinking ? o.boat : null;
+      // 掌舵的人：人物的座標不會跟著船動（人偶也不畫），位置要用他的船；不然名字會留在他上船的地方，船早就開走了
+      const helm = !!(boat && o.st && (o.st[4] & 32));
+      return {
+        name: o.name, here: !!(o.fig && o.st), x: helm ? boat.x : o.fig?.x ?? 0, z: helm ? boat.z : o.fig?.z ?? 0, yaw: helm ? boat.heading : o.fig?.yaw ?? 0,
+        boat,
+      };
+    });
   }
 
   get count() { let n = 0; for (const o of this.map.values()) if (o.fig) n++; return n; }
