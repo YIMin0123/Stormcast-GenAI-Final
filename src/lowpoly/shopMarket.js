@@ -202,7 +202,7 @@ export function buildShopMarket({ fb, fd, P, box, obox, gableRoof, boatGeo, out,
       fb.addGeometry(g, () => Q.norenWhite);
     }
     lantern(S.x0 + 0.8, D + 2.3, S.z1 + 0.45, 0.8);
-    lantern(S.x1 - 0.3, D + 2.4, S.z1 + 0.45, 0.8);
+    lantern(S.x1 + 0.2, D + 2.4, S.z1 - 0.4, 0.8);   // 掛在東牆外面（不掛在正面：以前擋住最右邊那塊排行榜）
   }
   // 東牆外面：救生圈、靠著牆的兩支船槳
   {
