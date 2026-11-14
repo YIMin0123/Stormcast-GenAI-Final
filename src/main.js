@@ -10,8 +10,10 @@ import { makeSwimFx } from './swimfx.js';
 import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SELL, setBoard, BOLLARDS, MoorLine, SHELF, setTag, LAMPS, UNLIT, WET, ROOM_LIGHTS, ROOM_LAMPS, setRoomLights, GLOW_KEEP, lightBulbs, updateFlags, updateScale, PORCHES, HOME_LAND } from './harbor.js';
 import { WORLD, THROW } from './config.js';
 import { HOME_U, placeInHome } from './homeGl.js';
-import { HOME_YAW, toWorld, toLocal, headingToWorld, havenToLocal } from './frame.js';
+import { HOME_YAW, toWorld, toLocal, headingToWorld, havenToLocal, HAVEN } from './frame.js';
 import { makeSeascape, HAVEN_LAND, HAVEN_GROUND } from './haven.js';
+import { caveUnder, caveCeil, caveFloor, caveRock, havenLow, nearCave, caveGate, CAVE_AXIS } from './lowpoly/havenShape.js';
+import { CAVE } from './lowpoly/havenPlan.js';
 import { HOME_GROUND, ZONE_LABEL } from './lowpoly/harborPlan.js';
 import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SWITCHES_W, ROOFS_W, underRoof, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
 import { fishLabel, FishWorld } from './fish.js';
@@ -332,7 +334,11 @@ function landAt(x, z, hx, hz) {
   // 大港灣島也一樣照畫出來的那張地面（大港座標）
   if (HAVEN_LAND.at) {
     const VG = HAVEN_GROUND, vh = VG.size / 2 - 2, [vx, vz] = havenToLocal(x, z);
-    if (Math.abs(vx - VG.cx) < vh && Math.abs(vz - VG.cz) < vh) return HAVEN_LAND.at(vx, vz);
+    if (Math.abs(vx - VG.cx) < vh && Math.abs(vz - VG.cz) < vh) {
+      // 透天洞穴是上下兩層：人比洞頂低（在洞裡游泳、從天窗掉下去）就照洞底，在洞頂上面走就照山坡
+      const low = caveUnder(vx, vz, walker.feet);
+      return low !== null ? low : HAVEN_LAND.at(vx, vz);
+    }
   }
   return bedAt(x, z);
 }
@@ -366,7 +372,9 @@ function rockSlope(x, z) {
 const boatGround = (x, z) => {
   if (deckY(x, z, 0.4) !== null) return DECK_Y;
   const rk = rockAt(x, z);
-  return rk === null ? bedAt(x, z) : Math.max(bedAt(x, z), rk);
+  // 透天洞穴附近照精確的形狀算（暗門水道只有 4.2 公尺寬，2 公尺一格的海床圖太粗）
+  const [vx, vz] = havenToLocal(x, z), bed = nearCave(vx, vz) ? havenLow(vx, vz) : bedAt(x, z);
+  return rk === null ? bed : Math.max(bed, rk);
 };
 
 // ---- 場景物件 -------------------------------------------------------------
@@ -983,6 +991,22 @@ shade(harbor);
 const seascape = makeSeascape(harbor.userData.lowpolyMat);
 for (const g of seascape.groups) { scene.add(g); g.updateMatrixWorld(true); g.traverse((o) => { o.matrixAutoUpdate = false; }); }
 addRocks(seascape.rocks);
+// 透天洞穴：海面的著色器要知道洞在哪（洞裡的水面壓暗、天窗底下亮一圈）
+{
+  const [cx, cz] = HAVEN.toWorld(CAVE.x, CAVE.z), [ex, ez] = HAVEN.toWorld(CAVE.x + CAVE_AXIS[0], CAVE.z + CAVE_AXIS[1]);
+  shared.uCave = { value: new THREE.Vector4(cx, cz, CAVE.r, CAVE.sky.r) };
+  shared.uCaveDoor = { value: new THREE.Vector4(ex - cx, ez - cz, CAVE.face, CAVE.door.half) };
+}
+// 人在不在洞裡（in）、在洞裡多深（k：0 洞外 … 1 洞裡，慢慢變）、頭上是不是天窗、鏡頭是不是在淋不到雨的地方：洞裡的光要暗、雨要停
+const caveState = { in: false, k: 0, sky: 0, dry: 0 };
+function updateCave(dt) {
+  const e = 1 - Math.exp(-dt * 3), [px, pz] = havenToLocal(player.x, player.z), cp = camera.position, [qx, qz] = havenToLocal(cp.x, cp.z);
+  const inside = nearCave(px, pz) && caveUnder(px, pz, player.y + 0.5) !== null;
+  caveState.in = inside;
+  caveState.k += ((inside ? 1 : 0) - caveState.k) * e;
+  caveState.sky += ((inside && caveCeil(px, pz) === Infinity ? 1 : 0) - caveState.sky) * e;
+  caveState.dry += ((nearCave(qx, qz) && caveUnder(qx, qz, cp.y) !== null && caveCeil(qx, qz) !== Infinity ? 1 : 0) - caveState.dry) * e;
+}
 
 // 岸邊的淺水模擬：鏡頭附近一塊範圍，浪真的沖上沙灘再退回去，也會繞過木樁與礁石
 const shallow = new ShallowWater(renderer);
@@ -1470,6 +1494,21 @@ const camBlockers = [];
 // 二、頭沒被擋住，鏡頭的位置也可能很糟：懸在雨棚、屋頂正上方不到兩公尺，棚頂就鋪滿下半個畫面。
 //     這種位置（腳下貼著一片架高的面，或往人的腳看過去、近處就被擋住）也不能停，再往人這邊找
 const camRay = new THREE.Raycaster();
+// 透天洞穴的洞壁：沿著這條線（從 o 往 d 方向、長 len）半公尺半公尺往外找，第一次碰到岩石的地方離 o 多遠（沒碰到 = Infinity）。
+// 照洞穴的算式算，不拿模型去試（太慢）
+function caveSight(o, d, len) {
+  const [ax, az] = havenToLocal(o.x, o.z), [bx, bz] = havenToLocal(o.x + d.x * len, o.z + d.z * len);
+  const rock = (t) => caveRock(ax + (bx - ax) * t / len, o.y + d.y * t, az + (bz - az) * t / len);
+  for (let t = 0.5; ; t += 0.5) {
+    const far = Math.min(t, len);
+    if (rock(far)) {
+      let lo = Math.max(0, t - 0.5), hi = far;
+      for (let i = 0; i < 4; i++) { const mid = (lo + hi) / 2; if (rock(mid)) hi = mid; else lo = mid; }
+      return lo;
+    }
+    if (far === len) return Infinity;
+  }
+}
 const CAM_PROBE = [[0, 0], [0.45, 0], [-0.45, 0], [0, 0.35], [0, -0.35]];
 const DOWN = new THREE.Vector3(0, -1, 0);
 const _cd = new THREE.Vector3(), _cr = new THREE.Vector3(), _cu = new THREE.Vector3(), _ce = new THREE.Vector3(), _co = new THREE.Vector3();
@@ -1482,7 +1521,9 @@ function sightArm(dist) {
     camRay.set(target, _ce.divideScalar(len));
     camRay.far = len;
     const hit = camRay.intersectObjects(camBlockers, false)[0];
-    if (hit) clear = Math.min(clear, dist * hit.distance / len - 0.35);
+    let near = hit ? hit.distance : Infinity;
+    if (caveState.in) near = Math.min(near, caveSight(target, _ce, len));   // 人在洞裡：鏡頭不穿過洞壁
+    if (near < Infinity) clear = Math.min(clear, dist * near / len - 0.35);
   }
   return clear;
 }
@@ -1531,7 +1572,12 @@ function orbit(yaw, pitch, dist) {
   const ce = Math.cos(pitch), cp = camera.position;
   cp.set(target.x - Math.cos(yaw) * ce * dist, target.y - Math.sin(pitch) * dist, target.z - Math.sin(yaw) * ce * dist);
   // 巨浪經過時鏡頭跟著浮上去，不要被浪蓋住
-  const floor = Math.max(onDeck(cp.x, cp.z, 0.6) ? Math.max(DECK_Y, bedAt(cp.x, cp.z)) : bedAt(cp.x, cp.z), tsuAt(cp.x, cp.z) + 0.6) + 0.6;
+  // 人在透天洞穴裡：鏡頭腳下的「地面」是洞底，不是頭上的山坡（不然鏡頭一靠近洞壁就被抬到山頂上去）；洞壁由 sightArm 擋。
+  // 人在洞頂上面走的時候反過來：海床圖在洞的範圍記的是洞底，鏡頭要照山坡的高度擋，才不會鑽進洞頂裡
+  let bed = bedAt(cp.x, cp.z);
+  const [qx, qz] = havenToLocal(cp.x, cp.z);
+  if (nearCave(qx, qz)) bed = caveState.in ? (caveFloor(qx, qz) ?? -99) : Math.max(bed, HAVEN_LAND.at(qx, qz));
+  const floor = Math.max(onDeck(cp.x, cp.z, 0.6) ? Math.max(DECK_Y, bed) : bed, tsuAt(cp.x, cp.z) + 0.6) + 0.6;
   if (cp.y < floor) cp.y = floor;
   camera.up.set(0, 1, 0);
   camera.lookAt(target);
@@ -2565,8 +2611,9 @@ function updateWeather(dt) {
   // 船、人、港口、樹用的 three.js 光源
   const lv = Math.max(L.col[0], L.col[1], L.col[2], 1e-3);
   sun.color.setRGB(L.col[0] / lv, L.col[1] / lv, L.col[2] / lv);
-  sun.intensity = 2.5 * lv * (1 - 0.75 * gloom);
-  hemi.intensity = 2.2 * L.amb[1] * wetDark * (1 - 0.35 * gloom) + flash * 2.5;
+  // 人在透天洞穴裡：照不到太陽（站在天窗底下除外），天光也只剩一半
+  sun.intensity = 2.5 * lv * (1 - 0.75 * gloom) * (1 - 0.85 * caveState.k * (1 - caveState.sky));
+  hemi.intensity = (2.2 * L.amb[1] * wetDark * (1 - 0.35 * gloom) + flash * 2.5) * (1 - 0.35 * caveState.k);
 
   // 天黑了燈才亮：碼頭燈、船上的油燈、燈塔的光束
   const glow = clamp((night - 0.35) / 0.45, 0, 1);
@@ -2619,7 +2666,7 @@ function updateWeather(dt) {
   shared.uSwell.value = SWELL.amp * sea.swell;
   // 雨被風吹斜：颱風時幾乎是橫著飛的
   const cpos = camera.position, wk = windK(cpos.x, cpos.z);
-  rain.update(time, cpos, rainNow, light, gale.x * wk, gale.z * wk);
+  rain.update(time, cpos, rainNow * (1 - caveState.dry), light, gale.x * wk, gale.z * wk);   // 鏡頭在洞裡（不是天窗底下）就沒有雨
   // 飛沫：風夠大、人在開闊的海面上才有
   spindrift.update(time, cpos, clamp((gale.v * wk - 15) / 22, 0, 1) * clamp(dangerAt(cpos.x, cpos.z) * 2.5, 0, 1), swellAmp(cpos.x, cpos.z), light, gale.x, gale.z);
   // 雨跟地面的互動：地面慢慢淋濕（雨停了慢慢乾）；雨點打在地上、岸壁上濺起小水花（水面上的是漣漪，在海面的 shader 裡）
@@ -2674,6 +2721,8 @@ const tideSurge = (x, z) => surgeAt(x, z) + tideNow;
 const calmEnv = { ground: boatGround, wave: tideSurge, base: tideSurge, limit: L / 2 - 30 };   // 停在港裡、沒人用的船：平常不動，巨浪淹進港口時跟著浮起來
 const boatEnv = {
   ground: boatGround,
+  // 這裡的水道多寬：暗門水道比船窄的話船進不去（其他地方不限）
+  gate: (x, z) => { const [vx, vz] = havenToLocal(x, z); return nearCave(vx, vz) ? caveGate(vx, vz) : Infinity; },
   wave: (x, z) => ocean.sampleCached(x, z) * waveK(x, z) + tsuAt(x, z),
   // 畫面上看得到的那片水面（長浪加中浪、含浪頭的水平位移）：船身貼著它浮。fade：淺水裡浪變小幾成
   waveFine: (x, z, fade) => ocean.sampleSurface(x, z, waveK(x, z) * fade) + tsuAt(x, z),
@@ -3390,6 +3439,7 @@ function drawFrame(dt) {
   updateCamera(dt);
   lpUniforms.uTime.value = time;   // 低面模型（樹、草）隨風搖
   seascape.update(time, camera.position);   // 燈標閃光；太遠、被霧蓋掉的島不畫
+  updateCave(dt);
   const cp = camera.position;
 
   // 最近的水龍捲：呼嘯聲的大小與方向；靠得很近時鏡頭被風吹得發抖

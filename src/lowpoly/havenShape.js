@@ -56,8 +56,86 @@ export function havenHeight(x, z) {
     const q = Math.max((lo - d) / 1.2, (d - hi) / 8, 0);
     h += (T.y - h) * ka * (1 - smooth(0, 1, q));
   }
-  return Math.max(h, D.floor);
+  return Math.max(caveTerrain(x, z, h), D.floor);
 }
 
-// 遊戲用的海床（跟 homeShape.js 的 homeBed 同一個角色）
-export const havenBed = havenHeight;
+// ==== 透天洞穴 ====
+// 地形分上下兩層：上層是 havenHeight（山坡、洞頂），下層是洞裡（深潭、暗門水道）。
+const CV = V.CAVE, AX = [Math.sin(CV.axisDeg * Math.PI / 180), Math.cos(CV.axisDeg * Math.PI / 180)];
+// 洞穴自己的座標：[s 沿著暗門水道往外海, l 橫向, rho 離深潭中心多遠]
+export function caveCoords(x, z) {
+  const dx = x - CV.x, dz = z - CV.z;
+  return [dx * AX[0] + dz * AX[1], -dx * AX[1] + dz * AX[0], Math.hypot(dx, dz)];
+}
+// 圓穹在離中心 rho 的地方多高
+const domeY = (rho) => CV.dome.cy + CV.dome.ry * Math.sqrt(Math.max(0, 1 - (rho / CV.dome.rx) ** 2));
+
+// 洞穴對上層地形的影響：洞頂不夠厚的地方墊高；暗門洞口外面挖一道海蝕溝（兩側是陡壁，盡頭是洞口所在的崖面）
+function caveTerrain(x, z, h) {
+  const [s, l, rho] = caveCoords(x, z), D = CV.dome;
+  if (rho > 120) return h;
+  if (rho < D.rx + 12) h = Math.max(h, rho < D.rx ? domeY(rho) + CV.roof : (D.cy + CV.roof) * (1 - smooth(D.rx, D.rx + 12, rho)));
+  if (s > CV.face - 2) {
+    const C = CV.cove, w = C.half + (s - CV.face) * C.widen;
+    const k = (1 - smooth(w, w + C.wall, Math.abs(l))) * smooth(CV.face - 2, CV.face + 1.5, s);
+    if (k > 0) h += (Math.min(h, C.floor) - h) * k;
+  }
+  return h;
+}
+
+// 深潭的底：大部分是潭底，暗門對面那一側沿著洞壁有一道露出水面的岩台
+function poolFloor(s, rho) {
+  const L = CV.ledge, k = smooth(CV.r - L.wide - 1.5, CV.r - L.wide + 0.5, rho) * smooth(L.from, L.from - 5, s);
+  return CV.pool + (L.y - CV.pool) * k;
+}
+// 下層：(x, z) 在洞裡（深潭或暗門水道）的話回傳洞底的高度，不在就回傳 null。extra：水道多算寬幾公尺
+export function caveFloor(x, z, extra = 0) {
+  const [s, l, rho] = caveCoords(x, z);
+  if (rho < CV.r) return poolFloor(s, rho);
+  if (s > 0 && s < CV.face + 2 && Math.abs(l) < CV.door.half + extra) return CV.door.floor;
+  return null;
+}
+// 洞裡這一點頭上的洞頂多高（天窗底下是 Infinity：頭上沒有東西）
+export function caveCeil(x, z) {
+  const rho = caveCoords(x, z)[2];
+  return rho < CV.sky.r ? Infinity : rho < CV.r ? domeY(rho) : CV.door.ceil;
+}
+// 高度 y 的人或東西在 (x, z)：如果它其實在洞裡（比洞頂低，或正好在天窗底下），回傳洞底的高度；在洞頂上面或洞外就回傳 null（照上層的地面）
+export function caveUnder(x, z, y) {
+  const f = caveFloor(x, z);
+  if (f === null) return null;
+  const c = caveCeil(x, z);
+  return c === Infinity || (y !== null && y < c - 0.4) ? f : null;
+}
+// 洞穴附近（船要照精確的下層算，不能用 2 公尺一格的海床圖：水道只有 4.2 公尺寬）
+export const nearCave = (x, z) => (x - CV.x) ** 2 + (z - CV.z) ** 2 < (CV.face + 14) ** 2;
+
+// 這裡的水道多寬（公尺）：暗門水道裡是它的寬度，其他地方是 Infinity。比它寬的船進不去
+export function caveGate(x, z) {
+  const [s, l, rho] = caveCoords(x, z);
+  return rho >= CV.r - 1 && s > 0 && s < CV.face + 1 && Math.abs(l) < CV.door.half + 3 ? CV.door.half * 2 : Infinity;
+}
+// 暗門水道往外海的方向（大港座標的單位向量）
+export const CAVE_AXIS = AX;
+
+// 遊戲用的海床（跟 homeShape.js 的 homeBed 同一個角色）：洞裡照下層（那裡是水），其他照山坡。
+// 水道在這張圖上多算寬一點——圖是 2 公尺一格，太窄的話水面的顏色、白沫會斷斷續續；船能不能過另外照 havenLow 精確地算
+export const havenBed = (x, z) => caveFloor(x, z, 1.2) ?? havenHeight(x, z);
+// 船和游泳的人眼中的地面（精確的下層）
+export const havenLow = (x, z) => caveFloor(x, z) ?? havenHeight(x, z);
+
+// 這一點是不是在岩石裡（山坡的地面以下，又不在洞的空腔裡；離洞壁不到 pad 公尺也算）。鏡頭的遮擋判斷用：
+// 不拿洞穴的模型去算，七千多個三角形每幀試好幾條線，光這一項就要好幾毫秒
+export const caveRock = (x, y, z, pad = 0.3) => cavitySdf(x, y, z) > -pad && y < havenHeight(x, z) + pad;
+
+// 洞穴的空腔（立體的，給模型用）：負的 = 在空腔裡，正的 = 在岩石裡，數字大約是離洞壁幾公尺。
+// 圓穹（橢球，潭底以上）＋天窗的豎井＋暗門水道（圓角的長方形斷面），洞壁照雜訊凹凸
+export function cavitySdf(x, y, z) {
+  const [s, l, rho] = caveCoords(x, z), D = CV.dome, T = CV.door;
+  const n = fbm(x * 0.21 + y * 0.13 + 3.7, z * 0.21 - y * 0.17 + 8.1) - 0.5;
+  const dome = Math.max((Math.hypot(rho / D.rx, (y - D.cy) / D.ry) - 1) * D.rx + n * 1.6, poolFloor(s, rho) - y);
+  const shaft = Math.max(rho - CV.sky.r + n * 1.0, D.cy + D.ry - 7 - y);
+  const rr = 1.4, ax = Math.abs(l) - (T.half - rr), ay = Math.abs(y - (T.ceil + T.floor) / 2) - ((T.ceil - T.floor) / 2 - rr);
+  const tun = Math.max(Math.hypot(Math.max(ax, 0), Math.max(ay, 0)) + Math.min(Math.max(ax, ay), 0) - rr + n * 0.5, 8 - s, s - (CV.face + 10));
+  return Math.min(dome, shaft, tun);
+}

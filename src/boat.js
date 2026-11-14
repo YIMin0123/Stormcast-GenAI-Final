@@ -638,7 +638,9 @@ export class Boat {
     const nx = this.x + (fx * this.speed + (flow ? flow.x : 0)) * dt, nz = this.z + (fz * this.speed + (flow ? flow.z : 0)) * dt;
     const dir = Math.sign(this.speed || 1), rx = -fz, rz = fx;
     const blocked = [[half * 0.8, 0], [half * 0.65, S.beam * 0.35], [half * 0.65, -S.beam * 0.35]].some(([a, b]) =>
-      env.ground(nx + (fx * a * dir) + rx * b, nz + (fz * a * dir) + rz * b) > -S.draft * 0.7);
+      env.ground(nx + (fx * a * dir) + rx * b, nz + (fz * a * dir) + rz * b) > -S.draft * 0.7)
+      // 太窄的水道（大港灣島的暗門）：船比水道寬就進不去
+      || (env.gate ? env.gate(nx + fx * half * 0.8 * dir, nz + fz * half * 0.8 * dir) < S.beam : false);
     if (blocked) this.speed *= Math.exp(-dt * 6);
     else { this.x = clamp(nx, -env.limit, env.limit); this.z = clamp(nz, -env.limit, env.limit); }
 

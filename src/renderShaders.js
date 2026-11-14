@@ -759,6 +759,19 @@ uniform vec4 uShHull;     // 船身影子 (x, z, cos, sin)
 uniform vec2 uShSize;     // 船身影子的半長、半寬
 uniform vec3 uLamp[8];    // 晚上的燈：(x, z, 亮度)
 uniform float uLampOn;    // 有沒有任何一盞燈亮著（白天整段跳過）
+uniform vec4 uCave;       // 透天洞穴：(深潭中心 x, z, 深潭半徑, 天窗半徑)
+uniform vec4 uCaveDoor;   // 暗門水道：(往外海的方向 x, z, 洞口離深潭中心多遠, 半寬)
+// 這一點的水面在洞裡有多暗（0 = 洞外，1 = 最暗）：洞裡照不到天光，水面不能跟外面一樣亮；天窗正下方那一圈是亮的
+float caveDark(vec2 w) {
+  vec2 d = w - uCave.xy;
+  float rho = length(d);
+  if (rho > uCaveDoor.z + 6.0) return 0.0;
+  float s = dot(d, uCaveDoor.xy), l = abs(d.x * uCaveDoor.y - d.y * uCaveDoor.x);
+  float pool = 1.0 - smoothstep(uCave.z - 1.0, uCave.z + 1.5, rho);
+  float door = (1.0 - smoothstep(uCaveDoor.w, uCaveDoor.w + 1.5, l)) * step(0.0, s) * (1.0 - smoothstep(uCaveDoor.z - 9.0, uCaveDoor.z + 1.0, s));
+  float sky = 1.0 - smoothstep(uCave.w * 0.6, uCave.w * 1.5, rho);
+  return max(pool * (1.0 - 0.75 * sky), door);
+}
 
 #define SH_TAPS 4
 ${shadowRecv}
@@ -1270,7 +1283,7 @@ void main() {
     float dr = length(rf - (rr.xy - 0.5) * 0.5);
     drop = step(1.0 - 0.45 * uRain, rr.z) * smoothstep(0.07, 0.0, abs(dr - (0.04 + 0.26 * age))) * (1.0 - age) * (1.0 - age) * texFade;
   }
-  col += (0.34 * uAmbient + 0.14 * lv) * drop;
+  col += (0.34 * uAmbient + 0.14 * lv) * drop * (1.0 - smoothstep(0.3, 0.6, caveDark(vWorld.xz)));   // 洞頂底下淋不到雨（天窗那一圈照常）
   // 晚上燈光照在水面上
   if (uLampOn > 0.0)
   for (int i = 0; i < 8; i++) {
@@ -1289,6 +1302,7 @@ void main() {
   }
 
   col += vec3(1.0, 0.93, 0.70) * beamSweep(vWorld.xz) * (0.16 + 0.24 * foam);   // 燈塔的光掃過海面
+  col *= 1.0 - 0.62 * caveDark(vWorld.xz);
   if (uUnder > 0.5) { col = underSurface(N, V, foam); alpha = 1.0; }
   else col = applyFog(col, vWorld);
   gl_FragColor = vec4(col, alpha);
@@ -1739,6 +1753,19 @@ uniform float uPixelAngle;
 uniform float uHs;
 uniform vec4 uWake[16];
 uniform vec4 uWakeBox;
+uniform vec4 uCave;       // 透天洞穴：(深潭中心 x, z, 深潭半徑, 天窗半徑)
+uniform vec4 uCaveDoor;   // 暗門水道：(往外海的方向 x, z, 洞口離深潭中心多遠, 半寬)
+// 這一點的水面在洞裡有多暗（0 = 洞外，1 = 最暗）：洞裡照不到天光，水面不能跟外面一樣亮；天窗正下方那一圈是亮的
+float caveDark(vec2 w) {
+  vec2 d = w - uCave.xy;
+  float rho = length(d);
+  if (rho > uCaveDoor.z + 6.0) return 0.0;
+  float s = dot(d, uCaveDoor.xy), l = abs(d.x * uCaveDoor.y - d.y * uCaveDoor.x);
+  float pool = 1.0 - smoothstep(uCave.z - 1.0, uCave.z + 1.5, rho);
+  float door = (1.0 - smoothstep(uCaveDoor.w, uCaveDoor.w + 1.5, l)) * step(0.0, s) * (1.0 - smoothstep(uCaveDoor.z - 9.0, uCaveDoor.z + 1.0, s));
+  float sky = 1.0 - smoothstep(uCave.w * 0.6, uCave.w * 1.5, rho);
+  return max(pool * (1.0 - 0.75 * sky), door);
+}
 uniform vec3 uLamp[8];
 uniform float uLampOn;
 uniform float uVortexOn;
@@ -1863,6 +1890,7 @@ void main() {
     col += vec3(1.0, 0.70, 0.36) * uLamp[i].z * exp(-dot(ld, ld) / 70.0) * (0.22 + 0.45 * foam);
   }
   col += vec3(1.0, 0.93, 0.70) * beamSweep(vWorld.xz) * (0.16 + 0.24 * foam);
+  col *= 1.0 - 0.62 * caveDark(vWorld.xz);
   if (uUnder > 0.5) {
     // 從水下往上看：正上方透著天光，斜著看是水的顏色
     col = applyUnderFog(mix(underFogCol() * 1.35, skyGradient(vec3(0.0, 1.0, 0.0)) * vec3(0.78, 0.96, 1.0), smoothstep(0.55, 0.9, abs(V.y))) * (1.0 - 0.55 * foam), vWorld);

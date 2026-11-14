@@ -19,7 +19,7 @@ import { rockGeo, broadleafGeo, tuftGeo, terrainGeo, waterGeo, heightAt, groundK
 import { buildHaven } from './haven3d.js';
 import { buildArch, buildAtoll, buildBeacon } from './reefs3d.js';
 import { archBed, atollBed, beaconBed } from './reefShape.js';
-import { havenHeight } from './havenShape.js';
+import { havenHeight, havenBed } from './havenShape.js';
 import * as HV from './havenPlan.js';
 import { WORLD } from '../config.js';
 import { HAVEN, HOME_YAW } from '../frame.js';
@@ -107,7 +107,7 @@ function seaFor(scn) {
   if (!seas[key]) {
     // 大港灣島：浪向跟遊戲一樣（世界的浪向轉成大港座標）
     const waveAngle = HAVEN.headingToLocal(Math.PI / 2 + WORLD.waveFromHarborBackDeg * Math.PI / 180 - HOME_YAW);
-    seas[key] = scn === 'haven' ? makeRealSea(renderer, { heightAt: havenHeight, waveAngle, fft16: isPhone, lite })
+    seas[key] = scn === 'haven' ? makeRealSea(renderer, { heightAt: havenBed, waveAngle, fft16: isPhone, lite })
       : scn === 'reefs' ? makeRealSea(renderer, { heightAt: reefsHeight, fft16: isPhone, lite })
       : scn === 'harbor'
       ? makeRealSea(renderer, { heightAt: (x, z) => (onPlatform(x, z) ? HP.DECK_Y : harborHeight(x, z)), quays: [[-48, -14, 48, 0], [-52.5, 0, -48, 44.5], [48, 0, 52.5, 44.5]], fft16: isPhone, lite })
@@ -161,6 +161,7 @@ function applyView() {
   const k = big() ? 5 : 1;
   camera.far = 1200 * k; camera.updateProjectionMatrix();
   controls.maxDistance = big() ? 900 : 220;
+  controls.maxPolarAngle = Math.PI * (big() ? 0.99 : 0.495);   // 大港灣島要能從洞裡往上看
   sky.scale.setScalar(k);
   const s = big() ? 290 : 85;
   Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: big() ? 1300 : 320 });
@@ -372,6 +373,11 @@ const HAVEN_CAMS = {
   外海看背面: () => { camera.position.set(140, 30, -360); controls.target.set(20, 26, -100); },
   海岬: () => { camera.position.set(-170, 16, 190); controls.target.set(-95, 30, 95); },
   山頂俯瞰: () => { camera.position.set(70, 84, -128); controls.target.set(0, 0, 60); },
+  天窗上面: () => { camera.position.set(HV.CAVE.x + 16, 52, HV.CAVE.z + 22); controls.target.set(HV.CAVE.x, 30, HV.CAVE.z); },
+  洞裡仰望: () => { camera.position.set(HV.CAVE.x + 9, 1.6, HV.CAVE.z + 8); controls.target.set(HV.CAVE.x - 2, 26, HV.CAVE.z - 2); },
+  洞裡看暗門: () => { camera.position.set(HV.CAVE.x + 10, 2, HV.CAVE.z + 12); controls.target.set(HV.CAVE.x - 7, 1, HV.CAVE.z - 28); },
+  暗門外面: () => { camera.position.set(HV.CAVE.x - 16, 4, HV.CAVE.z - 66); controls.target.set(HV.CAVE.x - 7, 3, HV.CAVE.z - 29); },
+  海蝕溝外海: () => { camera.position.set(HV.CAVE.x - 40, 14, HV.CAVE.z - 110); controls.target.set(HV.CAVE.x - 7, 6, HV.CAVE.z - 29); },
 };
 const REEF_CAMS = {
   石拱門: () => { camera.position.set(-6, 5, 70); controls.target.set(0, 12, 0); },

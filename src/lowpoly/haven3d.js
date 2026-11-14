@@ -3,7 +3,8 @@
 import * as THREE from 'three';
 import { mirrored } from './kit.js';
 import { rockGeo, broadleafGeo, islandTerrain } from './shapes.js';
-import { havenBed } from './havenShape.js';
+import { havenHeight, caveCoords } from './havenShape.js';
+import { buildCave, cavePatch } from './cave3d.js';
 import * as V from './havenPlan.js';
 
 // place(幾何, 清單, 投不投影, 受不受影)：一個樣板＋很多個實例（跟港口同一套）。phone：手機（地形格子大一點、樹和岩塊少一點）
@@ -12,18 +13,21 @@ export function buildHaven({ P, r, place, mat, group, phone = false }) {
   const G = V.GROUND, half = G.size / 2;
   // 地形：電腦 1.8 公尺一格、手機 2.7 公尺（三角形少一半多）。島很大，面也跟著大塊，岩層一層 3.2 公尺。
   // 切成一百多公尺見方的一塊塊：背對鏡頭、被擋在畫面外的那幾塊不用畫；比 11 公尺深的海底看不到，不建
-  const ground = islandTerrain(P, G.size, phone ? 2.7 : 1.8, 11, havenBed, G.cx, G.cz, {
-    band: 3.2, minY: -11, tile: 118,
-    // 越高的地方草越黃一點、岩石越淺一點（山頂曬得到太陽、風大）
-    tint: (col, x, y, z, kind) => (y > 30 ? col.clone().lerp(kind === 3 ? P.sand : P.rock, Math.min(0.28, (y - 30) / 120)) : col),
-  });
+  // 越高的地方草越黃一點、岩石越淺一點（山頂曬得到太陽、風大）
+  const tint = (col, x, y, z, kind) => (y > 30 ? col.clone().lerp(kind === 3 ? P.sand : P.rock, Math.min(0.28, (y - 30) / 120)) : col);
+  // 高度用上層（山坡、洞頂）；透天洞穴的天窗口和暗門洞口那兩小塊不畫，由洞穴的模型接手（見 cave3d.js）
+  const step = phone ? 2.7 : 1.8;
+  const ground = islandTerrain(P, G.size, step, 11, havenHeight, G.cx, G.cz, { band: 3.2, minY: -11, tile: 118, tint, skip: (x, z) => cavePatch(x, z, step * 0.9) });
   for (const geo of ground.geos) {
     const m = new THREE.Mesh(geo, mat);
     m.castShadow = m.receiveShadow = true;
     group.add(m);
   }
   const out = { groundAt: ground.at, kind: ground.kind, rocks: [] };
-  const randPt = () => { const x = G.cx + (r() - 0.5) * 2 * half, z = G.cz + (r() - 0.5) * 2 * half; return [x, z, ground.at(x, z)]; };
+  buildCave({ P, r, mat, group, groundAt: ground.at, tint });
+  // 天窗口、暗門洞口和它外面的海蝕溝不放石頭和樹（會擋住洞口，或浮在天窗上）
+  const keepOut = (x, z) => { const [s, l] = caveCoords(x, z); return cavePatch(x, z, -4) || (s > 0 && Math.abs(l) < 12); };
+  const randPt = () => { for (;;) { const x = G.cx + (r() - 0.5) * 2 * half, z = G.cz + (r() - 0.5) * 2 * half; if (!keepOut(x, z)) return [x, z, ground.at(x, z)]; } };
 
   // ---- 岩塊：3 種形狀 × 原版／鏡像 = 6 份樣板 ----
   const rg = [];

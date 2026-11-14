@@ -186,6 +186,7 @@ export function ledgeGeo(P, seed, top) {
 // 陡坡（坡度超過 37 度，連海岸的陡壁也算）：高度一層一層地分（每層 BAND 公尺，分界跟著雜訊起伏），每層是一段緩的岩架接一段陡的岩壁，
 // 岩壁的顏色照它在哪一層輪流換灰褐色（看起來是一層層的岩層），岩架上夠平的地方照樣長草
 // opt（大島用）：band 每層岩層多厚（預設 1.5）；minY 整個三角形都比這個深就不畫（深水看不到）；
+//   skip(x, z, y) 回傳 true 的三角形不畫（那裡由別的模型接手，例如洞口、天窗）；
 //   tile 切成幾公尺見方的一塊塊（回傳 geos，各自有邊界，看不到的那幾塊不用畫）；tint(顏色, x, y, z, 種類) 可以再調顏色
 export function islandTerrain(P, size, step, seed, hf, cx, cz, opt = {}) {
   const r = rng(seed);
@@ -231,7 +232,7 @@ export function islandTerrain(P, size, step, seed, hf, cx, cz, opt = {}) {
     else if (cy < 1.5 && nrm.y > 0.8) { col = P.sand; kind = 1; }
     else { col = patch < 0.42 ? P.grassDark : patch < 0.55 ? P.grass2 : P.grass; kind = 3; }
     kinds[slot] = kind;
-    if (Math.max(a.y, b.y, c.y) < MIN_Y) return;
+    if (Math.max(a.y, b.y, c.y) < MIN_Y || (opt.skip && opt.skip(fx, fz, cy))) return;
     if (opt.tint) col = opt.tint(col, fx, cy, fz, kind);
     let out = fb;
     if (TILE) {
