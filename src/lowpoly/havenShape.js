@@ -56,7 +56,7 @@ export function havenHeight(x, z) {
     const q = Math.max((lo - d) / 1.2, (d - hi) / 8, 0);
     h += (T.y - h) * ka * (1 - smooth(0, 1, q));
   }
-  return Math.max(caveTerrain(x, z, h), D.floor);
+  return Math.max(riverTerrain(x, z, caveTerrain(x, z, h)), D.floor);
 }
 
 // ==== 透天洞穴 ====
@@ -81,6 +81,10 @@ export const SKY_MAX = (() => { let m = 0; for (let i = 0; i < 360; i++) m = Mat
 // 圓穹在離中心 rho 的地方多高
 const domeY = (rho) => CV.dome.cy + CV.dome.ry * Math.sqrt(Math.max(0, 1 - (rho / CV.dome.rx) ** 2));
 
+// 暗門洞口那面崖壁在橫向 l 的地方往山裡凹進去多少
+const faceDent = (l) => CV.cove.face * fbm(l * 0.21 + 23.1, 4.7);
+// 崖面在橫向 l 的地方、沿水道方向的位置（藤蔓掛在這條線上）
+export const coveFaceS = (l) => CV.face - 0.25 - faceDent(l);
 // 洞穴對上層地形的影響：洞頂不夠厚的地方墊高；暗門洞口外面挖一道海蝕溝（兩側是陡壁，盡頭是洞口所在的崖面）
 function caveTerrain(x, z, h) {
   const [s, l, rho] = caveCoords(x, z), D = CV.dome;
@@ -91,7 +95,7 @@ function caveTerrain(x, z, h) {
     // 兩側的崖壁各自凹凸（只會比原本寬）；盡頭的崖面也不是一道平牆，這裡凹進去多一點、那裡少一點
     const side = l < 0 ? 17.3 : 41.9;
     const w = C.half + (s - CV.face) * C.widen + C.rough * fbm(s * 0.11 + side, side * 0.7);
-    const sf = s + C.face * fbm(l * 0.21 + 23.1, 4.7);
+    const sf = s + faceDent(l);
     const k = (1 - smooth(w, w + C.wall, Math.abs(l))) * smooth(CV.face - 2, CV.face + 1.5, sf);
     if (k > 0) h += (Math.min(h, C.floor) - h) * k;
   }
@@ -156,4 +160,110 @@ export function cavitySdf(x, y, z) {
   const rr = 1.4, ax = Math.abs(lc) - (hw - rr), ay = Math.abs(y - (top + T.floor) / 2) - ((top - T.floor) / 2 - rr);
   const tun = Math.max(Math.hypot(Math.max(ax, 0), Math.max(ay, 0)) + Math.min(Math.max(ax, ay), 0) - rr + n * (0.5 + 1.1 * m), 8 - s, s - (CV.face + 10));
   return Math.min(dome, shaft, tun);
+}
+
+// ==== 山澗小河 ====
+const RV = V.RIVER;
+// 河道的中線：照設計圖的幾個點拉一條平滑的曲線，沿線每公尺取一點 { x, z, s 沿河的距離, y 河床高度 }。
+// falls：瀑布 { i 瀑布頂是第幾點（下一點就在瀑布底）, top, bottom 河床的高度, bx, bz 底下水潭的中心 }
+const RIV = (() => {
+  const P = RV.path, n = P.length, fine = [], pts = [];
+  const cr = (a, b, c, d, t) => 0.5 * (2 * b + (c - a) * t + (2 * a - 5 * b + 4 * c - d) * t * t + (3 * b - a - 3 * c + d) * t * t * t);
+  for (let i = 0; i < n - 1; i++) {
+    const a = P[Math.max(0, i - 1)], b = P[i], c = P[i + 1], d = P[Math.min(n - 1, i + 2)];
+    for (let k = 0; k < 20; k++) { const t = k / 20; fine.push([cr(a[0], b[0], c[0], d[0], t), cr(a[1], b[1], c[1], d[1], t), i + t]); }
+  }
+  fine.push([P[n - 1][0], P[n - 1][1], n - 1]);
+  let acc = 0, next = 0;
+  for (let i = 0; i < fine.length; i++) {
+    if (i > 0) acc += Math.hypot(fine[i][0] - fine[i - 1][0], fine[i][1] - fine[i - 1][1]);
+    if (acc < next && i < fine.length - 1) continue;
+    // 河床的高度：兩個設計點之間直線變化；瀑布那一點的下游從瀑布底的高度算起
+    const u = fine[i][2], k = Math.min(n - 2, Math.floor(u)), t = u - k, y0 = P[k][3] ?? P[k][2], y1 = P[k + 1][2];
+    pts.push({ x: fine[i][0], z: fine[i][1], s: acc, y: y0 + (y1 - y0) * t, u });
+    next = acc + 1;
+  }
+  const falls = [], lip = new Set();
+  for (let k = 1; k < n - 1; k++) {
+    if (P[k].length < 4) continue;
+    let i = 0;
+    while (i < pts.length - 2 && pts[i + 1].u < k) i++;
+    const b = pts[Math.min(pts.length - 1, i + 1 + Math.round(RV.basin.ahead))];
+    falls.push({ i, top: P[k][2], bottom: P[k][3], bx: b.x, bz: b.z });
+    lip.add(i);
+  }
+  const pad = RV.flat + RV.bank + 1, sp = RV.spring.r + RV.bank + 1;
+  const box = [Math.min(P[0][0] - sp, ...pts.map((p) => p.x - pad)), Math.max(P[0][0] + sp, ...pts.map((p) => p.x + pad)),
+    Math.min(P[0][1] - sp, ...pts.map((p) => p.z - pad)), Math.max(P[0][1] + sp, ...pts.map((p) => p.z + pad))];
+  return { pts, falls, lip, box };
+})();
+export const riverPath = () => RIV.pts;
+export const riverFalls = () => RIV.falls;
+
+// 這一點相對小河的位置：{ d 離中線多遠, lat 在中線的哪一側多遠（有正負）, i 最近的是第幾段, t 在那一段的哪裡, s 沿河的距離, y 那裡的河床高度, tx / tz 往下游的方向 }。
+// 離小河很遠（超出它的範圍）回傳 null
+export function riverAt(x, z) {
+  const B = RIV.box;
+  if (x < B[0] || x > B[1] || z < B[2] || z > B[3]) return null;
+  const p = RIV.pts;
+  let best = Infinity, bi = 0, bt = 0;
+  for (let i = 0; i < p.length - 1; i++) {
+    const a = p[i], ex = p[i + 1].x - a.x, ez = p[i + 1].z - a.z;
+    const t = Math.min(1, Math.max(0, ((x - a.x) * ex + (z - a.z) * ez) / (ex * ex + ez * ez)));
+    const dx = x - a.x - ex * t, dz = z - a.z - ez * t, d2 = dx * dx + dz * dz;
+    if (d2 < best) { best = d2; bi = i; bt = t; }
+  }
+  const a = p[bi], b = p[bi + 1], len = Math.hypot(b.x - a.x, b.z - a.z), tx = (b.x - a.x) / len, tz = (b.z - a.z) / len;
+  // 瀑布那一段：前半在瀑布頂、後半在瀑布底（河床在中間直接掉下去）
+  const y = RIV.lip.has(bi) ? (bt < 0.5 ? a.y : b.y) : a.y + (b.y - a.y) * bt;
+  return { d: Math.sqrt(best), lat: -(x - a.x) * tz + (z - a.z) * tx, i: bi, t: bt, s: a.s + (b.s - a.s) * bt, y, tx, tz };
+}
+
+// 把地面挖成河床：d 是離「河床平的那一段」的邊多遠（負的 = 在河床上）。河床以外 bank 公尺內慢慢接回原本的山坡，
+// 兩岸至少高出河床 lip 公尺（下坡那一側原本的地面比河床低，就墊一道土堤）
+const carve = (h, d, bed, lip = RV.lip) => {
+  if (d >= RV.bank) return h;
+  if (d <= 0) return bed;
+  return Math.max(bed + (h - bed) * smooth(0, RV.bank, d), bed + lip * smooth(0, 1.2, d) * (1 - smooth(1.2, RV.bank, d)));
+};
+// 小河對地形的影響：先挖源頭的湧泉池，再挖河道，最後挖瀑布底下的水潭
+function riverTerrain(x, z, h) {
+  const q = riverAt(x, z);
+  if (!q) return h;
+  const P0 = RIV.pts[0], S = RV.spring, B = RV.basin, ds = Math.hypot(x - P0.x, z - P0.z) - S.r;
+  // 水潭只算瀑布底下那一側（不然會把瀑布頂的河道也挖掉）
+  const pools = RIV.falls.filter((f) => q.i > f.i || (q.i === f.i && q.t >= 0.5)).map((f) => [Math.hypot(x - f.bx, z - f.bz) - B.r, f.bottom - B.deep]);
+  // 河道穿過池子、水潭的地方不墊土堤（不然池子裡會多一道埂）
+  const open = ds < 1.5 || pools.some(([d]) => d < 1.5);
+  let out = carve(carve(h, ds, P0.y + RV.water.depth - S.depth), q.d - RV.flat, q.y, open ? 0 : RV.lip);
+  for (const [d, bed] of pools) out = Math.min(out, carve(out, d, bed, 0));
+  return out;
+}
+// 這一點是不是河床、湧泉池或瀑布底的水潭（上色、擺東西用）。pad：多算寬幾公尺
+export function riverBed(x, z, pad = 0) {
+  const q = riverAt(x, z);
+  if (!q) return false;
+  if (q.d < RV.flat + pad || Math.hypot(x - RIV.pts[0].x, z - RIV.pts[0].z) < RV.spring.r + pad) return true;
+  return RIV.falls.some((f) => Math.hypot(x - f.bx, z - f.bz) < RV.basin.r + pad);
+}
+
+// ==== 天窗跳水台 ====
+// 平台的位置（第一次問的時候才算，要用到地面的高度）：{ x, z 根的那一頭的中點, ux / uz 往洞中心伸出去的方向, len 全長, half 半寬, y 台面的高度, rim 從根算起幾公尺以後懸在洞口上面 }
+let DECK = null;
+export function diveDeck() {
+  if (DECK) return DECK;
+  const D = V.DIVE, cx = Math.cos(D.at), cz = Math.sin(D.at);
+  let d = 0;
+  while (skyEdge(CV.x + cx * d, CV.z + cz * d) < 0) d += 0.1;
+  DECK = {
+    x: CV.x + cx * (d + D.back), z: CV.z + cz * (d + D.back), ux: -cx, uz: -cz, len: D.back + D.out, half: D.wide / 2, rim: D.back,
+    y: havenHeight(CV.x + cx * (d + 1), CV.z + cz * (d + 1)) + D.lift,
+  };
+  return DECK;
+}
+// 腳在高度 feet 的人在 (x, z)：踩在跳水台上的話回傳台面的高度，不是就回傳 null（在底下深潭裡游的人、沒有說高度的都不算）
+export function havenDeck(x, z, feet) {
+  if (feet === null || feet === undefined) return null;
+  const K = diveDeck(), dx = x - K.x, dz = z - K.z, a = dx * K.ux + dz * K.uz, b = -dx * K.uz + dz * K.ux;
+  return a > -0.2 && a < K.len && Math.abs(b) < K.half && feet > K.y - 0.7 ? K.y : null;
 }

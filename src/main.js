@@ -12,8 +12,8 @@ import { WORLD, THROW } from './config.js';
 import { HOME_U, placeInHome } from './homeGl.js';
 import { HOME_YAW, toWorld, toLocal, headingToWorld, havenToLocal, HAVEN } from './frame.js';
 import { makeSeascape, HAVEN_LAND, HAVEN_GROUND } from './haven.js';
-import { caveUnder, caveCeil, caveFloor, caveRock, havenLow, nearCave, caveGate, CAVE_AXIS } from './lowpoly/havenShape.js';
-import { CAVE } from './lowpoly/havenPlan.js';
+import { caveUnder, caveCeil, caveFloor, caveRock, havenLow, nearCave, caveGate, CAVE_AXIS, skyEdge, havenDeck, riverAt } from './lowpoly/havenShape.js';
+import { CAVE, RIVER } from './lowpoly/havenPlan.js';
 import { HOME_GROUND, ZONE_LABEL } from './lowpoly/harborPlan.js';
 import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SWITCHES_W, ROOFS_W, underRoof, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
 import { fishLabel, FishWorld } from './fish.js';
@@ -336,6 +336,9 @@ function landAt(x, z, hx, hz) {
     const VG = HAVEN_GROUND, vh = VG.size / 2 - 2, [vx, vz] = havenToLocal(x, z);
     if (Math.abs(vx - VG.cx) < vh && Math.abs(vz - VG.cz) < vh) {
       // 透天洞穴是上下兩層：人比洞頂低（在洞裡游泳、從天窗掉下去）就照洞底，在洞頂上面走就照山坡
+      // 天窗邊的跳水台：前半截懸在洞口上面，踩在上面的人照台面
+      const dk = havenDeck(vx, vz, walker.feet);
+      if (dk !== null) return skyEdge(vx, vz) > 0 ? Math.max(dk, HAVEN_LAND.at(vx, vz)) : dk;
       const low = caveUnder(vx, vz, walker.feet);
       return low !== null ? low : HAVEN_LAND.at(vx, vz);
     }
@@ -1006,6 +1009,21 @@ function updateCave(dt) {
   caveState.k += ((inside ? 1 : 0) - caveState.k) * e;
   caveState.sky += ((inside && caveCeil(px, pz) === Infinity ? 1 : 0) - caveState.sky) * e;
   caveState.dry += ((nearCave(qx, qz) && caveUnder(qx, qz, cp.y) !== null && caveCeil(qx, qz) !== Infinity ? 1 : 0) - caveState.dry) * e;
+}
+
+// 山澗小河：人踩進河道就被水沖著往下滑——順著河道走、慢慢被帶回河中間，一路滑過瀑布，最後從天窗的缺口掉進深潭。
+// 已經在滑的人飛過瀑布、還在半空中的時候照樣往前帶（不然會直直掉在瀑布腳下）
+let riverOn = false;
+function riverRide(dt) {
+  if (player.boat || drown) { riverOn = false; return; }
+  const [vx, vz] = havenToLocal(player.x, player.z), q = riverAt(vx, vz), air = player.h > 0, R = RIVER.slide;
+  riverOn = !!q && q.s > R.from && q.d < RIVER.flat + (riverOn && air ? 3 : 0.3) && player.y < q.y + (riverOn ? 14 : 0.9) && player.y > q.y - 2.5;
+  if (!riverOn) return;
+  const lx = q.tx * R.speed + q.tz * q.lat * R.center, lz = q.tz * R.speed - q.tx * q.lat * R.center;
+  const [ax, az] = HAVEN.toWorld(vx, vz), [bx, bz] = HAVEN.toWorld(vx + lx, vz + lz);
+  walker.feet = player.y; walker.air = air;
+  player.drift((bx - ax) * dt, (bz - az) * dt, walkWorld);
+  walker.feet = null;
 }
 
 // 岸邊的淺水模擬：鏡頭附近一塊範圍，浪真的沖上沙灘再退回去，也會繞過木樁與礁石
@@ -3378,6 +3396,7 @@ function advance(dt) {
     walker.feet = null;
     if (v.fp) { player.yaw = v.yaw; player.mesh.rotation.y = -v.yaw; } // 第一人稱時身體跟著視線
     if (player.onWater && !drown) waveRide(dt);
+    riverRide(dt);
     // 腳步聲：腳每落地一次（走路動作每半圈）播一聲，木板和草地沙地各一組
     const stepN = Math.floor(player.phase / Math.PI);
     if (stepN !== lastStep) {

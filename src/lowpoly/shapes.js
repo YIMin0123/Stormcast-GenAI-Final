@@ -186,6 +186,7 @@ export function ledgeGeo(P, seed, top) {
 // 陡坡（坡度超過 37 度，連海岸的陡壁也算）：高度一層一層地分（每層 BAND 公尺，分界跟著雜訊起伏），每層是一段緩的岩架接一段陡的岩壁，
 // 岩壁的顏色照它在哪一層輪流換灰褐色（看起來是一層層的岩層），岩架上夠平的地方照樣長草
 // opt（大島用）：band 每層岩層多厚（預設 1.5）；minY 整個三角形都比這個深就不畫（深水看不到）；
+//   plain(x, z) 回傳 0 的地方不分層（河道：分層會把河床墊高）；
 //   skip(x, z, y) 回傳 true 的三角形不畫（那裡由別的模型接手，例如洞口、天窗）；
 //   tile 切成幾公尺見方的一塊塊（回傳 geos，各自有邊界，看不到的那幾塊不用畫）；tint(顏色, x, y, z, 種類) 可以再調顏色
 export function islandTerrain(P, size, step, seed, hf, cx, cz, opt = {}) {
@@ -200,7 +201,7 @@ export function islandTerrain(P, size, step, seed, hf, cx, cz, opt = {}) {
     let h = hf(x, z);
     if (!edge) {
       const e = 0.8, gx = (hf(x + e, z) - hf(x - e, z)) / (2 * e), gz = (hf(x, z + e) - hf(x, z - e)) / (2 * e);
-      const w = smooth(0.62, 1.1, Math.hypot(gx, gz)) * smooth(-1.2, 0.2, h);   // 海岸的陡壁也分層（水面下一點開始）
+      const w = smooth(0.62, 1.1, Math.hypot(gx, gz)) * smooth(-1.2, 0.2, h) * (opt.plain ? opt.plain(x, z) : 1);   // 海岸的陡壁也分層（水面下一點開始）
       if (w > 0) {
         const off = (fbm(x * 0.06 + 13, z * 0.06) - 0.5) * 1.2;   // 岩層的分界不是水平的一刀，跟著雜訊微微起伏
         const t = h / BAND + off, k = Math.floor(t), f = t - k;

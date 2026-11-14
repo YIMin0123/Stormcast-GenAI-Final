@@ -58,12 +58,15 @@ export function makeSeascape(mat) {
   const beacon = add(REEF_FRAMES.beacon, buildBeacon, 5507, 1e9);   // 燈標的燈不吃霧，再遠都要看得到
   tagSurfaces(false);
   const F = BEACON.flash;
+  let tick = false;
   return {
     groups, rocks,
     beaconLamp: (() => { const [x, z] = REEF_FRAMES.beacon.toWorld(beacon.lamp[0], beacon.lamp[2]); return { x, y: beacon.lamp[1], z }; })(),
     update(time, cam) {
       beacon.bulb.visible = (time % F.period) < F.on;
       for (const p of parts) p.group.visible = (cam.x - p.x) ** 2 + (cam.z - p.z) ** 2 < p.reach * p.reach;
+      // 小河的水：鏡頭在島附近才動（手機兩幀換一次顏色）
+      if ((cam.x - parts[0].x) ** 2 + (cam.z - parts[0].z) ** 2 < 360 * 360 && (!TOUCH || (tick = !tick))) haven.river.update(time);
     },
   };
 }
