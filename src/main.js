@@ -17,7 +17,6 @@ import { CAVE, RIVER, PORT } from './lowpoly/havenPlan.js';
 import { HAVEN_SELL_W, HAVEN_PUMP_W } from './layout.js';
 import { riverLevel } from './fishzone.js';
 import { makeHavenFx } from './havenFx.js';
-import { SUMMIT, SUMMIT_W } from './extrasPlan.js';
 import { HOME_GROUND, ZONE_LABEL } from './lowpoly/harborPlan.js';
 import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SWITCHES_W, ROOFS_W, underRoof, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
 import { fishLabel, FishWorld } from './fish.js';
@@ -997,7 +996,7 @@ addRocks(HARBOR_ROCKS);   // 消波塊
 shade(harbor);
 
 // 探險大港灣島和海上的礁石群（石拱門、環礁、燈標岩嶼）：跟港口用同一個低面材質
-const seascape = makeSeascape(harbor.userData.lowpolyMat);
+const seascape = makeSeascape(harbor.userData.lowpolyMat, { uniforms: shared, paintSky: !!shared.uCloudMap.value });
 for (const g of seascape.groups) { scene.add(g); g.updateMatrixWorld(true); g.traverse((o) => { o.matrixAutoUpdate = false; }); }
 addRocks(seascape.rocks);
 BOLLARDS.push(...seascape.bollards);   // 大港碼頭的繫纜樁接在母港的後面（編號不變）
@@ -2039,14 +2038,10 @@ function aimTarget() {
     // 停船位置牌
     if (Math.hypot(px - BOARD_STAND_W.x, pz - BOARD_STAND_W.z) < 2.4) add('berth', new THREE.Vector3(BERTH_BOARD_W.x, DECK_Y + 1.7, BERTH_BOARD_W.z), 0.65);
   }
-  // 漂流寶箱（在船上也撿得到）、山頂的烽火台和古鐘
+  // 漂流寶箱（在船上也撿得到）
   {
     const c = havenFx.chestNear(player.pos.x, player.pos.y, player.pos.z);
     if (c) add('chest', c.pos, 0.6, { chest: c });
-    if (!b) {
-      if (Math.hypot(px - SUMMIT_W.fire.x, pz - SUMMIT_W.fire.z) < SUMMIT.reach) add('beacon', new THREE.Vector3(SUMMIT_W.fire.x, player.pos.y + 1.7, SUMMIT_W.fire.z), 0.9);
-      if (Math.hypot(px - SUMMIT_W.bell.x, pz - SUMMIT_W.bell.z) < SUMMIT.reach) add('bell', new THREE.Vector3(SUMMIT_W.bell.x, player.pos.y + 1.7, SUMMIT_W.bell.z), 0.6);
-    }
   }
   // 放在甲板或地上的魚、油桶
   for (const it of fish.items) {
@@ -2081,11 +2076,9 @@ function interact() {
   const a = aimTarget(), kind = a ? a.kind : '';
   if (kind === 'hook') return havenSell();
   if (kind === 'pump') return havenPump();
-  if (kind === 'chest' || kind === 'beacon' || kind === 'bell') {
+  if (kind === 'chest') {
     if (!net.online) return toast('連線中斷，等接回去再試');
-    if (kind === 'chest') return net.send({ t: 'chest', id: a.chest.id });
-    if (kind === 'beacon') return havenFx.burning() ? toast('烽火正燒著') : net.send({ t: 'fire' });
-    return net.send({ t: 'bell' });
+    return net.send({ t: 'chest', id: a.chest.id });
   }
   if (fish.held && fish.held.can) {
     // 提著油桶：對準油箱的加油口就倒進去，倒不完的留在桶裡；沒對準就放下
@@ -2207,8 +2200,8 @@ function updatePrompt() {
         : fish.held ? `捧著${fish.held.sp.name}游：比較慢，也比較累` : '';
     } else if (kind === 'hook' || kind === 'pump') {
       text = kind === 'hook' ? hookText() : pumpText();
-    } else if (kind === 'chest' || kind === 'beacon' || kind === 'bell') {
-      text = kind === 'chest' ? '按 E 打開漂流寶箱' : kind === 'bell' ? '按 E 敲鐘（整片海都聽得到）' : havenFx.burning() ? '烽火正燒著' : '按 E 點燃烽火（整片海都看得到）';
+    } else if (kind === 'chest') {
+      text = '按 E 打開漂流寶箱';
     } else if (fish.held && fish.held.can) {
       const b = kind === 'tank' ? ab : null;
       text = b && b.spec.tank - b.fuel >= 0.1 ? `按 E 把油倒進油箱（${litres(b.fuel)} / ${b.spec.tank} 公升）`
@@ -2275,9 +2268,9 @@ function updatePrompt() {
 
 // ---- 介面 -----------------------------------------------------------------
 const audio = new OceanAudio();
-// 魚群熱點、漂流寶箱、山頂烽火的畫面（什麼時候有、在哪裡，照伺服器說的）
+// 魚群熱點、漂流寶箱的畫面（什麼時候有、在哪裡，照伺服器說的）
 const havenFx = makeHavenFx({
-  scene, shade, splash, waterY, audio,
+  scene, shade, splash, waterY, mist: (x, y, z, vx, vy, vz, life, size) => spray.emit(x, y, z, vx, vy, vz, life, size),
   // 地面多高：大港灣島照畫出來的那張地面，其他地方照海床
   groundAt: (x, z) => { const [vx, vz] = havenToLocal(x, z), VG = HAVEN_GROUND, vh = VG.size / 2 - 2; return HAVEN_LAND.at && Math.abs(vx - VG.cx) < vh && Math.abs(vz - VG.cz) < vh ? HAVEN_LAND.at(vx, vz) : bedAt(x, z); },
   onHot: (h) => toast(`海上出現魚群（海鳥在上空盤旋），離你約 ${Math.round(Math.hypot(h.x - player.x, h.z - player.z) / 10) * 10} 公尺。按 M 看地圖`),
@@ -3259,11 +3252,6 @@ net.on('chestGot', (m) => {
   audio.play('coin');
   if (m.fuel) { if (fish.held) fish.drop(); fish.spawnCan(CAN); toast(`寶箱裡是一桶油（${CAN} 公升）`); }
   else toast(`寶箱裡有 ${cash(m.cash)}`);
-});
-net.on('bell', (m) => {
-  const d = Math.hypot(player.x - SUMMIT_W.bell.x, player.z - SUMMIT_W.bell.z);
-  havenFx.bell(clamp(1.15 - d / 1400, 0.12, 1));
-  if (d > 60) toast(`${m.name} 敲響了山頂的古鐘`);
 });
 net.on('pumped', (m) => {
   applyKit(m.kit);

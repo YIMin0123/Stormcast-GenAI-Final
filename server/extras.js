@@ -1,4 +1,4 @@
-// 一間房裡的三樣「大家一起看得到」的東西：海上的魚群熱點、風暴後的漂流寶箱、山頂的烽火。
+// 一間房裡的兩樣「大家一起看得到」的東西：海上的魚群熱點、風暴後的漂流寶箱。
 // 什麼時候出現、在哪裡、誰撿走了，都由伺服器決定，再跟著天氣一起送給同房的每個人（見 room.js 的 worldState）
 import { bedAt, offAt } from './world.js';
 import { HOTSPOT, CHESTS, CHEST_SPOTS_W } from '../src/extrasPlan.js';
@@ -11,8 +11,6 @@ export class Extras {
     this.hot = null;                    // { x, z, r, until 房間時鐘的幾秒 }
     this.nextHot = rand(HOTSPOT.every) * 0.4;
     this.chests = [];                   // [{ id, k 第幾個地點, until }]
-    this.fire = 0;                      // 烽火燒到房間時鐘的幾秒（0 = 沒點）
-    this.bellAt = -1e9;
     this.was = 'calm';
     this.uid = 1;
     this.clock = 0;
@@ -32,7 +30,6 @@ export class Extras {
     if (this.chests.length !== n) changed = true;
     if (phase === 'calm' && ROUGH.has(this.was)) { this.spawnChests(t); changed = true; }
     this.was = phase;
-    if (this.fire && t > this.fire) { this.fire = 0; changed = true; }
     return changed;
   }
 
@@ -66,7 +63,6 @@ export class Extras {
     return {
       hot: this.hot ? { x: this.hot.x, z: this.hot.z, r: this.hot.r, left: Math.max(0, this.hot.until - this.clock) } : null,
       chests: this.chests.map((c) => [c.id, c.k]),
-      fire: this.fire ? Math.max(0, this.fire - this.clock) : 0,
     };
   }
 }

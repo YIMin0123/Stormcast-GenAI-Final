@@ -1,113 +1,130 @@
 // 大港灣島的山澗小河、瀑布、天窗跳水台、藤蔓的模型（大港座標，位置和尺寸見 havenPlan.js 的 RIVER、DIVE、VINES）。
-// 都交給全場共用的那個低面材質畫：
-//   河水是一條貼著河床的水帶，一格一格各自一個顏色；每幀照「沿河的距離 − 時間」換顏色，白沫就一格一格往下游跑（不另外寫著色器、不用貼圖）
-//   瀑布是從崖頂往前拋出去的一道水簾（雙面都畫，走到水簾後面也看得到）
-//   藤蔓只是裝飾（不能爬）：一串一串掛著，照材質原本的隨風擺動晃
+//   河水、瀑布、水潭是一張水面的網格，用跟海面同一種水的材質畫（見 renderShaders.js 的 riverVert、riverFrag）：
+//     這裡只負責形狀，和每個頂點上「水往哪邊流、流多快、水多深、白沫多不多」這幾個數字，動起來是材質自己算的
+//   跳水台、藤蔓交給全場共用的那個低面材質畫；藤蔓只是裝飾（不能爬），照材質原本的隨風擺動晃
 import * as THREE from 'three';
 import { FaceBuilder, rng } from './kit.js';
 import { jitter } from './palette.js';
-import { riverPath, riverFalls, skyEdge, diveDeck } from './havenShape.js';
+import { riverPath, riverFalls, skyEdge, diveDeck, springEdge, basinEdge } from './havenShape.js';
 import { RIVER } from './havenPlan.js';
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
+const clamp01 = (v) => Math.min(1, Math.max(0, v));
+const smooth = (a, b, v) => { const t = clamp01((v - a) / (b - a)); return t * t * (3 - 2 * t); };
 
 // ---- 河水、瀑布、水潭 ----
-// 回傳 { update(時間) }：每幀呼叫，換水面每一格的顏色
-export function buildRiver({ mat, group }) {
+// groundAt(x, z)：畫出來的地面多高（水邊在哪裡、水多深照它算）；water：水的材質（遊戲那邊給的，見 haven.js），沒給（範例頁）就用一片半透明的水色頂著
+export function buildRiver({ group, groundAt, water }) {
   const pts = riverPath(), falls = riverFalls(), W = RIVER.water, S = RIVER.spring;
-  const fb = new FaceBuilder(), cells = [], WHITE = new THREE.Color(1, 1, 1);
-  const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), nrm = new THREE.Vector3();
-  // 一格（四邊形）：u 沿河的距離、lane 第幾道、kind 0 河水／1 瀑布／2 水潭／3 落水的白沫；both：雙面都畫
-  const tri = (a, b, c, both) => {
-    nrm.crossVectors(e1.subVectors(b, a), e2.subVectors(c, a));
-    if (nrm.y < 0) { const t = b; b = c; c = t; }   // 朝上
-    fb.tri(a.clone(), b.clone(), c.clone(), WHITE, [0, 0, 0], 0.25);
-    if (both) fb.tri(a.clone(), c.clone(), b.clone(), WHITE, [0, 0, 0], 0.25);
-  };
-  const cell = (list, u, lane, kind, both = false) => {
-    const v0 = fb.p.length / 3;
-    for (const [a, b, c] of list) tri(a, b, c, both);
-    cells.push({ v0, n: fb.p.length / 3 - v0, u, lane, kind });
-  };
-  const LANES = [-1, -1 / 3, 1 / 3, 1];
-  const row = (st, y = st.y, fwd = 0, k = 1) => LANES.map((L) => V3(st.x + st.tx * fwd - st.tz * L * W.half * k, y, st.z + st.tz * fwd + st.tx * L * W.half * k));
-  const strip = (r0, r1, u, kind, both) => { for (let j = 0; j < 3; j++) cell([[r0[j], r0[j + 1], r1[j]], [r0[j + 1], r1[j + 1], r1[j]]], u, j, kind, both); };
-  // 一道水簾：從 st 往前拋 thr 公尺、從 yTop 落到 yBot（拋物線），分 n 段
-  const curtain = (st, yTop, yBot, thr, n) => {
-    let prev = null;
-    for (let k = 0; k <= n; k++) {
-      const t = k / n, cur = row(st, yTop - (yTop - yBot) * t * t, thr * t, 1 - 0.15 * t);
-      if (prev) strip(prev, cur, st.u + (yTop - yBot) * t, 1, true);
-      prev = cur;
+  const pos = [], pat = [], dir = [], wv = [], idx = [];
+  // 一個頂點：p 紋路座標、f 紋路每秒流多遠、d 紋路 y 軸在地上的方向、w (水深, 種類, 白沫, 邊緣淡出)
+  const vert = (x, y, z, p, f, d, w) => { pos.push(x, y, z); pat.push(p[0], p[1], f[0], f[1]); dir.push(d[0], d[1]); wv.push(w[0], w[1], w[2], w[3]); return pos.length / 3 - 1; };
+  // 一排一排的頂點（每排一樣多個）縫成一張面
+  const sew = (rows) => {
+    for (let i = 0; i < rows.length - 1; i++) for (let j = 0; j < rows[i].length - 1; j++) {
+      const a = rows[i][j], b = rows[i][j + 1], c = rows[i + 1][j], d = rows[i + 1][j + 1];
+      idx.push(a, c, b, b, c, d);
     }
   };
-  // 一圈水面（扇形拼成的圓）
-  const disc = (x, z, y, rad, n, kind) => {
-    for (let k = 0; k < n; k++) {
-      const a0 = (k / n) * Math.PI * 2, a1 = ((k + 1) / n) * Math.PI * 2;
-      cell([[V3(x, y, z), V3(x + Math.cos(a0) * rad, y, z + Math.sin(a0) * rad), V3(x + Math.cos(a1) * rad, y, z + Math.sin(a1) * rad)]], k * 1.7, k % 3, kind);
-    }
-  };
+  const depthAt = (x, y, z) => Math.max(-0.3, Math.min(1.5, y - groundAt(x, z)));   // 這一點的水有多深（水面在地面底下是負的）
+  // 從 (x, z) 往 (dx, dz) 走，高 y 的水面在幾公尺外碰到岸；max 公尺內都沒碰到（那一側沒有岸擋著）回傳 null
+  const shore = (x, z, dx, dz, y, max) => { for (let d = 0.3; d <= max; d += 0.15) if (groundAt(x + dx * d, z + dz * d) > y) return d; return null; };
+  const BANK = 0.3;   // 水面鋪到岸裡面多遠（水邊那條線由地面切出來）
 
-  // 沿著河道一站一站：瀑布把水帶切成上下兩段；流進天窗的地方停
+  // 沿著河道一站一站鋪成一條連續的水面：湧泉池、河道、瀑布底下的水潭都是它（每一站左右各自量到岸多遠，池子的地方自然就寬），
+  // 中間沒有另外接上去的水面，所以沒有接縫。只有瀑布把它切成上下兩段；流進天窗的地方停。
+  // 一站：{ x, z, y 水面高度, tx / tz 往下游, u 沿河的距離, slope 多陡, pond 在池子裡幾成（水流得慢、水紋不拉長）, reach 最遠量到多遠 }
+  const B = RIVER.basin, p0 = pts[0], l0 = Math.hypot(pts[1].x - p0.x, pts[1].z - p0.z), t0 = [(pts[1].x - p0.x) / l0, (pts[1].z - p0.z) / l0];
+  const pondAt = (x, z) => Math.max(1 - smooth(-1, 1.5, springEdge(x, z)), ...falls.map((f) => 1 - smooth(-0.5, 1.5, basinEdge(f, x, z))));
+  const station = (x, z, y, tx, tz, u, slope) => { const pond = pondAt(x, z); return { x, z, y, tx, tz, u, slope, pond, reach: RIVER.flat + 2.6 + pond * (Math.max(S.r, B.r) * 1.4 + 0.5) }; };
   const lipAt = new Map(falls.map((f) => [f.i, f]));
-  const runs = [[]];
+  const runs = [[]], hitOf = new Map([[runs[0], { at: [p0.x, p0.z], k: 0.25 }]]);   // 每一段的水從哪裡冒出來／沖下來（那裡翻白）
+  // 湧泉池在源頭後面的那一半：往上游多鋪幾站
+  for (let k = Math.ceil(S.r * 1.4) + 1; k >= 1; k--) runs[0].push(station(p0.x - t0[0] * k, p0.z - t0[1] * k, p0.y + W.depth, t0[0], t0[1], -k, 0));
   for (let i = 0; i < pts.length; i++) {
     const p = pts[i];
     if (skyEdge(p.x, p.z) < -0.4) break;
-    if (p.s < S.r - 0.8) continue;   // 湧泉池裡面：由池子的水面蓋著
     const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)], l = Math.hypot(b.x - a.x, b.z - a.z);
-    runs[runs.length - 1].push({ x: p.x, z: p.z, y: p.y + W.depth, tx: (b.x - a.x) / l, tz: (b.z - a.z) / l, u: p.s });
+    runs[runs.length - 1].push(station(p.x, p.z, p.y + W.depth, (b.x - a.x) / l, (b.z - a.z) / l, p.s, Math.max(0, (a.y - b.y) / l)));
     const f = lipAt.get(i);
     if (f) {
-      const q = pts[i + 1], sl = Math.hypot(q.x - p.x, q.z - p.z), st = { x: (p.x + q.x) / 2, z: (p.z + q.z) / 2, tx: (q.x - p.x) / sl, tz: (q.z - p.z) / sl, u: p.s + 0.5 };
-      runs[runs.length - 1].push({ ...st, y: f.top + W.depth, fall: f });
-      runs.push([{ ...st, y: f.bottom + W.depth }]);
+      // 瀑布口：上面那一段停在崖邊，下面那一段從崖腳（水潭的水面）接著鋪
+      const q = pts[i + 1], sl = Math.hypot(q.x - p.x, q.z - p.z), tx = (q.x - p.x) / sl, tz = (q.z - p.z) / sl, mx = (p.x + q.x) / 2, mz = (p.z + q.z) / 2;
+      runs[runs.length - 1].push({ ...station(mx, mz, f.top + W.depth, tx, tz, p.s + 0.5, 0.6), fall: f });
+      const next = [station(mx, mz, f.bottom + W.depth, tx, tz, p.s + 0.5, 0)];
+      hitOf.set(next, { at: [mx + tx * RIVER.fall.throw, mz + tz * RIVER.fall.throw], k: 1.4 });   // 水簾落在水潭的哪裡
+      runs.push(next);
     }
   }
+
+  // 一排 13 個點（靠岸的地方密一點，水邊才利落）：左右各自量到岸多遠、鋪到岸裡面一點點（水邊在哪裡由地面決定，不是一條直直的邊）；那一側量不到岸就只鋪到 OPEN 公尺、最外面那一排淡出
+  const LANES = [-1, -0.92, -0.8, -0.6, -0.38, -0.18, 0, 0.18, 0.38, 0.6, 0.8, 0.92, 1], OPEN = W.half + 0.3;
   let last = null;
   for (const run of runs) {
-    for (let i = 0; i < run.length - 1; i++) strip(row(run[i]), row(run[i + 1]), run[i].u, 0, false);
-    const end = run[run.length - 1];
-    if (end && end.fall) curtain(end, end.y, end.fall.bottom + W.depth, RIVER.fall.throw, 6);
-    if (end) last = end;
+    if (run.length < 2) continue;
+    const tail = run[run.length - 1], hit = hitOf.get(run);
+    sew(run.map((st) => {
+      const speed = Math.min(6.5, 1.4 + 10 * st.slope) * (1 - 0.75 * st.pond);
+      // 陡的地方翻白；快到瀑布口也是
+      const steep = Math.max(0.85 * smooth(0.1, 0.5, st.slope), tail.fall ? 0.6 * Math.exp(-(tail.u - st.u) / 1.3) : 0);
+      // 左岸、右岸。快到瀑布口的那幾站就在崖邊（兩旁的地面往下掉，量到的岸不準）：最寬只到水簾那麼寬
+      let sides = [shore(st.x, st.z, st.tz, -st.tx, st.y, st.reach), shore(st.x, st.z, -st.tz, st.tx, st.y, st.reach)];
+      if (tail.fall && tail.u - st.u < 3) sides = sides.map((v) => Math.min(v ?? 9, W.half * 1.1 - BANK + (tail.u - st.u) * 0.5));
+      return LANES.map((L) => {
+        const s = sides[L < 0 ? 0 : 1], lat = L * (s === null ? OPEN : s + BANK), x = st.x - st.tz * lat, z = st.z + st.tx * lat;
+        const white = hit ? Math.max(steep, hit.k * Math.exp(-Math.hypot(x - hit.at[0], z - hit.at[1]) / 2.4)) : steep;
+        return vert(x, st.y, z, [lat, st.u], [0, speed], [st.tx, st.tz], [depthAt(x, st.y, z), -st.pond, white, s === null && Math.abs(L) === 1 ? 0 : 1]);
+      });
+    }));
+    last = tail;
   }
+
+  // 落進深潭的那一圈白沫：一圈一圈的同心圓，波紋從中間往外推，越外面越淡
+  const RINGS = [0, 0.3, 0.55, 0.75, 0.9, 1], SEG = 20;
+  const splash = (x, z, y, rad, speed, white) => {
+    sew(RINGS.map((k) => {
+      const row = [];
+      for (let j = 0; j <= SEG; j++) {
+        const a = (j / SEG) * Math.PI * 2, c = Math.cos(a), sn = Math.sin(a), px = x + c * rad * k, pz = z + sn * rad * k;
+        row.push(vert(px, y, pz, [-px, pz], [-c * speed, sn * speed], [0, 1], [0.4, 3, white * Math.exp(-rad * k / 1.7), 1 - smooth(0.45, 1, k)]));
+      }
+      return row;
+    }));
+  };
+
+  // 水簾：從 st 往前拋 thr 公尺、從 yTop 落到 yBot（拋物線），分 n 段；越往下掉越快。兩邊淡出
+  const FALL = [-1.1, -0.8, -0.4, 0, 0.4, 0.8, 1.1];
+  const curtain = (st, yTop, yBot, thr, n) => {
+    let arc = 0, py = yTop, pf = 0;
+    const rows = [];
+    for (let k = 0; k <= n; k++) {
+      const t = k / n, y = yTop - (yTop - yBot) * t * t, fwd = thr * t, wide = 1 - 0.15 * t;
+      arc += Math.hypot(py - y, fwd - pf); py = y; pf = fwd;
+      rows.push(FALL.map((L, j) => vert(st.x + st.tx * fwd - st.tz * L * W.half * wide, y, st.z + st.tz * fwd + st.tx * L * W.half * wide,
+        [L * W.half, st.u + arc], [0, 3.5 + 7 * t], [st.tx, st.tz], [0.45, 1, 1, j === 0 || j === FALL.length - 1 ? 0 : 1])));
+    }
+    sew(rows);
+  };
+  for (const run of runs) { const end = run[run.length - 1]; if (end && end.fall) curtain(end, end.y, end.fall.bottom + W.depth, RIVER.fall.throw, 7); }
   // 最後從天窗的缺口沖下去，落在深潭上（落水的地方一圈白沫）
   if (last) {
-    const T = RIVER.plunge.throw;
+    const T = RIVER.plunge.throw, hx = last.x + last.tx * T, hz = last.z + last.tz * T;
+    splash(hx, hz, 0.34, 3.4, 1.3, 1.6);
     curtain(last, last.y, 0.3, T, 14);
-    disc(last.x + last.tx * T, last.z + last.tz * T, 0.34, 2.8, 8, 3);
   }
-  // 湧泉池、瀑布底下的水潭（比河水低一點點，兩片水面疊在一起才不會閃）
-  disc(pts[0].x, pts[0].z, pts[0].y + W.depth, S.r - 0.15, 12, 2);
-  for (const f of falls) disc(f.bx, f.bz, f.bottom + W.depth - 0.04, RIVER.basin.r + 0.6, 10, 2);
 
-  const geo = fb.build(), col = geo.attributes.color, A = col.array;
-  col.setUsage(THREE.DynamicDrawUsage);
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.receiveShadow = true;
-  mesh.castShadow = false;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('aPat', new THREE.Float32BufferAttribute(pat, 4));
+  geo.setAttribute('aDir', new THREE.Float32BufferAttribute(dir, 2));
+  geo.setAttribute('aW', new THREE.Float32BufferAttribute(wv, 4));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, water || new THREE.MeshBasicMaterial({ color: 0x3fb9c6, transparent: true, opacity: 0.72, side: THREE.DoubleSide }));
+  mesh.castShadow = mesh.receiveShadow = false;
+  mesh.renderOrder = 2.2;   // 在海面之後畫：落進深潭的水簾和白沫蓋在海面上
   group.add(mesh);
-  const deep = new THREE.Color('#1f8fd0'), light = new THREE.Color('#74d2ee'), white = new THREE.Color('#f3fbff');
-  const update = (t) => {
-    for (const c of cells) {
-      let k, w;   // k：深淺（0 深 … 1 淺）；w：白沫（0 … 1）
-      if (c.kind === 0) {
-        k = 0.5 + 0.5 * Math.sin(c.u * 0.9 - t * 4.2 + c.lane * 2.1);
-        const s = Math.sin(c.u * 0.55 - t * 6 + c.lane * 1.7 + Math.sin(c.u * 0.13) * 3);
-        w = s > 0 ? s ** 6 * 0.85 : 0;
-      } else if (c.kind === 1) { k = 1; w = 0.5 + 0.45 * Math.sin(c.u * 1.5 - t * 12 + c.lane * 2.4); }
-      else if (c.kind === 2) { k = 0.35 + 0.25 * Math.sin(t * 1.3 + c.u * 1.9); w = 0; }
-      else { k = 1; w = 0.6 + 0.4 * Math.sin(t * 9 + c.u * 2.3); }
-      const r = (deep.r + (light.r - deep.r) * k) * (1 - w) + white.r * w;
-      const g = (deep.g + (light.g - deep.g) * k) * (1 - w) + white.g * w;
-      const b = (deep.b + (light.b - deep.b) * k) * (1 - w) + white.b * w;
-      for (let i = c.v0 * 3, e = (c.v0 + c.n) * 3; i < e; i += 3) { A[i] = r; A[i + 1] = g; A[i + 2] = b; }
-    }
-    col.needsUpdate = true;
-  };
-  update(0);
-  return { update };
+  return mesh;
 }
 
 // ---- 天窗跳水台：木板平台，根在天窗邊的地上，前半截懸在洞口上面 ----

@@ -1901,3 +1901,144 @@ void main() {
   #include <colorspace_fragment>
 }
 `;
+
+// 山澗小河、瀑布、水潭（大港灣島）：跟海面是同一種水——同一套水色、天空的倒影、太陽的反光、白沫，
+// 吃同一組 uniforms，所以天色怎麼變（陰天、黃昏、晚上、起霧）都跟海一致。
+// 不一樣的只有水面的紋路：不是風浪，而是順著水流跑的細紋和白沫（兩份錯開半拍的紋路輪流淡入淡出，流速不一樣的地方也不會越拉越長）。
+// 模型見 lowpoly/river3d.js。RIVER_LITE（手機）：倒影只映天空的漸層、波紋少一層
+export const riverVert = /* glsl */ `
+attribute vec4 aPat;   // (紋路座標 x, y（公尺）, 紋路每秒往哪邊流多遠 x, y)
+attribute vec2 aDir;   // 紋路座標的 y 軸在地上是哪個方向（模型座標的 x, z）
+attribute vec4 aW;     // (水深, 種類：0 河面 … −1 池子（中間的值是河面和池子之間）／1 瀑布的水簾／3 落進深潭的那圈白沫, 白沫多不多 0–1, 邊緣淡出 0–1)
+varying vec3 vWorld;
+varying vec4 vPat;
+varying vec2 vDir;
+varying vec4 vW;
+varying vec3 vNrm;
+void main() {
+  vec4 w = modelMatrix * vec4(position, 1.0);
+  vWorld = w.xyz;
+  vPat = aPat;
+  vW = aW;
+  vDir = (modelMatrix * vec4(aDir.x, 0.0, aDir.y, 0.0)).xz;
+  vNrm = mat3(modelMatrix) * normal;
+  gl_Position = projectionMatrix * viewMatrix * w;
+}
+`;
+
+export const riverFrag = /* glsl */ `
+${common}
+#define SH_TAPS 4
+${shadowRecv}
+uniform sampler2D uFoamTex;
+uniform float uPixelAngle;
+varying vec3 vWorld;
+varying vec4 vPat;
+varying vec2 vDir;
+varying vec4 vW;
+varying vec3 vNrm;
+
+// 水面的高低（0–1）
+float rvH(vec2 q) {
+#ifdef RIVER_LITE
+  return vnoise(q);
+#else
+  return 0.65 * vnoise(q) + 0.35 * vnoise(q * 2.7 + 5.1);
+#endif
+}
+// 這一點的坡度（紋路座標）
+vec2 rvSlope(vec2 p, vec2 sc) {
+  vec2 e = vec2(0.11, 0.0);
+  return vec2(rvH((p + e.xy) * sc) - rvH((p - e.xy) * sc), rvH((p + e.yx) * sc) - rvH((p - e.yx) * sc)) / 0.22;
+}
+
+void main() {
+  float depth = vW.x, kind = vW.y, churn = vW.z;
+  bool fall = kind > 0.5 && kind < 1.5, splash = kind > 2.5;
+  float pond = splash ? 1.0 : clamp(-kind, 0.0, 1.0);   // 在池子裡幾成：水紋不拉長、沒有順流的白絲
+  vec3 toCam = cameraPosition - vWorld;
+  float dist = length(toCam);
+  vec3 V = toCam / dist;
+  vec3 Ng = normalize(vNrm);
+  if (dot(Ng, V) < 0.0) Ng = -Ng;
+  float fp = dist * uPixelAngle / max(abs(dot(Ng, V)), 0.06);   // 一個像素在水面上蓋住多寬（公尺）
+  float fine = clamp(0.5 / fp, 0.0, 1.0), texFade = clamp(1.2 / fp, 0.0, 1.0);
+
+  // ---- 順著水流跑的紋路 ----
+  float c0 = fract(uTime * 0.5), c1 = fract(c0 + 0.5), wB = abs(2.0 * c0 - 1.0);
+  vec2 p0 = vPat.xy - vPat.zw * (c0 - 0.5) * 2.0, p1 = vPat.xy - vPat.zw * (c1 - 0.5) * 2.0 + 37.0;
+  vec2 sc = fall ? vec2(1.5, 0.16) : mix(vec2(1.7, 0.6), vec2(1.3), pond);   // 河面、水簾的紋路順著水流拉長
+  vec2 g = mix(rvSlope(p0, sc), rvSlope(p1, sc), wB) * (fall ? 0.12 : 0.15 + 0.10 * churn) * fine;
+  vec2 dir = normalize(vDir + 1e-5), side = vec2(-dir.y, dir.x);
+  vec3 N = fall ? normalize(Ng - (vec3(side.x, 0.0, side.y) * g.x - vec3(0.0, g.y, 0.0)))
+                : normalize(Ng - vec3(side.x * g.x + dir.x * g.y, 0.0, side.y * g.x + dir.y * g.y));
+  float rag = mix(vnoise(p0 * sc * 0.4 + 3.0), vnoise(p1 * sc * 0.4 + 3.0), wB);   // 大塊的濃淡
+
+  float sunUp = max(uSunDir.y, 0.0);
+  float lv = max(uSunCol.r, max(uSunCol.g, uSunCol.b));
+  float glow = uDusk * (1.0 - uGloom);
+  float sunVis = cloudShadow(vWorld.xz) * sunShadow(vWorld, Ng);
+
+  // ---- 映著天空 ----
+  float ndv = max(dot(N, V), 0.0);
+  float F = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
+  F *= mix(mix(0.42, 0.72, uGloom), 1.0, smoothstep(120.0, 700.0, dist));
+  vec3 R = reflect(-V, N);
+  R.y = abs(R.y) + 0.02;
+#ifdef RIVER_LITE
+  vec3 refl = skyGradient(normalize(R));
+#else
+  vec3 refl = skyBase(normalize(R), 3);
+#endif
+  F = max(F, glow * 0.45 * pow(1.0 - ndv, 1.5));
+
+  // ---- 水體顏色：跟海邊的淺灘一樣，透亮的土耳其綠，深一點的地方偏青藍 ----
+  vec3 shallow = mix(vec3(0.10, 0.74, 0.64), vec3(0.11, 0.36, 0.37), 0.8 * uGloom);
+  vec3 midsea = mix(vec3(0.015, 0.42, 0.64), vec3(0.02, 0.17, 0.29), 0.8 * uGloom);
+  float dcol = max(depth, 0.0) * 1.9;   // 山澗的水帶著泡泡，比同樣深的海水不透一點
+  float dz = 1.0 - exp(-dcol * (0.20 + 0.30 * uGloom));
+  vec3 scatter = mix(shallow, midsea, smoothstep(0.0, 0.5, dz));
+  scatter *= (0.40 * uAmbient + 0.75 * sunUp * sunVis * mix(vec3(lv), uSunCol, 0.6)) * (1.0 - 0.40 * glow);
+
+  // ---- 太陽的反光：一顆一顆清楚的亮點 ----
+  vec3 Hh = normalize(V + uSunDir);
+  float ndh = max(dot(N, Hh), 0.0);
+  vec3 spec = SUN_COL * smoothstep(0.55, 0.75, pow(ndh, 260.0 - 180.0 * glow)) * (1.5 + 1.5 * glow) * sunVis * sunVis * fine;
+
+  float T = exp(-1.15 * dcol - dist / 110.0);
+  float alpha = 1.0 - (1.0 - F) * T;
+  vec3 col = (F * refl + spec + (1.0 - F) * (1.0 - T) * scatter) / max(alpha, 1e-3);
+  // 朝太陽翹起來的小波面亮一點、背著的暗一點
+  float facet = clamp(dot(N.xz - Ng.xz, normalize(uSunDir.xz + 1e-4)) * 9.0, -1.0, 1.0) * clamp(0.3 / fp, 0.0, 1.0);
+  col *= 1.0 + 0.16 * facet * (0.45 + 0.55 * sunVis);
+  alpha *= smoothstep(0.0, 0.06, depth) * (0.68 + 0.32 * smoothstep(0.0, 0.3, depth));   // 水邊那層薄水是透的，最邊緣淡到沒有
+  if (splash) alpha = 0.0;   // 落水的那一圈只有白沫（底下就是深潭的水面）
+
+  // ---- 白沫（跟海面同一張泡沫紋理、同一套畫法）----
+  vec2 fs = fall ? vec2(0.30, 0.035) : vec2(0.21, 0.10);
+  float ft = mix(texture2D(uFoamTex, p0 * fs).r, texture2D(uFoamTex, p1 * fs + 0.37).r, wB);
+  ft = mix(0.55, ft, texFade);
+  float cov;
+  if (fall) cov = 0.62 + 0.55 * rag;                                   // 水簾：幾乎整片是白的，一絲一絲往下掉
+  else if (splash) cov = churn * (0.55 + 0.7 * rag);
+  else cov = (churn * (0.30 + 0.95 * rag)                              // 陡的地方、瀑布上下：翻白
+           + 0.30 * smoothstep(0.5, 0.8, rag) * (1.0 - pond))          // 平緩的河面也漂著幾絲
+           * smoothstep(0.03, 0.16, depth)                             // （貼著岸的那層薄水不翻白，不然像在岸上塗了一片白）
+           + smoothstep(0.08, 0.0, depth) * (0.12 + 0.5 * ft);         // 水邊一圈碎泡沫
+  cov = clamp(cov, 0.0, 1.2);
+  float fraw = smoothstep(0.0, 0.35, cov - (1.0 - ft) * 1.05) * smoothstep(0.0, 0.07, depth);
+  fraw = max(fraw, smoothstep(0.75, 1.15, cov) * 0.85);
+  float foam = smoothstep(0.24, 0.52, fraw);
+  float lace = smoothstep(0.02, 0.26, fraw) * (1.0 - foam);
+  vec3 foamCol = vec3(0.99) * (0.60 * uAmbient + (0.34 + 0.22 * sunUp) * sunVis * lv);
+  col = mix(col, foamCol * vec3(0.84, 0.96, 1.0), lace * 0.40);
+  col = mix(col, foamCol * (0.90 + 0.10 * smoothstep(0.35, 0.75, ft)), foam * 0.93);
+  alpha = max(alpha, max(foam, lace * 0.55)) * vW.w;
+  if (alpha < 0.012) discard;
+
+  col = uUnder > 0.5 ? applyUnderFog(col, vWorld) : applyFog(col, vWorld);
+  gl_FragColor = vec4(col, alpha);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}
+`;

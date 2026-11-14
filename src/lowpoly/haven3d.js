@@ -5,14 +5,13 @@ import { mirrored } from './kit.js';
 import { rockGeo, broadleafGeo, islandTerrain } from './shapes.js';
 import { havenHeight, caveCoords, skyEdge, CAVE_AXIS, riverBed, riverFalls, riverPath, coveFaceS, diveDeck, portWall } from './havenShape.js';
 import { buildRiver, buildDive, vineGeo } from './river3d.js';
-import { buildPort, buildSummit } from './port3d.js';
-import { SUMMIT } from '../extrasPlan.js';
+import { buildPort } from './port3d.js';
 import { buildCave, cavePatch } from './cave3d.js';
 import * as V from './havenPlan.js';
 
 // place(幾何, 清單, 投不投影, 受不受影)：一個樣板＋很多個實例（跟港口同一套）。phone：手機（地形格子大一點、樹和岩塊少一點）
 // 回傳 { groundAt(x, z) 畫出來的地面多高, kind(x, z) 這一點是哪一種地面, rocks 擋路的大岩塊 [{ x, z, r, top }] }
-export function buildHaven({ P, r, place, mat, group, phone = false }) {
+export function buildHaven({ P, r, place, mat, group, phone = false, water = null }) {
   const G = V.GROUND, half = G.size / 2;
   // 地形：電腦 1.8 公尺一格、手機 2.7 公尺（三角形少一半多）。島很大，面也跟著大塊，岩層一層 3.2 公尺。
   // 切成一百多公尺見方的一塊塊：背對鏡頭、被擋在畫面外的那幾塊不用畫；比 11 公尺深的海底看不到，不建
@@ -33,14 +32,13 @@ export function buildHaven({ P, r, place, mat, group, phone = false }) {
   // 天窗口、暗門洞口和它外面的海蝕溝不放石頭和樹（會擋住洞口，或浮在天窗上）
   // 小河和跳水台也一樣
   const DK = diveDeck(), onDeck = (x, z, pad) => { const a = (x - DK.x) * DK.ux + (z - DK.z) * DK.uz, b = -(x - DK.x) * DK.uz + (z - DK.z) * DK.ux; return a > -pad && a < DK.len && Math.abs(b) < DK.half + pad; };
-  const keepOut = (x, z) => { const [s, l] = caveCoords(x, z); return skyEdge(x, z) < 3 || (s > 0 && Math.abs(l) < 12) || riverBed(x, z, 2.2) || onDeck(x, z, 2) || portWall(x, z, 2.5) || Math.hypot(x - V.PORT.lighthouse.x, z - V.PORT.lighthouse.z) < 7 || Math.hypot(x - SUMMIT.fire.x, z - SUMMIT.fire.z) < 9; };
-  out.river = buildRiver({ mat, group });
+  const keepOut = (x, z) => { const [s, l] = caveCoords(x, z); return skyEdge(x, z) < 3 || (s > 0 && Math.abs(l) < 12) || riverBed(x, z, 2.2) || onDeck(x, z, 2) || portWall(x, z, 2.5) || Math.hypot(x - V.PORT.lighthouse.x, z - V.PORT.lighthouse.z) < 7; };
+  buildRiver({ group, groundAt: ground.at, water });
   buildDive({ P, r, mat, group });
   // 碼頭、山城、燈塔
   const port = buildPort({ P, r, mat, group, groundAt: ground.at, bedAt: havenHeight });
   out.bollards = port.bollards;
   out.rocks.push(...port.rocks);
-  out.rocks.push(...buildSummit({ P, r, mat, group, groundAt: ground.at }));   // 山頂的烽火台和古鐘
   const randPt = () => { for (;;) { const x = G.cx + (r() - 0.5) * 2 * half, z = G.cz + (r() - 0.5) * 2 * half; if (!keepOut(x, z)) return [x, z, ground.at(x, z)]; } };
 
   // ---- 岩塊：3 種形狀 × 原版／鏡像 = 6 份樣板 ----

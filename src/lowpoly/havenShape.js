@@ -164,6 +164,13 @@ export function cavitySdf(x, y, z) {
 
 // ==== 山澗小河 ====
 const RV = V.RIVER;
+// 池邊離這一點多遠（負的 = 在池子裡）。池子不是正圓：半徑照 lobes 隨方向變
+const pondD = (x, z, cx, cz, r, lobes) => {
+  const dx = x - cx, dz = z - cz, a = Math.atan2(dz, dx);
+  let k = 1;
+  for (const [n, amp, ph] of lobes) k += amp * Math.sin(n * a + ph);
+  return Math.hypot(dx, dz) - r * k;
+};
 // 河道的中線：照設計圖的幾個點拉一條平滑的曲線，沿線每公尺取一點 { x, z, s 沿河的距離, y 河床高度 }。
 // falls：瀑布 { i 瀑布頂是第幾點（下一點就在瀑布底）, top, bottom 河床的高度, bx, bz 底下水潭的中心 }
 const RIV = (() => {
@@ -189,18 +196,51 @@ const RIV = (() => {
     let i = 0;
     while (i < pts.length - 2 && pts[i + 1].u < k) i++;
     const b = pts[Math.min(pts.length - 1, i + 1 + Math.round(RV.basin.ahead))];
-    falls.push({ i, top: P[k][2], bottom: P[k][3], bx: b.x, bz: b.z });
+    const f = { i, s: (pts[i].s + pts[i + 1].s) / 2, top: P[k][2], bottom: P[k][3], bx: b.x, bz: b.z };
+    falls.push(f);
     lip.add(i);
+    // 瀑布底下的水潭是一池平的水：從瀑布底到流出水潭的缺口，河床都跟瀑布底一樣高；出了缺口才接著往下一個設計點降
+    // （不然水潭的水面會比流出去的河面高一截，接不起來）
+    let o = i + 1;
+    while (o < pts.length - 1 && (pts[o].s < f.s + RV.basin.ahead || pondD(pts[o].x, pts[o].z, f.bx, f.bz, RV.basin.r, RV.basin.lobes) < 0.6)) o++;
+    const sOut = pts[o].s;
+    let e = i + 1;
+    while (e < pts.length - 1 && pts[e].u < k + 1) e++;
+    for (let j = i + 1; j < e; j++) pts[j].y = pts[j].s <= sOut ? P[k][3] : P[k][3] + (pts[e].y - P[k][3]) * (pts[j].s - sOut) / Math.max(0.5, pts[e].s - sOut);
   }
-  const pad = RV.flat + RV.bank + 1, sp = RV.spring.r + RV.bank + 1;
+  const pad = Math.max(RV.flat, RV.basin.r * 1.5) + RV.bank + 1, sp = RV.spring.r * 1.4 + RV.bank + 1;
   const box = [Math.min(P[0][0] - sp, ...pts.map((p) => p.x - pad)), Math.max(P[0][0] + sp, ...pts.map((p) => p.x + pad)),
     Math.min(P[0][1] - sp, ...pts.map((p) => p.z - pad)), Math.max(P[0][1] + sp, ...pts.map((p) => p.z + pad))];
   return { pts, falls, lip, box };
 })();
 export const riverPath = () => RIV.pts;
 export const riverFalls = () => RIV.falls;
+// 離湧泉池、瀑布底那個水潭的池邊多遠（負的 = 在池子裡）
+export const springEdge = (x, z) => pondD(x, z, RIV.pts[0].x, RIV.pts[0].z, RV.spring.r, RV.spring.lobes);
+export const basinEdge = (f, x, z) => pondD(x, z, f.bx, f.bz, RV.basin.r, RV.basin.lobes);
+// 斷崖的那條邊：在河中線旁邊 lat 公尺的地方，崖邊比瀑布口往下游多出去幾公尺。
+// 河道裡是齊的；越往兩旁越往下游彎（把水潭半包起來），再加一點凹凸，不是一道直直的牆
+const lipCut = (lat) => {
+  const a = Math.abs(lat), F = RV.fall;
+  return F.bow * smooth(RV.flat * 0.6, RV.flat + RV.bank, a) + F.rough * smooth(0.8, 2.6, a) * (Math.sin(lat * 1.1 + 0.7) + 0.6 * Math.sin(lat * 2.7 + 2));
+};
+// 水沖下來落在哪裡（大港座標）[{ x, y, z, big }]：每道瀑布落在水潭的那一點，和最後沖進透天洞穴深潭的那一點（big）。噴水花用
+let hitsCache = null;
+export function riverHits() {
+  if (hitsCache) return hitsCache;
+  const p = RIV.pts, out = [];
+  for (const f of RIV.falls) {
+    const a = p[f.i], b = p[f.i + 1], l = Math.hypot(b.x - a.x, b.z - a.z);
+    out.push({ x: (a.x + b.x) / 2 + (b.x - a.x) / l * RV.fall.throw, y: f.bottom + RV.water.depth, z: (a.z + b.z) / 2 + (b.z - a.z) / l * RV.fall.throw, big: false });
+  }
+  let e = 0;
+  while (e < p.length - 1 && skyEdge(p[e + 1].x, p[e + 1].z) >= -0.4) e++;
+  const a = p[Math.max(0, e - 1)], b = p[Math.min(p.length - 1, e + 1)], l = Math.hypot(b.x - a.x, b.z - a.z);
+  out.push({ x: p[e].x + (b.x - a.x) / l * RV.plunge.throw, y: 0.3, z: p[e].z + (b.z - a.z) / l * RV.plunge.throw, big: true });
+  return (hitsCache = out);
+}
 
-// 這一點相對小河的位置：{ d 離中線多遠, lat 在中線的哪一側多遠（有正負）, i 最近的是第幾段, t 在那一段的哪裡, s 沿河的距離, y 那裡的河床高度, tx / tz 往下游的方向 }。
+// 這一點相對小河的位置：{ d 離中線多遠, lat 在中線的哪一側多遠（有正負）, i 最近的是第幾段, t 在那一段的哪裡, s 沿河的距離, y 那裡的河床高度, tx / tz 往下游的方向, low 在幾道瀑布的斷崖底下 }。
 // 離小河很遠（超出它的範圍）回傳 null
 export function riverAt(x, z) {
   const B = RIV.box;
@@ -214,9 +254,17 @@ export function riverAt(x, z) {
     if (d2 < best) { best = d2; bi = i; bt = t; }
   }
   const a = p[bi], b = p[bi + 1], len = Math.hypot(b.x - a.x, b.z - a.z), tx = (b.x - a.x) / len, tz = (b.z - a.z) / len;
-  // 瀑布那一段：前半在瀑布頂、後半在瀑布底（河床在中間直接掉下去）
-  const y = RIV.lip.has(bi) ? (bt < 0.5 ? a.y : b.y) : a.y + (b.y - a.y) * bt;
-  return { d: Math.sqrt(best), lat: -(x - a.x) * tz + (z - a.z) * tx, i: bi, t: bt, s: a.s + (b.s - a.s) * bt, y, tx, tz };
+  const lat = -(x - a.x) * tz + (z - a.z) * tx, s = a.s + (b.s - a.s) * bt;
+  // 瀑布：過了斷崖的那條邊（lipCut）就是崖底，河床直接掉下去；還沒過的是崖頂（崖邊在兩旁往下游彎，那裡還是崖頂的高度）
+  let y = a.y + (b.y - a.y) * bt, low = 0;
+  for (const f of RIV.falls) {
+    const under = s - f.s > lipCut(lat);
+    if (under) low++;
+    if (bi === f.i) y = under ? f.bottom : a.y;
+    else if (under && bi < f.i) y = f.bottom;
+    else if (!under && bi > f.i) y = p[f.i].y;
+  }
+  return { d: Math.sqrt(best), lat, i: bi, t: bt, s, y, tx, tz, low };
 }
 
 // 把地面挖成河床：d 是離「河床平的那一段」的邊多遠（負的 = 在河床上）。河床以外 bank 公尺內慢慢接回原本的山坡，
@@ -224,27 +272,31 @@ export function riverAt(x, z) {
 const carve = (h, d, bed, lip = RV.lip) => {
   if (d >= RV.bank) return h;
   if (d <= 0) return bed;
-  return Math.max(bed + (h - bed) * smooth(0, RV.bank, d), bed + lip * smooth(0, 1.2, d) * (1 - smooth(1.2, RV.bank, d)));
+  return Math.max(bed + (h - bed) * smooth(0, RV.bank, d), bed + lip * smooth(0, 1.2, d) * (1 - smooth(2.6, RV.bank, d)));   // 土堤的頂是寬的一段（地面的格子粗，太窄的堤畫不出來，水會漫出去）
 };
 // 小河對地形的影響：先挖源頭的湧泉池，再挖河道，最後挖瀑布底下的水潭
 function riverTerrain(x, z, h) {
   const q = riverAt(x, z);
   if (!q) return h;
-  const P0 = RIV.pts[0], S = RV.spring, B = RV.basin, ds = Math.hypot(x - P0.x, z - P0.z) - S.r;
+  const P0 = RIV.pts[0], S = RV.spring, B = RV.basin, ds = springEdge(x, z);
   // 水潭只算瀑布底下那一側（不然會把瀑布頂的河道也挖掉）
-  const pools = RIV.falls.filter((f) => q.i > f.i || (q.i === f.i && q.t >= 0.5)).map((f) => [Math.hypot(x - f.bx, z - f.bz) - B.r, f.bottom - B.deep]);
-  // 河道穿過池子、水潭的地方不墊土堤（不然池子裡會多一道埂）
-  const open = ds < 1.5 || pools.some(([d]) => d < 1.5);
-  let out = carve(carve(h, ds, P0.y + RV.water.depth - S.depth), q.d - RV.flat, q.y, open ? 0 : RV.lip);
-  for (const [d, bed] of pools) out = Math.min(out, carve(out, d, bed, 0));
+  const pools = RIV.falls.filter((f, k) => k < q.low).map((f) => [basinEdge(f, x, z), f.bottom - B.deep]);
+  // 河道穿過池子、水潭的地方不墊土堤（不然池子裡會多一道埂）；一出池子土堤就接上（出口兩旁才擋得住水）
+  const lip = RV.lip * smooth(0, 1.2, Math.min(ds, ...pools.map(([d]) => d)));
+  let out = carve(carve(h, ds, P0.y + RV.water.depth - S.depth, RV.lip + 0.4), q.d - RV.flat, q.y, lip);
+  for (const [d, bed] of pools) {
+    out = Math.min(out, carve(out, d, bed, 0));
+    // 水潭外面圍一圈岸（河道流進來、流出去的缺口除外）：下坡那一側原本的地面比水面低，沒有這圈岸水會漫出去
+    if (d > 0 && d < RV.bank) out += Math.max(0, bed + (B.deep + RV.lip) * smooth(0, 1.2, d) * (1 - smooth(2.6, RV.bank, d)) - out) * smooth(RV.flat - 0.3, RV.flat + 1, q.d);
+  }
   return out;
 }
 // 這一點是不是河床、湧泉池或瀑布底的水潭（上色、擺東西用）。pad：多算寬幾公尺
 export function riverBed(x, z, pad = 0) {
   const q = riverAt(x, z);
   if (!q) return false;
-  if (q.d < RV.flat + pad || Math.hypot(x - RIV.pts[0].x, z - RIV.pts[0].z) < RV.spring.r + pad) return true;
-  return RIV.falls.some((f) => Math.hypot(x - f.bx, z - f.bz) < RV.basin.r + pad);
+  if (q.d < RV.flat + pad || springEdge(x, z) < pad) return true;
+  return RIV.falls.some((f, k) => k < q.low && basinEdge(f, x, z) < pad);
 }
 
 // 山上的水面：這一點是小河、湧泉池或瀑布底的水潭的話，回傳水面的高度；不是就 null（釣魚用）
@@ -252,9 +304,9 @@ export function riverSurface(x, z) {
   const q = riverAt(x, z);
   if (!q) return null;
   const P0 = RIV.pts[0];
-  if (Math.hypot(x - P0.x, z - P0.z) < RV.spring.r - 0.3) return P0.y + RV.water.depth;
+  if (springEdge(x, z) < -0.3) return P0.y + RV.water.depth;
   if (q.d < RV.water.half && skyEdge(x, z) > 0) return q.y + RV.water.depth;
-  for (const f of RIV.falls) if (Math.hypot(x - f.bx, z - f.bz) < RV.basin.r) return f.bottom + RV.water.depth;
+  for (let k = 0; k < q.low; k++) if (basinEdge(RIV.falls[k], x, z) < 0) return RIV.falls[k].bottom + RV.water.depth;
   return null;
 }
 

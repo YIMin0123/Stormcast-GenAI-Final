@@ -1,12 +1,9 @@
-// 海上的魚群熱點、風暴後的漂流寶箱、山頂的烽火台和古鐘：數字和位置。不碰畫面，瀏覽器和伺服器共用。
+// 海上的魚群熱點、風暴後的漂流寶箱：數字和位置。不碰畫面，瀏覽器和伺服器共用。
 import { HAVEN, REEF_FRAMES } from './frame.js';
 
 // 魚群熱點（海鳥盤旋、水面翻白沫）：每隔 every 秒冒出一個、維持 life 秒（都是範圍，隨機取）；半徑 r 公尺；
 // 出現在離地圖正中間 reach 公尺以內、水夠深、離大島夠遠的海面。拋進圈裡：等咬的時間乘 biteK、魚的個頭大一截
 export const HOTSPOT = { every: [240, 420], life: [130, 180], r: 28, reach: 620, minDepth: 10, minOff: 120, biteK: 0.45 };
-
-// 山頂（大港座標）：烽火台在全島最高點，古鐘在旁邊。fireTime：點一次燒幾秒；bellGap：鐘最快幾秒敲一下；reach：要站多近
-export const SUMMIT = { fire: { x: 46, z: -94 }, bell: { x: 51.5, z: -97 }, fireTime: 240, bellGap: 3, reach: 3.2 };
 
 // 漂流寶箱：暴風雨、颱風、海嘯結束後，從下面這些地方隨機挑 count 個各放一箱，life 秒沒人撿就漂走。
 // 撿到的是獎金（cash 的範圍）或一桶油（fuel 的機率）。at：哪一套座標；y：有寫的照它（洞裡的岩台是下層，查地面查不到）
@@ -27,5 +24,4 @@ export const CHESTS = {
 // 世界座標版
 const frameOf = (at) => (at === 'haven' ? HAVEN : REEF_FRAMES[at]);
 const world = (p, at = 'haven') => { const [x, z] = frameOf(at).toWorld(p.x, p.z); return { x, z }; };
-export const SUMMIT_W = { fire: world(SUMMIT.fire), bell: world(SUMMIT.bell) };
 export const CHEST_SPOTS_W = CHESTS.spots.map((s) => ({ ...world(s, s.at), y: s.y, at: s.at }));

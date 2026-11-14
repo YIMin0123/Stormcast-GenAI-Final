@@ -7,7 +7,7 @@
 import { Sea, Climate, HOUR } from '../src/weather.js';
 import { BERTHS, berthPose, berthKinds, inHarbor, SELL_W, SELL_REACH, SHELF_W, BOARD_STAND_W, SPAWN_W, SWITCHES_W, LIGHT_ZONES, HAVEN_SELL_W, HAVEN_PUMP_W } from '../src/layout.js';
 import { PORT } from '../src/lowpoly/havenPlan.js';
-import { HOTSPOT, CHESTS, SUMMIT, SUMMIT_W } from '../src/extrasPlan.js';
+import { HOTSPOT, CHESTS } from '../src/extrasPlan.js';
 import { Extras } from './extras.js';
 import { BOAT_TYPES, BOAT_ORDER, newKit, shopItem } from '../src/boatdata.js';
 import { SPECIES, rollCatch, minFightTime, biteDelay, castRange, money } from '../src/fishdata.js';
@@ -86,7 +86,7 @@ export class Room {
     this.hold = false;           // 準備合併中：不再發生新的海上事件
     this.focus = 0;
     this.env = { near: { x: 0, z: 0 }, dangerAt };
-    this.extras = new Extras();   // 魚群熱點、漂流寶箱、山頂的烽火
+    this.extras = new Extras();   // 魚群熱點、漂流寶箱
     this.lights = Object.fromEntries(LIGHT_ZONES.map((z) => [z, true]));   // 室內燈（店裡、魚市場）：一開始是開著的，之後誰按開關都算數
     // 遊戲內時間跟著現實時間走，每間房差 SERVER.hourStep 小時（沒人的房也照走，大廳看到的早晚才對）
     this.offset = ((num - 1) * SERVER.hourStep) % 24;
@@ -251,7 +251,7 @@ export class Room {
     this.sea.remote = this.hold;
     this.sea.update(dt, this.env);
 
-    if (this.extras.step(this.t, dt, this.sea.phase)) this.all(this.worldState());   // 熱點冒出來、寶箱漂來、烽火燒完：馬上告訴大家
+    if (this.extras.step(this.t, dt, this.sea.phase)) this.all(this.worldState());   // 熱點冒出來、寶箱漂來：馬上告訴大家
 
     // 魚咬了
     for (const p of this.players.values()) {
@@ -409,17 +409,6 @@ export class Room {
         this.send(p, { t: 'chestGot', cash: prize.cash, fuel: prize.fuel, kit });
         this.all(this.worldState());
         return this.sys(`${p.name} 撿到一個漂流寶箱`);
-      }
-      case 'fire': {    // 點燃山頂的烽火：整間房都看得到
-        if (this.extras.fire || !this.near(p, SUMMIT_W.fire.x, SUMMIT_W.fire.z, SUMMIT.reach + 3)) return;
-        this.extras.fire = this.t + SUMMIT.fireTime;
-        this.all(this.worldState());
-        return this.sys(`${p.name} 點燃了山頂的烽火`);
-      }
-      case 'bell': {    // 敲山頂的古鐘：整間房都聽得到
-        if (this.t - this.extras.bellAt < SUMMIT.bellGap || !this.near(p, SUMMIT_W.bell.x, SUMMIT_W.bell.z, SUMMIT.reach + 3)) return;
-        this.extras.bellAt = this.t;
-        return this.all({ t: 'bell', name: p.name });
       }
       case 'buy': {
         const it = SHELF_W.find((s) => s.id === m.id);

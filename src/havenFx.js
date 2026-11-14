@@ -1,14 +1,17 @@
-// 伺服器說了算、同房的人一起看得到的三樣東西的畫面：
+// 大港灣島的幾樣會動的東西。前兩樣是伺服器說了算、同房的人一起看得到的：
 //   魚群熱點——幾隻海鳥在上空盤旋、水面一直翻白沫
 //   漂流寶箱——一口木箱（在水裡的會跟著浪浮沉）
-//   山頂的烽火——火焰和一柱往上飄的煙（遠遠在海上就看得到），還有古鐘的鐘聲（用算的，沒有錄音檔）
 // 什麼時候有、在哪裡，照伺服器送來的狀態（見 server/extras.js 的 state）
+//   瀑布的水花——每道瀑布落水的地方、小河沖進透天洞穴深潭的地方，一直濺著水花（鏡頭夠近才噴）
 import * as THREE from 'three';
-import { CHEST_SPOTS_W, SUMMIT_W, CHESTS } from './extrasPlan.js';
+import { CHEST_SPOTS_W, CHESTS } from './extrasPlan.js';
+import { riverHits } from './lowpoly/havenShape.js';
+import { HAVEN } from './frame.js';
+import { TOUCH } from './touch.js';
 
 // scene 場景；shade(物件)：照遊戲的規則設定投影；splash(x, y, z, 幾滴)：水花；waterY(x, z)：海面高度；
-// groundAt(x, z)：地面（或海底）高度；audio：音效；onHot(熱點)：冒出新的魚群時呼叫
-export function makeHavenFx({ scene, shade, splash, waterY, groundAt, audio, onHot }) {
+// groundAt(x, z)：地面（或海底）高度；mist(x, y, z, 往哪邊 vx, vy, vz, 活幾秒, 多大)：噴一顆水珠；onHot(熱點)：冒出新的魚群時呼叫
+export function makeHavenFx({ scene, shade, splash, mist, waterY, groundAt, onHot }) {
   const group = new THREE.Group();
   scene.add(group);
   const lam = (c) => new THREE.MeshLambertMaterial({ color: c, flatShading: true });
@@ -34,6 +37,10 @@ export function makeHavenFx({ scene, shade, splash, waterY, groundAt, audio, onH
     shade(flock);
   }
 
+  // ---- 瀑布落水的地方 ----
+  const hits = riverHits().map((h) => { const [x, z] = HAVEN.toWorld(h.x, h.z); return { x, y: h.y, z, big: h.big, acc: 0 }; });
+  const SPLASH_NEAR = 150, RATE = TOUCH ? 45 : 90;   // 多近才噴；一秒幾顆（手機減半）
+
   // ---- 漂流寶箱 ----
   const chests = new Map();   // id → { g, k, x, z, y, float }
   const chestGeo = [new THREE.BoxGeometry(0.9, 0.5, 0.6), new THREE.BoxGeometry(0.96, 0.18, 0.66), new THREE.BoxGeometry(0.08, 0.72, 0.68)];
@@ -53,44 +60,8 @@ export function makeHavenFx({ scene, shade, splash, waterY, groundAt, audio, onH
     chests.set(id, { g, k, x: s.x, z: s.z, float: gy < -0.25 });
   }
 
-  // ---- 山頂的烽火 ----
-  let fireUntil = 0;
-  const fire = new THREE.Group(), flames = [], smoke = [];
-  fire.visible = false;
-  group.add(fire);
-  {
-    const y0 = groundAt(SUMMIT_W.fire.x, SUMMIT_W.fire.z) + 2.5;
-    fire.position.set(SUMMIT_W.fire.x, y0, SUMMIT_W.fire.z);
-    const cone = new THREE.ConeGeometry(0.55, 1.6, 6);
-    for (const [c, s, dx] of [[0xff7a1a, 1.25, 0], [0xffb02e, 0.9, 0.3], [0xffe07a, 0.6, -0.25]]) {
-      const m = new THREE.Mesh(cone, new THREE.MeshBasicMaterial({ color: c, fog: false }));
-      m.position.set(dx, 0.8 * s, dx * 0.6); m.scale.setScalar(s);
-      fire.add(m); flames.push({ m, s, ph: dx * 7 });
-    }
-    const blob = new THREE.IcosahedronGeometry(0.7, 0), sm = lam(0x7d7f85);
-    for (let i = 0; i < 8; i++) { const m = new THREE.Mesh(blob, sm); m.castShadow = false; fire.add(m); smoke.push({ m, ph: i / 8 }); }
-  }
-
-  // 古鐘：幾個泛音疊起來、各自慢慢消掉。vol：0–1（離得遠的人聽到的比較小聲）
-  function bell(vol) {
-    const ctx = audio.ctx;
-    if (!ctx || !audio.on || vol <= 0) return;
-    const t = ctx.currentTime, out = ctx.createGain();
-    out.gain.value = vol * 0.5;
-    out.connect(audio.master || ctx.destination);
-    for (const [ratio, amp, dec] of [[0.5, 0.5, 5], [1, 1, 4], [1.19, 0.6, 3], [1.5, 0.35, 2.4], [2, 0.5, 2], [2.51, 0.25, 1.4], [3.01, 0.18, 1]]) {
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.frequency.value = 196 * ratio;
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(amp * 0.3, t + 0.012);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + dec);
-      o.connect(g).connect(out);
-      o.start(t); o.stop(t + dec + 0.1);
-    }
-  }
-
   return {
-    // 伺服器送來的狀態：{ hot: { x, z, r, left } | null, chests: [[id, 第幾個地點]], fire: 還燒幾秒 }
+    // 伺服器送來的狀態：{ hot: { x, z, r, left } | null, chests: [[id, 第幾個地點]] }
     sync(st) {
       const t = now();
       if (st.hot) {
@@ -101,7 +72,6 @@ export function makeHavenFx({ scene, shade, splash, waterY, groundAt, audio, onH
       const keep = new Set(st.chests.map((c) => c[0]));
       for (const [id, c] of chests) if (!keep.has(id)) { c.g.removeFromParent(); chests.delete(id); }
       for (const [id, k] of st.chests) if (!chests.has(id)) addChest(id, k);
-      fireUntil = st.fire > 0 ? t + st.fire : 0;
     },
     update(dt, time, cam) {
       const t = now();
@@ -122,25 +92,22 @@ export function makeHavenFx({ scene, shade, splash, waterY, groundAt, audio, onH
           splash(x, waterY(x, z), z, 5);
         }
       }
-      for (const c of chests.values()) if (c.float) { c.g.position.y = waterY(c.x, c.z) - 0.22; c.g.rotation.z = Math.sin(time * 1.3 + c.k) * 0.08; }
-      const burning = fireUntil > t;
-      fire.visible = burning;
-      if (burning) {
-        for (const f of flames) { const k = 1 + 0.25 * Math.sin(time * 11 + f.ph) + 0.12 * Math.sin(time * 23 + f.ph * 2); f.m.scale.set(f.s, f.s * k, f.s); f.m.position.y = 0.8 * f.s * k; }
-        for (const s of smoke) {
-          const a = (time / 9 + s.ph) % 1, k = 0.8 + a * 2.6;
-          s.m.position.set(a * a * 7 + Math.sin(a * 9 + s.ph * 20) * 0.6, 1.5 + a * 26, Math.cos(a * 7 + s.ph * 13) * 0.6);
-          s.m.scale.setScalar(k * Math.min(1, a * 8) * Math.min(1, (1 - a) * 5));
+      // 瀑布的水花：落水的那一點往四周、往上濺，沖進深潭的那一道濺得比較高、比較散
+      for (const h of hits) {
+        if ((cam.x - h.x) ** 2 + (cam.z - h.z) ** 2 > SPLASH_NEAR * SPLASH_NEAR) { h.acc = 0; continue; }
+        const k = h.big ? 1.5 : 1;
+        for (h.acc += Math.min(dt, 0.05) * RATE * k; h.acc >= 1; h.acc--) {
+          const a = Math.random() * 6.28, r = Math.sqrt(Math.random()) * 1.5 * k, v = (0.6 + Math.random() * 1.8) * k;
+          mist(h.x + Math.cos(a) * r, h.y + 0.05, h.z + Math.sin(a) * r, Math.cos(a) * v, (1.6 + Math.random() * 2.6) * k, Math.sin(a) * v, 0.45 + Math.random() * 0.55, 0.22 + Math.random() * 0.4 * k);
         }
       }
+      for (const c of chests.values()) if (c.float) { c.g.position.y = waterY(c.x, c.z) - 0.22; c.g.rotation.z = Math.sin(time * 1.3 + c.k) * 0.08; }
     },
     hot: () => hot,
-    burning: () => fireUntil > now(),
     // 人站在哪個寶箱旁邊：回傳 { id, pos }；沒有就 null
     chestNear(x, y, z) {
       for (const [id, c] of chests) if (Math.hypot(x - c.x, z - c.z) < CHESTS.reach && Math.abs(y - c.g.position.y) < 3) return { id, pos: c.g.position.clone().setY(c.g.position.y + 0.4) };
       return null;
     },
-    bell,
   };
 }

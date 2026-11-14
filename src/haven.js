@@ -9,18 +9,24 @@ import { GROUND } from './lowpoly/havenPlan.js';
 import { BEACON } from './lowpoly/reefPlan.js';
 import { HAVEN, REEF_FRAMES, placeInFrame } from './frame.js';
 import { TOUCH } from './touch.js';
-import { HAZE } from './renderShaders.js';
+import { HAZE, riverVert, riverFrag } from './renderShaders.js';
 
 // 大港灣島畫出來的地面多高（大港座標）：at(x, z)。走路踩的是它（見 main.js 的 landAt）
 export const HAVEN_LAND = { at: null };
 export const HAVEN_GROUND = GROUND;
 
-// mat：全場共用的那個低面材質（港口建的那一個）。
+// mat：全場共用的那個低面材質（港口建的那一個）。sea：{ uniforms 海面那一組 uniforms, paintSky 倒影映不映畫好的積雲 }——小河的水跟海面用同一組，天色才一致
 // 回傳 { groups 要加進場景的東西, rocks 擋路的岩塊與樹幹（世界座標）[{ x, z, r, top }], update(時間, 鏡頭位置) 每幀呼叫 }
-export function makeSeascape(mat) {
+export function makeSeascape(mat, sea) {
   const P = palette('warm');
   tagSurfaces(!TOUCH);   // 電腦版：每一面記下材質種類（岩石的程式貼圖），跟港口一樣
   const rocks = [], groups = [], parts = [];
+  // 小河、瀑布、水潭的水：跟海面同一種混色方式（畫面的 alpha 是「是不是天空」的記號，水要把它蓋成 1）
+  const water = new THREE.ShaderMaterial({
+    vertexShader: riverVert, fragmentShader: riverFrag, uniforms: sea.uniforms, transparent: true, side: THREE.DoubleSide,
+    defines: TOUCH ? { RIVER_LITE: 1 } : sea.paintSky ? { PAINT_SKY: 1 } : {},
+    blending: THREE.CustomBlending, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+  });
   // 會重複很多個的東西（岩塊、樹）：一個樣板＋實例
   const placer = (group) => (geo, list, cast, recv) => {
     const m = new THREE.InstancedMesh(geo, mat, Math.max(1, list.length));
@@ -42,7 +48,7 @@ export function makeSeascape(mat) {
   // 蓋一組：用它自己的座標蓋，整個擺進世界；擋路的東西轉成世界座標。reach：離它多遠以內才畫（再遠已經被霧蓋掉了）
   const add = (frame, build, seed, reach) => {
     const group = new THREE.Group();
-    const out = build({ P, r: rng(seed), place: placer(group), mat, group, phone: TOUCH });
+    const out = build({ P, r: rng(seed), place: placer(group), mat, group, phone: TOUCH, water });
     placeInFrame(group, frame);
     for (const k of out.rocks) { const [x, z] = frame.toWorld(k.x, k.z); rocks.push({ ...k, x, z }); }
     groups.push(group);
@@ -58,7 +64,6 @@ export function makeSeascape(mat) {
   const beacon = add(REEF_FRAMES.beacon, buildBeacon, 5507, 1e9);   // 燈標的燈不吃霧，再遠都要看得到
   tagSurfaces(false);
   const F = BEACON.flash;
-  let tick = false;
   return {
     groups, rocks,
     // 大港碼頭的繫纜樁（世界座標）
@@ -67,8 +72,6 @@ export function makeSeascape(mat) {
     update(time, cam) {
       beacon.bulb.visible = (time % F.period) < F.on;
       for (const p of parts) p.group.visible = (cam.x - p.x) ** 2 + (cam.z - p.z) ** 2 < p.reach * p.reach;
-      // 小河的水：鏡頭在島附近才動（手機兩幀換一次顏色）
-      if ((cam.x - parts[0].x) ** 2 + (cam.z - parts[0].z) ** 2 < 360 * 360 && (!TOUCH || (tick = !tick))) haven.river.update(time);
     },
   };
 }
