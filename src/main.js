@@ -3415,7 +3415,7 @@ net.on('swapped', (m) => {
   if ((w && w.aboard) || wasLost) rescue(`你被救回港口。${text}`); else toast(text);
 });
 
-// 定時刷新（每兩天早上 8 點）：家當變回新玩家的樣子（錢、船、裝備、魚都清掉），人送回港口
+// 定時刷新（時間見 config.js 的 SERVER.refresh）：家當變回新玩家的樣子（錢、船、裝備、魚都清掉），人送回港口
 net.on('reset', (m) => {
   fishing.cancel(null);
   landing = buying = false;

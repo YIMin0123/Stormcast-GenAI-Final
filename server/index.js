@@ -5,7 +5,7 @@
 //   - 合併：臨時房連續 10 分鐘少於 5 人，整間併進一間放得下的常駐房（先通知、倒數；有海上事件就等它結束）；常駐房之間不合併
 //   - 進度（錢、船、裝備、還沒賣的魚）跟著裝置的認人代碼存在檔案裡（profiles.js），換房、隔天再來、伺服器重開都還在；
 //     斷線 30 秒內回來連位置都接得回去
-//   - 定時刷新：從 SERVER.refresh.first 起每 48 小時，進度和排行榜全部清空
+//   - 定時刷新：從 SERVER.refresh.first 起每 SERVER.refresh.everyHours 小時，進度和排行榜全部清空
 // 房間裡的事（天氣、釣魚、買賣、聊天、看板）在 room.js。
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
@@ -16,6 +16,7 @@ import { Room, newPlayer, profileOf, applyProfile, MAX_PLAYERS, TICK } from './r
 import { Daily } from './daily.js';
 import { Profiles, epochAt } from './profiles.js';
 import { SERVER } from '../src/config.js';
+import { refreshRule } from '../src/announce.js';
 import { cleanName, isRude } from './words.js';
 
 const PORT = +(process.env.PORT || 8787);
@@ -267,12 +268,12 @@ setInterval(() => {
 }, TICK * 1000);
 
 // ---- 定時刷新 -----------------------------------------------------------------
-// 每兩天早上 8 點：所有人的錢、船、裝備、還沒賣的魚和兩塊排行榜都清空；在線上的人直接變回新玩家、送回港口
+// 定時（SERVER.refresh）：所有人的錢、船、裝備、還沒賣的魚和兩塊排行榜都清空；在線上的人直接變回新玩家、送回港口
 function refresh(test) {
   if (!test) hub.profiles.epoch = epochAt();
   hub.profiles.clear(hub.profiles.epoch);
   hub.daily.clear();
-  const text = `${test ? '（測試）' : ''}刷新時間到了（每兩天台灣時間早上 8 點）：錢、船、裝備、還沒賣的魚和排行榜都清空，大家從港口重新開始`;
+  const text = `${test ? '（測試）' : ''}刷新時間到了（${refreshRule()}）：錢、船、裝備、還沒賣的魚和排行榜都清空，大家從港口重新開始`;
   let k = 0;
   hub.eachRoom((r) => {
     r.board = [];

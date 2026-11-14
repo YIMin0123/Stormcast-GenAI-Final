@@ -49,7 +49,7 @@ GCP 主控台 → VPC 網路 → 防火牆：新增一條規則，允許 TCP 80�
 cd /opt/stormcast && sudo -u stormcast git pull && cd server && sudo -u stormcast npm ci --omit=dev && sudo systemctl restart stormcast
 ```
 
-重開伺服器時，房間裡的人都會斷線（錢、船、裝備、還沒賣的魚和今日紀錄都存在 DATA 資料夾的 profiles.json、daily.json，重開後還在，到每兩天一次的定時刷新才清）。
+重開伺服器時，房間裡的人都會斷線（錢、船、裝備、還沒賣的魚和今日紀錄都存在 DATA 資料夾的 profiles.json、daily.json，重開後還在，到定時刷新（見 config.js 的 SERVER.refresh）才清）。
 
 ## 網頁（GitHub Pages）
 

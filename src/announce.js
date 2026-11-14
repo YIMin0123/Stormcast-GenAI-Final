@@ -23,6 +23,13 @@ export function countdownText(ms) {
   return `${d ? `${d} 天 ` : ''}${pad(h)} 時 ${pad(m)} 分 ${pad(sec)} 秒`;
 }
 
+// 刷新規則的文字，例如「每 3 天台灣時間 05:00」（由 SERVER.refresh 推算，不寫死）
+export function refreshRule() {
+  const every = SERVER.refresh.everyHours, days = every / 24, t = new Date(Date.parse(SERVER.refresh.first) + 8 * 3600 * 1000);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${Number.isInteger(days) ? `每 ${days} 天` : `每 ${every} 小時`}台灣時間 ${pad(t.getUTCHours())}:${pad(t.getUTCMinutes())}`;
+}
+
 // 刷新的時刻（台灣時間），例如「11 月 15 日 08:00」
 export function refreshLabel(at) {
   const t = new Date(at + 8 * 3600 * 1000);   // 轉成台灣時間（UTC+8）再用 UTC 欄位讀
