@@ -1414,6 +1414,9 @@ composer.addPass(aoPass);
 // 光效（都在轉成螢幕顏色之前做，亮度可以超過 1）：太陽的光束，接著是光暈——夠亮的地方往外暈開
 const rays = new SunRaysPass();
 const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.22, 0.45, 1.7);
+// 光暈的輸入先把壞掉的像素（NaN、無限大）丟掉：只要畫面上有一點 NaN，模糊一層層擴散後整個畫面（或一大半）都會變成透明，露出網頁底色
+bloom.materialHighPassFilter.fragmentShader = bloom.materialHighPassFilter.fragmentShader.replace('vec4 texel = texture2D( tDiffuse, vUv );',
+  'vec4 texel = texture2D( tDiffuse, vUv ); texel = clamp( texel, vec4( 0.0 ), vec4( 64.0 ) ); if ( texel.r != texel.r || texel.g != texel.g || texel.b != texel.b || texel.a != texel.a ) texel = vec4( 0.0 );');
 composer.addPass(rays);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());

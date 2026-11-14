@@ -272,7 +272,7 @@ export class Spindrift {
           vec3 axis = vec3(uWindDir.x, 0.0, uWindDir.y), side = normalize(cross(axis, w - uCam) + vec3(0.0, 1e-4, 0.0));
           w += side * aCorner.y * wid;
           float d = distance(c, uCam.xz);
-          vA = on * smoothstep(0.5 * uBox.x, 0.34 * uBox.x, d) * smoothstep(5.0, 16.0, length(w - uCam));   // 盒子邊緣淡出（不會憑空冒出來）；貼到臉上的也淡掉
+          vA = on * (1.0 - smoothstep(0.34 * uBox.x, 0.5 * uBox.x, d)) * smoothstep(5.0, 16.0, length(w - uCam));   // 盒子邊緣淡出（不會憑空冒出來）；貼到臉上的也淡掉（smoothstep 的兩個邊界不能前大後小，有的顯示卡會算出 NaN）
           vUv = vec3(aCorner.x, aCorner.y, len);
           vSeed = aSeed.w * 91.0;
           gl_Position = vA > 0.004 ? projectionMatrix * viewMatrix * vec4(w, 1.0) : vec4(2.0, 2.0, 2.0, 1.0);
@@ -289,7 +289,7 @@ export class Spindrift {
           return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y);
         }
         void main() {
-          float u = vUv.x, v = vUv.y;
+          float u = clamp(vUv.x, 0.0, 1.0), v = clamp(vUv.y, -1.0, 1.0);   // 內插可能超出 0–1 一點點：pow(負數) 是 NaN，會被光暈擴散成整片畫面
           // 一絲一絲順著風拉長的紋路，往下風處流；整條霧頭濃尾淡、邊緣撕破
           float n = 0.6 * vn(vec2(u * vUv.z * 0.16 - uTime * 2.2 + vSeed, v * 1.6 + vSeed)) + 0.4 * vn(vec2(u * vUv.z * 0.5 - uTime * 4.0, v * 4.0 + vSeed * 1.7));
           float body = (1.0 - v * v) * smoothstep(0.0, 0.12, u) * pow(1.0 - u, 0.7);
