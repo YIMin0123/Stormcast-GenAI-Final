@@ -20,6 +20,18 @@ bash deploy/push.sh all origin/main  # 指定版本（任何 git 版本都可以
 
 檢查：瀏覽器打開網址能玩；`https://35-229-248-193.sslip.io/status` 看到「Stormcast 伺服器運作中」。
 
+## 全服公告（跑馬燈）與強制重開
+
+```bash
+bash deploy/announce.sh "今晚 10 點維修"      # 發跑馬燈公告（一直掛著）
+bash deploy/announce.sh "新版本更新" 60       # 公告＋60 秒倒數，倒數完伺服器存檔重開（玩家斷線後自動接回）
+bash deploy/announce.sh "" 60                  # 只倒數、不寫字
+bash deploy/announce.sh clear                  # 取消公告和倒數
+```
+
+重開 = 伺服器把所有人的進度存好後結束，systemd 幾秒內再開起來（錢、船、裝備、魚都存在檔案裡）。要上線新版時：先發一個倒數公告，等一下再跑 `push.sh`（它本身也會重開伺服器）。
+這些指令只能從伺服器本機發，外面的人打不進來。
+
 ## 伺服器上有什麼（第一次設定時裝的，已經裝好）
 
 | 東西 | 用途 |

@@ -3919,6 +3919,25 @@ net.on('boat', (m) => { if (m.id !== net.id) others.setBoat(m.id, m.boat); });
 net.on('sunk', (m) => { const b = others.boat(m.id); if (b) b.founder(m.why, m.side); });
 net.on('chat', (m) => chat.say(m.name, m.text, m.id === net.id));
 net.on('sys', (m) => chat.sys(m.text, m.kind));
+// 全服公告（跑馬燈）：伺服器發的文字，可帶「幾秒後重開」的倒數；沒有公告（text 空、left < 0）就收起來。重開之後新連線收到的是空的，舊的自然清掉
+const marqEl = $('marquee');
+let marqTimer = 0;
+net.on('notice', (m) => {
+  clearInterval(marqTimer);
+  if (!m.text && m.left < 0) { marqEl.style.display = 'none'; document.body.classList.remove('marq'); return; }
+  const end = m.left >= 0 ? performance.now() + m.left * 1000 : 0, span = marqEl.firstElementChild;
+  const draw = () => {
+    const left = Math.max(0, Math.ceil((end - performance.now()) / 1000));
+    const tail = !end ? '' : left > 0 ? `伺服器將在 ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} 後重新啟動，進度會保存，斷線後會自動接回` : '伺服器重新啟動中，請稍候…';
+    const t = [m.text, tail].filter(Boolean).join('　');
+    if (span.textContent !== t) span.textContent = t;
+  };
+  draw();
+  marqEl.style.setProperty('--dur', `${Math.max(12, span.textContent.length * 0.45)}s`);
+  marqEl.style.display = 'block';
+  document.body.classList.add('marq');
+  if (end) marqTimer = setInterval(draw, 1000);
+});
 net.on('boards', (m) => boards.set(m));
 net.on('lights', (m) => applyRoomLights(m.lights));
 net.on('kit', (m) => applyKit(m.kit));

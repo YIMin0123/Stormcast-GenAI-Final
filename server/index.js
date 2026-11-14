@@ -160,7 +160,34 @@ function mergeStep(now) {
 }
 
 // ---- 連線 -------------------------------------------------------------------
+// ---- 管理：全服跑馬燈公告、倒數強制重開（用 deploy/announce.sh 在伺服器本機呼叫）----
+// 只收本機：遊戲伺服器只聽 127.0.0.1，外面的人直接連不到；而 Caddy 轉進來的請求一定帶 x-forwarded-for，所以帶了這個標頭的一律拒絕。
+let notice = null, noticeTimer = null;   // notice：{ text, restartAt（毫秒時間戳，0 = 不重開） }
+const noticeMsg = () => JSON.stringify({ t: 'notice', text: notice ? notice.text : '', left: notice && notice.restartAt ? Math.max(0, Math.ceil((notice.restartAt - Date.now()) / 1000)) : -1 });
+function setNotice(text, restartSec) {
+  clearTimeout(noticeTimer);
+  notice = text || restartSec > 0 ? { text, restartAt: restartSec > 0 ? Date.now() + restartSec * 1000 : 0 } : null;
+  if (notice && notice.restartAt) noticeTimer = setTimeout(() => { console.log('[admin] 倒數結束，存檔後重開'); stop(); }, restartSec * 1000);   // 存檔後結束；systemd 會馬上重開，玩家斷線後自動接回
+  const raw = noticeMsg();
+  for (const ws of wss.clients) if (ws.readyState === 1) ws.send(raw);
+}
+function admin(req, res, url) {
+  const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) && !req.headers['x-forwarded-for'];
+  const reply = (code, text) => { res.writeHead(code, { 'content-type': 'text/plain; charset=utf-8' }); res.end(`${text}\n`); };
+  if (!local) return reply(403, 'forbidden');
+  if (url.pathname === '/admin/notice') {
+    const text = (url.searchParams.get('text') || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 120);
+    const restart = Math.min(Math.max(Math.floor(+url.searchParams.get('restart') || 0), 0), 3600);
+    if (!text && !restart) return reply(400, '要有 text 或 restart（秒）');
+    setNotice(text, restart);
+    return reply(200, `已發出：「${text}」${restart ? `，${restart} 秒後重開` : ''}（線上 ${wss.clients.size} 人）`);
+  }
+  if (url.pathname === '/admin/clear') { setNotice('', 0); return reply(200, '已取消公告和重開倒數'); }
+  return reply(404, 'not found');
+}
 const http = createServer((req, res) => {
+  const url = new URL(req.url, 'http://localhost');
+  if (url.pathname.startsWith('/admin/')) return admin(req, res, url);
   let n = 0;
   hub.eachRoom((r) => { n += r.active; });
   res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
@@ -172,6 +199,7 @@ const wss = new WebSocketServer({
 });
 
 wss.on('connection', (ws) => {
+  ws.send(noticeMsg());   // 新連線：現在有公告就帶上（重開之後沒有公告，等於把舊的跑馬燈清掉）
   let me = null;        // 進房之後才有
   let name = '', token = '', look = 'girl';   // look：選的角色（只收得到 girl／boy）
   let burstAt = 0, burst = 0;

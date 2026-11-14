@@ -125,6 +125,13 @@
     #hSpeed { display: none; }
     #fade { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; }
     /* 通知（釣到魚、換餌……）：畫面上方正中間，不跟下面的提示疊在一起 */
+    /* 全服公告跑馬燈（伺服器發的，可帶重開倒數；見 main.js 的 showNotice） */
+    #marquee { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); z-index: 70; width: min(92vw, 760px); overflow: hidden; display: none;
+      padding: 7px 0; border-radius: 999px; background: var(--coral-a); border: 2px solid #fff; color: #fff; font-size: 15px; box-shadow: 0 4px 0 var(--coral-d); pointer-events: none; }
+    #marquee span { display: inline-block; white-space: nowrap; padding-left: 100%; animation: marq var(--dur, 14s) linear infinite; }
+    @keyframes marq { to { transform: translateX(-100%); } }
+    body.marq #toast { top: 108px; }
+    body.touch #marquee { top: 58px; font-size: 13px; }
     #toast { left: 50%; top: 62px; transform: translateX(-50%); padding: 7px 18px; font-size: 14px; color: var(--sea-d);
       display: none; white-space: nowrap; max-width: calc(100vw - 40px); overflow: hidden; text-overflow: ellipsis; z-index: 27; }   /* 比平板（26）高：拿著平板時通知也看得到 */
     #fishui { left: 50%; bottom: 176px; transform: translateX(-50%); padding: 10px 16px; width: 320px;
@@ -366,6 +373,7 @@
   <div id="hud" class="card hudRow"><span id="hClock"></span><span id="hSky"></span><span id="hMoneyBox" title="金錢"><i data-ic="coin"></i><b id="hMoney">$0</b></span></div>
   <div id="hShip" class="card hudRow"><span title="船的耐久"><i data-ic="boat"></i><b id="hHp">100%</b></span><span title="燃油"><i data-ic="fuel"></i><b id="hFuel">0</b></span><span id="hSpeed" title="船速"><i data-ic="speed"></i><b id="hBoat">0.0 節</b></span></div>
   <div id="fishui" class="card"><div id="fishLabel"></div><div id="bar"><div id="barSafe"></div><div id="barFill"></div><div id="barMark"></div></div><div id="prog"><div id="progFill"></div></div><div id="strain">釣竿負荷<div id="strainBar"><div id="strainFill"></div></div></div><div id="fishHint"></div></div>
+  <div id="marquee"><span></span></div>
   <div id="toast" class="card"></div>
   <div id="aim"></div>
   <div id="throwBar"><i></i></div>
