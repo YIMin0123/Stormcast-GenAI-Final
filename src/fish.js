@@ -291,8 +291,13 @@ export class FishWorld {
     }
   }
 
-  // 自己放在外面的魚被別人撿走了、放太久消失了：回傳那條（沒有就是 null）
+  // 伺服器通知一條魚已離開玩家的持有清單。
   removeOwn(uid) {
+    if (uid && this.held?.uid === uid) {
+      const it = this.held;
+      this.discardHeld();
+      return it;
+    }
     for (const list of [this.items, this.basket]) {
       const i = list.findIndex((o) => !o.remote && o.uid === uid);
       if (i >= 0) { const it = list[i]; it.mesh.removeFromParent(); list.splice(i, 1); it.pub = false; return it; }
@@ -300,7 +305,21 @@ export class FishWorld {
     return null;
   }
 
-  // 進房、斷線接回來：照伺服器的清單重畫別人的魚；自己的（斷線前放在外面的）照原樣放回去。myId：自己的編號
+  // 斷線可能漏收釣獲、送魚或售出的結果，先用伺服器的清單對齊持有權。
+  reconcileOwn(privateFish, loose, myId, boat) {
+    const owned = new Set(privateFish.map((f) => f.uid));
+    for (const d of loose) if (d.o === myId) owned.add(d.uid);
+    for (const it of [...this.items, ...this.basket, this.held]) {
+      if (it?.uid && !it.remote && !owned.has(it.uid)) this.removeOwn(it.uid);
+    }
+    this.applyLoose(loose, myId);
+    const have = new Set([...this.items, ...this.basket, this.held].filter((it) => it && !it.remote).map((it) => it.uid));
+    for (const f of privateFish) {
+      if (!have.has(f.uid)) this.stowDeck(boat, 0, 0, f.id, f.kg, f.len, f.uid, f.value);
+    }
+  }
+
+  // 進房、斷線接回來：照伺服器清單重畫鬆散漁獲。
   applyLoose(list, myId) {
     for (const it of [...this.items, ...this.basket]) if (it.remote) this.removeRemote(it.uid);
     const have = new Set([...this.items, ...this.basket].filter((it) => !it.remote && it.uid).map((it) => it.uid));
@@ -310,6 +329,7 @@ export class FishWorld {
     for (const d of list) {
       if (d.o !== myId) { this.addRemote(d); continue; }
       if (have.has(d.uid)) continue;
+      if (this.held?.uid === d.uid) this.discardHeld();
       // 自己的、這邊沒有（關掉分頁又回來）：照伺服器記的位置放回去
       const keep = this.held;
       this.held = null;
@@ -386,7 +406,7 @@ export class FishWorld {
     this._unlist(it);
     it.state = 'basket'; it.boat = null;
     this.env.scene.add(it.mesh);
-    it.mesh.position.set(k.x + rand(-0.2, 0.2), k.y + 0.36 + 0.07 * this.basket.length, k.z + rand(-0.2, 0.2));
+    it.mesh.position.set(k.x + rand(-0.2, 0.2), k.y + 0.36 + 0.07 * Math.min(this.basket.length, 8), k.z + rand(-0.2, 0.2));
     it.mesh.rotation.set(Math.PI / 2, 0, rand(0, Math.PI * 2));
     this.basket.push(it);
     this._pub(it);   // 籃子是大家共用的：放進去大家都看得到

@@ -1359,7 +1359,7 @@ const fishing = new Fishing({
     land: () => { if (net.online) { landing = true; net.send({ t: 'land' }); } else toast('連線中斷，這條魚沒算到'); },
     lose: (why) => net.send({ t: 'lose', why }),
   },
-  canFish: () => inGame && net.online && mode === 'walk' && !fish.held && !heldBox() && !player.swim,
+  canFish: () => inGame && net.online && !landing && mode === 'walk' && !fish.held && !heldBox() && !player.swim,
   rodLv: () => rodLv,
   broken: () => rodBroken,
   sound: (name, vol) => audio.play(name, vol, name === 'plop' || name === 'bite' || name === 'hook' || name === 'land' ? fishing.bob.position : null),   // 水花聲從浮標那裡傳過來
@@ -1911,6 +1911,10 @@ function havenPump() {
   if (myBoat.spec.tank - myBoat.fuel < 1) return toast('油箱是滿的');
   if (n < 1) return toast('錢不夠');
   if (!net.online) return toast('連線中斷，等接回去再加');
+  if (buying) return;
+  buying = true;
+  window.setTimeout(() => { buying = false; }, 1500);
+  net.send({ t: 'b', s: myBoat.netState() });
   net.send({ t: 'pump', liters: n });
 }
 
@@ -3642,6 +3646,8 @@ function boatBlock() {
   if (onMyBoat()) return '先下船才能叫船、換船';
   return '';
 }
+const deckLoaded = () => fish.items.some((it) => it.boat === myBoat && it.uid)
+  || boxes.all().some((b) => b.k === 'd' && b.b === net.id);
 const boatWarn = () => !!myBoat.sinking || myBoat.fuel < myBoat.spec.tank * TABLET.lowFuel || myBoat.hp < myBoat.spec.hp * TABLET.lowHp;
 // 魚箱在哪
 function boxWhere(d) {
@@ -3704,6 +3710,7 @@ const tabEnv = {
       if (why) return toast(why);
       if (!net.online) return toast('連線中斷，等接回去再試');
       if (name === 'call') return net.send({ t: 'call' });
+      if (deckLoaded()) return toast('請先把甲板上的漁獲和魚箱搬下船，再換船');
       sendBoatDetail();   // 先把這艘船現在的油量、破洞告訴伺服器（收進倉庫時它要記著）
       return net.send({ t: 'swap', type: arg });
     }
@@ -3988,7 +3995,7 @@ net.on('expired', (m) => {
   let n = 0;
   for (const uid of m.uids) if (fish.removeOwn(uid)) n++;
   refreshBoard();
-  if (n) toast(`放在外面太久沒人拿的 ${n} 條魚不見了`);
+  if (n) toast(m.msg || `放在外面太久沒人拿的 ${n} 條魚不見了`);
 });
 
 net.on('k', (m) => {
@@ -4053,9 +4060,8 @@ net.on('sold', (m) => {
     return;
   }
   if (m.at === 'haven') {
-    // 大港的大秤：賣掉的是手上那條、或船上魚箱裡的（不經過籃子）
-    const gone = new Set(m.uids);
-    if (fish.held && gone.has(fish.held.uid)) fish.discardHeld();
+    // 成交回覆抵達時，魚可能已從手上放到地面或甲板。
+    for (const uid of m.uids) fish.removeOwn(uid);
     applyKit(m.kit);
     if (m.total > 0) { audio.play('coin'); toast(`大港收購價（多 ${Math.round(PORT.bonus * 100)}%）：賣出 ${m.uids.length} 條，得到 ${cash(m.total)}`); }
     return;
@@ -4073,8 +4079,9 @@ net.on('chestGot', (m) => {
   else toast(`寶箱裡有 ${cash(m.cash)}`);
 });
 net.on('pumped', (m) => {
+  buying = false;
   applyKit(m.kit);
-  myBoat.fuel = Math.min(myBoat.spec.tank, myBoat.fuel + m.liters);
+  myBoat.fuel = clamp(m.fuel ?? myBoat.fuel + m.liters, 0, myBoat.spec.tank);
   audio.play('pour');
   toast(`加了 ${m.liters} 公升，花了 ${cash(m.price)}。油箱 ${litres(myBoat.fuel)} / ${myBoat.spec.tank} 公升`);
 });
@@ -4083,7 +4090,11 @@ net.on('bought', (m) => {
   const o = offer(m.id);   // 買之前的說明（要它的名字）
   applyKit(m.kit);
   audio.play('coin');
-  if (m.id === 'fuel') fish.spawnCan(CAN);
+  if (m.id === 'fuel') {
+    if (fish.held) fish.drop();
+    if (heldBox()) fish.stowCan(myBoat, 0, 0, CAN);
+    else fish.spawnCan(CAN);
+  }
   if (m.id === 'box' && fish.held) fish.drop();   // 魚箱抱在手上：手上原本拿的先放下
   toast(m.repair ? (m.cheap ? '釣竿修好了（錢不夠，老闆算你便宜）' : '釣竿修好了')
     : BOAT_TYPES[m.id] ? `買了${o.name}，先收在倉庫。拿出平板（${TOUCH ? '右上角的平板鈕' : 'Tab'}）打開「船」就能換出來` : `買了${o.name}`);
@@ -4163,6 +4174,8 @@ net.on('status', (st) => {
   const box = $('net'), msg = $('netMsg'), btn = $('netRetry');
   if (st === 'online') { box.style.display = 'none'; return; }
   if (!inGame) return;   // 還在大廳：選單自己會處理
+  landing = false;
+  fishing.cancel(null);
   if (st === 'offline') { msg.textContent = '連線中斷，正在接回去…（30 秒內接得回來，進度都還在）'; btn.style.display = 'none'; }
   else {
     msg.textContent = st === 'expired' ? '斷線太久，已經離開房間了（錢、船、裝備和魚都存著，重新進房就好）' : st.startsWith('kicked:') ? st.slice(7) : '和伺服器斷線了';
@@ -4174,19 +4187,22 @@ net.on('status', (st) => {
   box.style.display = 'flex';
 });
 $('netRetry').addEventListener('click', () => window.location.reload());
-// 斷線後接回來了（分頁沒關）：這邊的東西都還在，只要把別人和世界對回來，再把斷線時沒送到的事補送
+// 斷線後接回來：以伺服器的結果補回漏掉的交易和漁獲。
 net.on('rejoin', (j) => {
+  if (j.kit.active !== myBoat.spec.id) { enterRoom(j); return; }
   room = j.room;
   others.sync(j.players);
   berth = j.berth;
   applyKit(j.kit);
   boards.set(j.boards);
   applyWorld(j.world, true);
-  const mine = new Set(myFishUids());
-  const gone = (j.resume?.fish ?? []).filter((f) => !mine.has(f.uid)).map((f) => f.uid);
-  if (gone.length) net.send({ t: 'fishGone', uids: gone });
+  pendingIn.clear();
+  dexBook = j.dex ?? {};
+  const catchupBoat = j.resume?.boat;
+  if (catchupBoat && !catchupBoat.sunk && !myBoat.sinking) myBoat.fuel = clamp(catchupBoat.s[10], 0, myBoat.spec.tank);
   boxes.apply(j.boxes);
-  fish.applyLoose(j.loose ?? [], net.id);   // 斷線時別人放下、撿走的魚對回來；自己放在外面被撿走的拿掉
+  fish.reconcileOwn(j.resume?.fish ?? [], j.loose ?? [], net.id, myBoat);
+  refreshBoard();
   if (myBoat._wrecked && !j.resume?.boat?.sunk) net.send({ t: 'sink', why: myBoat.sunkBy, side: myBoat._side });
   lastPosMsg = lastBoatMsg = lastBoatDetail = '';
   lastHold = lastLine = '?';
@@ -4203,6 +4219,7 @@ net.on('restarted', (j) => {
 // 進到房間裡（從大廳點進來，或是關掉分頁後 30 秒內回來）
 function enterRoom(j) {
   room = j.room;
+  pendingIn.clear();
   fish.clearAll();
   garage.clear();
   garageState.clear();

@@ -257,6 +257,7 @@ export class Room {
   remove(p) {
     this.hub.keep(p);   // 斷線太久沒回來：進度存回檔案，下次進房還在
     p.owner = false;
+    this.removeDeckFish(p.id);
     for (const e of this.loose.values()) if (e.owner === p.id) e.owner = 0;
     stowBoxes(this, p);   // 箱子收起來跟著存檔；別人放在他船上的箱子浮到海上   // 他放在外面的魚留在原地（沒有主人了），照樣可以撿、時間到就消失
     this.players.delete(p.id);
@@ -366,6 +367,7 @@ export class Room {
       case 'sink': {
         if (!p.boat || p.boat.sunk || !['capsize', 'flood', 'spout', 'whirl', 'curl'].includes(m.why) || !Number.isFinite(m.side)) return;
         p.boat.sunk = true;
+        this.removeDeckFish(p.id);
         floatBoxes(this, p);   // 甲板上的魚箱浮起來
         this.all({ t: 'sunk', id: p.id, why: m.why, side: m.side > 0 ? 1 : -1 }, p);
         return;
@@ -383,6 +385,10 @@ export class Room {
         if (!validId(type, BOAT_TYPES) || !Object.hasOwn(kit.boats, type) || type === kit.active || !p.boat || p.boat.sunk) return;
         const why = moveBlocked(this, p);
         if (why) return this.send(p, { t: 'no', msg: why });
+        if ([...this.loose.values()].some((e) => e.k === 'd' && e.b === p.id)
+          || [...this.boxes.values()].some((b) => b.k === 'd' && b.b === p.id)) {
+          return this.send(p, { t: 'no', msg: '請先把甲板上的漁獲和魚箱搬下船，再換船' });
+        }
         p.stored[kit.active] = { fuel: p.boat.s[10], cracks: p.boat.cracks };   // 收進倉庫的那艘：油量、破洞記著，下次換出來照舊
         kit.active = type;
         return this.newBoat(p, {}, true);
@@ -435,7 +441,10 @@ export class Room {
       case 'fishGone': {   // 魚掉回海裡、跟著船沉了
         if (!Array.isArray(m.uids)) return;
         const del = [];
-        for (const u of m.uids.slice(0, 250)) if (p.fish.delete(u) && this.loose.delete(u)) del.push(u);
+        const boxed = inBoxes(p);
+        for (const u of m.uids.slice(0, 250)) {
+          if (!boxed.has(u) && p.fish.delete(u) && this.loose.delete(u)) del.push(u);
+        }
         if (del.length) this.all({ t: 'loose', del }, p);
         return;
       }
@@ -505,12 +514,20 @@ export class Room {
         return;
       }
       case 'pump': {   // 大港碼頭的加油柱：照公升數收錢，油加進停在旁邊的船（油量是瀏覽器那邊記的）
-        if (!p.boat || !this.near(p, HAVEN_PUMP_W.x, HAVEN_PUMP_W.z, PORT.pump.reach + 2.5)) return this.send(p, { t: 'no', msg: '要站在加油柱旁邊才能加油' });
+        if (!this.near(p, HAVEN_PUMP_W.x, HAVEN_PUMP_W.z, PORT.pump.reach + 2.5)) return this.send(p, { t: 'no', msg: '要站在加油柱旁邊才能加油' });
+        const b = p.boat;
+        if (!b || b.sunk || dist(b.s[0], b.s[1], HAVEN_PUMP_W.x, HAVEN_PUMP_W.z) >= PORT.pump.range) {
+          return this.send(p, { t: 'no', msg: '先把船停到加油柱旁邊' });
+        }
         if (!Number.isFinite(m.liters)) return;
-        const liters = Math.floor(Math.min(m.liters, BOAT_TYPES[p.boat.type].tank)), price = Math.ceil(liters * PORT.pump.price);
+        const capacity = Math.floor(BOAT_TYPES[b.type].tank - b.s[10]);
+        if (capacity < 1) return this.send(p, { t: 'no', msg: '油箱是滿的' });
+        const liters = Math.floor(Math.min(m.liters, capacity)), price = Math.ceil(liters * PORT.pump.price);
         if (liters < 1 || kit.money < price) return this.send(p, { t: 'no', msg: '錢不夠' });
         kit.money -= price;
-        return this.send(p, { t: 'pumped', liters, price, kit });
+        b.s[10] += liters;
+        p.boatDirty = true;
+        return this.send(p, { t: 'pumped', liters, price, fuel: b.s[10], kit });
       }
       case 'chest': {   // 撿漂流寶箱：先到先得
         const spot = this.extras.spotOf(m.id);
@@ -621,6 +638,20 @@ export class Room {
   // ---- 放在外面的魚 ----
   loosePub(e) { return { uid: e.uid, id: e.f.id, kg: e.f.kg, len: e.f.len, value: e.f.value, o: e.owner, k: e.k, x: e.x, y: e.y, z: e.z, yaw: e.yaw, b: e.b }; }
   looseList() { return [...this.loose.values()].map((e) => this.loosePub(e)); }
+  removeDeckFish(boatOwner) {
+    const del = [], byOwner = new Map();
+    for (const e of this.loose.values()) {
+      if (e.k !== 'd' || e.b !== boatOwner) continue;
+      this.loose.delete(e.uid);
+      del.push(e.uid);
+      const owner = this.players.get(e.owner);
+      if (!owner?.fish.delete(e.uid)) continue;
+      if (!byOwner.has(owner)) byOwner.set(owner, []);
+      byOwner.get(owner).push(e.uid);
+    }
+    if (del.length) this.all({ t: 'loose', del });
+    for (const [owner, uids] of byOwner) this.send(owner, { t: 'expired', uids, msg: '船不在了，甲板上的漁獲已落海' });
+  }
   // 那條魚在世界的哪裡（甲板上的：那艘船的位置，撿的時候放寬距離）
   looseAt(e) {
     if (e.k === 'd') { const o = this.players.get(e.b); return o && o.boat ? [o.boat.s[0], o.boat.s[1]] : [1e9, 1e9]; }

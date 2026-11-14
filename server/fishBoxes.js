@@ -52,7 +52,14 @@ export const inBoxes = (p) => new Set(p.boxes.flatMap((bx) => bx.fish));
 // 抱著的箱子放在腳邊（換抱別的、斷線時）
 function setDown(room, p, bx) {
   if (!p.pos) return;
-  Object.assign(bx, { k: 'g', x: p.pos[0], y: p.pos[1], z: p.pos[2], yaw: p.pos[3] || 0, b: 0 });
+  const [x, y, z, yaw, flags, , , , onBoat, lx, lz] = p.pos;
+  const b = room.players.get(onBoat)?.boat;
+  if (b && !b.sunk) {
+    Object.assign(bx, { k: 'd', x: lx, y: 0, z: lz, yaw: yaw - b.s[2], b: onBoat });
+  } else {
+    const floating = !!(flags & 4) || !!b?.sunk;
+    Object.assign(bx, { k: floating ? 'w' : 'g', x, y: floating ? 0 : y, z, yaw, b: 0 });
+  }
   show(room, bx);
 }
 // 某艘船沉了、不見了：甲板上的箱子浮到海面上（裡面的魚還在）
