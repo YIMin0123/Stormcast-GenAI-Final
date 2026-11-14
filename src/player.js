@@ -33,7 +33,7 @@ export class Player {
     this.run = false;
     this.carry = false;                    // 雙手捧著東西
     this.fly = false;                      // 開發者模式：飛行中（速度、上下速度、最高高度由 main.js 照 DEVMODE 設）
-    this.flySpeed = 12; this.flyVert = 8; this.flyMaxH = 150;
+    this.flySpeed = 12; this.flyFast = 36; this.flyVert = 8; this.flyMaxH = 150;
     this.rod = false;                      // 右手拿著釣竿
     this.onWater = false;                  // 腳下是水（踩不到底）
     this.swim = false;                     // 正在游泳（在水裡、不是掉下去的途中）
@@ -214,7 +214,7 @@ export class Player {
     const len = Math.hypot(dirX, dirZ);
     this.moving = len > 0.01;
     if (this.moving) {
-      let v = fly ? this.flySpeed : swim ? (run ? SWIM_FAST : SWIM) : (run ? RUN : WALK);
+      let v = fly ? (this.flyDash ? this.flyFast : this.flySpeed) : swim ? (run ? SWIM_FAST : SWIM) : (run ? RUN : WALK);
       if (fly) { /* 飛行：不管水、不管手上拿什麼 */ } else if (swim && this.carry) v *= 0.7;                                                        // 捧著東西游比較慢
       else if (!swim && !this.boat && this.base < world.water(this.x, this.z) - 0.45) v *= 0.6; // 涉水
       const sp = v * dt, dx = (dirX / len) * sp, dz = (dirZ / len) * sp;

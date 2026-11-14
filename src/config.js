@@ -33,6 +33,7 @@ export const THROW = {
 // 開發者模式（只有測試環境：伺服器開了開發模式才有）：飛行、不會累、不會溺水、測試指令面板
 export const DEVMODE = {
   flySpeed: 12,        // 飛行時水平速度（公尺／秒）
+  flyFast: 36,         // 按住 R 衝刺的水平速度
   flyVert: 8,          // Shift 上升、Q 下降的速度（公尺／秒）
   flyMaxH: 150,        // 最高飛到離海面幾公尺
   doubleTap: 0.3,      // 連按兩下空白鍵算「連按」的間隔（秒）：切換飛行
