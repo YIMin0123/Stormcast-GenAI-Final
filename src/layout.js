@@ -85,7 +85,7 @@ export const WALLS = [
   { x0: S.x1 - 0.25, x1: S.x1, z0: S.z0, z1: S.z1 },                 // 東牆
   { x0: S.x0, x1: S.open.x0, z0: S.z1 - 0.25, z1: S.z1 },           // 正面西側短牆
   { x0: S.open.x1, x1: S.x1, z0: S.z1 - 0.25, z1: S.z1 },            // 正面東半邊
-  { x0: BOARDS.berth.x - 0.6, x1: BOARDS.daily.x + 1.5, z0: BOARD_Z - 0.3, z1: BOARD_Z + 0.25 },   // 一排看板
+  { x0: BOARDS.room.x - 1.5, x1: BOARDS.daily.x + 1.5, z0: BOARD_Z - 0.3, z1: BOARD_Z + 0.25 },   // 一排看板（停船位置牌拿掉了）
   { x0: H.MARKET.x0 - 0.2, x1: H.MARKET.x1 + 0.2, z0: H.MARKET.z0, z1: H.MARKET.z0 + 0.2 },        // 魚市場後面那道木牆
   { x0: H.SELL.board.x - 0.76, x1: H.SELL.board.x + 0.76, z0: H.SELL.board.z - 0.1, z1: H.SELL.board.z + 0.22 },   // 魚市場中間柱子上的價格板：底邊只到胸口，不擋的話頭會鑽進板子裡
   // 店裡：櫃台、後面的貨架、西牆邊的釣竿架、三座展示台、工作台
@@ -126,7 +126,6 @@ export function underRoof(x, y, z) {
 export const LIGHTHOUSE_W = homeW(LIGHTHOUSE);
 // 商品：位置、站位、價格牌都換成世界座標（高度 y 不變）
 export const SHELF_W = SHELF.map((it) => ({ ...it, ...homeW(it), stand: homeW({ x: it.x, z: it.z + STAND_OFF }), tagW: homeW(it.tag) }));
-export const BOARD_STAND_W = homeW({ x: BOARDS.berth.x, z: BOARD_Z + 1.2 });
 // 玩家出生點：位置與面向（世界座標）
 export const SPAWN_W = { ...homeW(PLAYER_SPAWN), yaw: headingToWorld(PLAYER_SPAWN.yaw) };
 // 以前水泥岸壁朝海的那條邊（纜繩翻過牆角用）；木棧橋的纜繩直接拉，不翻牆角，所以放到無限遠
@@ -136,8 +135,6 @@ export const QUAY_CENTER_W = homeW({ x: 0, z: 0 });
 export const HARBOR_CENTER_W = homeW({ x: H.SEG1.cx, z: H.SEG1.cz });
 // 站在商店門口（世界座標）：靠近這裡會顯示商店的提示
 export const SHOP_FRONT_W = homeW({ x: (S.x0 + S.open.x1) / 2, z: S.z1 + 1.5 });
-// 停船位置牌：看板中心（世界座標）
-export const BERTH_BOARD_W = homeW({ x: BOARDS.berth.x, z: BOARD_Z });
 
 // 大港灣島：吊鉤大秤收購站、碼頭加油柱在世界的哪裡（伺服器檢查人有沒有站在旁邊用）
 const havenW = (p) => { const [x, z] = HAVEN.toWorld(p.x, p.z); return { x, z }; };

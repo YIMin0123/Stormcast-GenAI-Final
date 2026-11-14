@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { Player } from './player.js';
 import { ACTION_BY_ID } from './emotes.js';
 import { SPECIES, makeFishMesh, makeCanMesh } from './fish.js';
+import { makeTabletMesh } from './tabletMesh.js';
 import { restyle } from './figure.js';
 
 // 頭上的名牌：一張畫著名字的小圖，永遠面向鏡頭、遠近都一樣大
@@ -95,13 +96,19 @@ export class Others {
     o.fig = o.tag = o.rod = o.st = o.bob = o.line = o.held = o.hold = o.ln = null;
   }
 
-  // 他手上拿著什麼：[魚種或 'can', 身長]；空手是 null。跟自己拿著的時候一樣橫著捧在胸前
+  // 他手上拿著什麼：[魚種或 'can' 或 'tablet', 身長]；空手是 null。跟自己拿著的時候一樣橫著捧在胸前（平板：低頭在看）
   setHold(id, s) {
     const o = this.map.get(id);
     if (!o || !o.fig) return;
     if (o.held) { o.held.removeFromParent(); dispose(o.held); o.held = null; }
-    o.hold = s && (s[0] === 'can' || SPECIES[s[0]]) ? s : null;
+    o.hold = s && (s[0] === 'can' || s[0] === 'tablet' || SPECIES[s[0]]) ? s : null;
     if (!o.hold) return;
+    if (o.hold[0] === 'tablet') {
+      o.held = makeTabletMesh();
+      o.held.position.set(0.4, 1.12, 0);
+      o.fig.mesh.add(o.held);
+      return;
+    }
     o.held = o.hold[0] === 'can' ? makeCanMesh() : makeFishMesh(SPECIES[o.hold[0]], o.hold[1]);
     o.held.position.set(0.5, 1.08, 0);
     o.held.rotation.set(0, Math.PI / 2, 0);

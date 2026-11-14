@@ -108,28 +108,24 @@
     #throwBar { position: fixed; left: 50%; top: 50%; width: 96px; height: 8px; margin: 22px 0 0 -48px; display: none; pointer-events: none;
       background: rgba(191, 232, 248, 0.6); border: 2px solid var(--edge); border-radius: 999px; overflow: hidden; box-shadow: 0 2px 6px rgba(10, 30, 50, 0.25); }
     #throwBar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--sun), var(--coral)); }
-    /* 右上角的狀態列：房間、時間、風向、錢、餌。一格一格用圖示分開 */
+    /* 右上角的狀態列：時間、天氣的小圖示、錢（房間、風向、餌這些詳細的都在平板上：src/tablet.js） */
     .hudRow { display: flex; align-items: center; gap: 14px; padding: 5px 14px; font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .hudRow > span { display: inline-flex; align-items: center; gap: 4px; }
     .hudRow i[data-ic] { color: var(--sea); line-height: 0; }
     .hudRow b { font-weight: 400; }
     .hudRow b.low { color: var(--bad); }
     #hud { top: 12px; right: 12px; z-index: 16; }
-    #hRoom:empty { display: none; }
-    #hRoom { color: var(--sea-d); }
     #hClock { color: var(--ink); }
-    #hWind { color: var(--ink); }
-    #hWind svg { width: 15px; height: 15px; color: var(--sea); }
+    #hSky { color: var(--sea); line-height: 0; }
     #hMoneyBox { background: rgba(255, 194, 60, 0.85); color: #5a3b00; border-radius: 999px; padding: 1px 10px 1px 6px; margin-right: -6px; }
     #hMoneyBox i[data-ic] { color: #8a5a00; }
-    #hBait[hidden] { display: none; }
     /* 人在船上時：左上角（設定鈕右邊）多一條船況：耐久、燃油、船速 */
     #hShip { top: 12px; left: 104px; display: none; z-index: 16; }
     #hSpeed { display: none; }
     #fade { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; }
     /* 通知（釣到魚、換餌……）：畫面上方正中間，不跟下面的提示疊在一起 */
     #toast { left: 50%; top: 62px; transform: translateX(-50%); padding: 7px 18px; font-size: 14px; color: var(--sea-d);
-      display: none; white-space: nowrap; max-width: calc(100vw - 40px); overflow: hidden; text-overflow: ellipsis; z-index: 18; }
+      display: none; white-space: nowrap; max-width: calc(100vw - 40px); overflow: hidden; text-overflow: ellipsis; z-index: 27; }   /* 比平板（26）高：拿著平板時通知也看得到 */
     #fishui { left: 50%; bottom: 176px; transform: translateX(-50%); padding: 10px 16px; width: 320px;
       display: none; text-align: center; font-size: 14px; }
     #bar { position: relative; height: 16px; margin: 8px 0 6px; border-radius: 999px; overflow: hidden; background: rgba(35, 57, 77, 0.14); }
@@ -157,12 +153,6 @@
       box-shadow: 0 2px 10px rgba(10, 30, 50, 0.18); pointer-events: none; user-select: none; z-index: 14; }
     #keybar > span { white-space: nowrap; }
     #keybar kbd { margin-right: 4px; }
-    #map { left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 10px; display: none; z-index: 24; }
-    #mapCv { display: block; width: min(560px, 74vh); height: min(560px, 74vh); border-radius: 10px; }
-    #mapNote { margin-top: 8px; text-align: center; font-size: 13px; color: var(--ink-2); }
-    #mapX { position: absolute; top: -12px; right: -12px; width: 40px; height: 40px; padding: 0; font-size: 18px; line-height: 1;
-      background: var(--coral-a); border-color: var(--btn); color: #fff; box-shadow: var(--shadow); }
-    #mapX:hover { background: var(--coral-d); }
     /* 進遊戲前：填名字、挑房間。背景是半透明的，看得到後面的港口。卡片比畫面高時可以捲，不會被切掉 */
     #menu, #net { position: fixed; inset: 0; display: none; padding: 12px; box-sizing: border-box; overflow-y: auto;
       background: rgba(14, 53, 80, 0.38); z-index: 40; }
@@ -279,9 +269,6 @@
     body.touch #chatLog { max-height: 92px; }
     body.touch #chat.open #chatLog { max-height: 110px; }
     body.touch #chatInput { font-size: 16px; }   /* 小於 16px 的話 iPhone 點輸入框會自己把畫面放大 */
-    body.touch #mapCv { width: min(560px, calc(100vh - 70px)); height: min(560px, calc(100vh - 70px)); }
-    body.touch #map { padding: 8px; }
-    body.touch #mapNote { margin-top: 5px; font-size: 12px; }
     body.touch #menu .card { padding: 14px 22px 12px; }
     body.touch #menu h1 { font-size: 26px; }
     body.touch #menu p { margin-bottom: 10px; }
@@ -348,7 +335,8 @@
         <dt><kbd>滑鼠</kbd></dt><dd>第三人稱：按住拖曳轉視角；第一人稱：直接移動就轉</dd>
         <dt><kbd>滾輪</kbd></dt><dd>鏡頭遠近</dd>
         <dt><kbd>Esc</kbd></dt><dd>第一人稱時放開滑鼠（再點一下畫面就回去）</dd>
-        <dt><kbd>M</kbd></dt><dd>地圖</dd>
+        <dt><kbd>Tab</kbd></dt><dd>拿出／收起平板：地圖、船（叫船、換船）、天氣、圖鑑、背包、房間。Esc 回主畫面</dd>
+        <dt><kbd>M</kbd></dt><dd>直接打開平板的地圖</dd>
       </dl>
     </details>
     <details id="touchHelp" class="sec main"><summary>操作說明 ›</summary>
@@ -358,7 +346,7 @@
       <p class="note"><i data-ic="throw"></i> 丟：拿著魚或油桶時出現，按住蓄力、放開丟出去</p>
       <p class="note"><i data-ic="fish"></i> 釣魚：按住蓄力、放開拋竿；魚咬了按一下；收線時按住／放開控制力道</p>
       <p class="note"><i data-ic="jump"></i> 跳</p>
-      <p class="note">右上角：<i data-ic="map"></i> 地圖　<i data-ic="chat"></i> 聊天　<i data-ic="emote"></i> 表情（點一格就播放）　<i data-ic="view"></i> 切換第一／第三人稱　<i data-ic="bait"></i> 換餌　<i data-ic="full"></i> 全螢幕</p>
+      <p class="note">右上角：<i data-ic="tablet"></i> 平板（地圖、船、天氣、圖鑑、背包、房間）　<i data-ic="chat"></i> 聊天　<i data-ic="emote"></i> 表情（點一格就播放）　<i data-ic="view"></i> 切換第一／第三人稱　<i data-ic="bait"></i> 換餌　<i data-ic="full"></i> 全螢幕</p>
     </details>
     <details id="devSec" class="sec main" hidden><summary>開發者模式（只有測試環境）›</summary>
       <div class="line"><span>飛行</span><button id="devFly" class="sw">關</button></div>
@@ -373,7 +361,7 @@
     </details>
     <div class="sec main"><button id="reset">離開房間（回到大廳）</button><p class="note">錢、船、裝備和還沒賣的魚會留著，下次進房從港口出發（定時全服刷新，倒數見主頁）</p></div>
   </details>
-  <div id="hud" class="card hudRow"><span id="hRoom"></span><span id="hClock"></span><span id="hWind" title="風向：箭頭指向風吹過去的方向（跟著你的視角轉）">風<svg viewBox="0 0 24 24"><path d="M12 2.5l6 8.5h-4v10.5h-4V11H6z" fill="currentColor"/></svg></span><span id="hBait" title="掛的餌（按 B 換）" hidden></span><span id="hMoneyBox" title="金錢"><i data-ic="coin"></i><b id="hMoney">$0</b></span></div>
+  <div id="hud" class="card hudRow"><span id="hClock"></span><span id="hSky"></span><span id="hMoneyBox" title="金錢"><i data-ic="coin"></i><b id="hMoney">$0</b></span></div>
   <div id="hShip" class="card hudRow"><span title="船的耐久"><i data-ic="boat"></i><b id="hHp">100%</b></span><span title="燃油"><i data-ic="fuel"></i><b id="hFuel">0</b></span><span id="hSpeed" title="船速"><i data-ic="speed"></i><b id="hBoat">0.0 節</b></span></div>
   <div id="fishui" class="card"><div id="fishLabel"></div><div id="bar"><div id="barSafe"></div><div id="barFill"></div><div id="barMark"></div></div><div id="prog"><div id="progFill"></div></div><div id="strain">釣竿負荷<div id="strainBar"><div id="strainFill"></div></div></div><div id="fishHint"></div></div>
   <div id="toast" class="card"></div>
@@ -382,7 +370,6 @@
   <div id="prompt" class="card"></div>
   <div id="stam" class="card"><i data-ic="bolt" title="體力"></i><div id="stamBar"><div id="stamFill"></div></div></div>
   <div id="keybar"></div>
-  <div id="map" class="card"><button id="mapX" aria-label="關閉地圖">✕</button><canvas id="mapCv" width="560" height="560"></canvas><div id="mapNote">紅色箭頭是你，黃色是你的船，白色是其他人　按 M 或 Esc 關閉</div></div>
   <div id="menu">
     <div id="menuName" class="card">
       <h1>Stormcast</h1>

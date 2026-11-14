@@ -5,7 +5,7 @@
 //   釣魚：上鉤什麼魚、多大、值多少由這裡擲；收線太快、離落水點太遠、站在陸地卻說拋進深海，一律不認
 //   本房紀錄（看板）與聊天
 import { Sea, Climate, HOUR } from '../src/weather.js';
-import { BERTHS, berthPose, berthKinds, inHarbor, SELL_W, SELL_REACH, SHELF_W, BOARD_STAND_W, SPAWN_W, SWITCHES_W, LIGHT_ZONES, HAVEN_SELL_W, HAVEN_PUMP_W } from '../src/layout.js';
+import { BERTHS, berthPose, berthKinds, SELL_W, SELL_REACH, SHELF_W, SPAWN_W, SWITCHES_W, LIGHT_ZONES, HAVEN_SELL_W, HAVEN_PUMP_W } from '../src/layout.js';
 import { PORT } from '../src/lowpoly/havenPlan.js';
 import { HOTSPOT, CHESTS } from '../src/extrasPlan.js';
 import { Extras } from './extras.js';
@@ -14,6 +14,9 @@ import { SPECIES, BAITS, isJunk, rollCatch, minFightTime, biteDelay, castRange, 
 import { dangerAt, isWater, fishingSpot } from './world.js';
 import { mask } from './words.js';
 import { SERVER, SHARE } from '../src/config.js';
+import { callBoat, moveBlocked, reberthNear, storedInfo } from './boatCall.js';
+import { recordDex, loadDex } from './dex.js';
+import { placeOfSpot } from '../src/places.js';
 import { onBoxMsg, boxList, homeBoxes, savedBoxesOf, loadBoxes, dropBoxes, stowBoxes, resetBoxes, sellBox, buyBox, floatBoxes, inBoxes, expireOffers } from './fishBoxes.js';
 
 export const MAX_PLAYERS = 30;
@@ -40,6 +43,8 @@ export function newPlayer(id, ws, token, name, look = 'girl') {
     fish: new Map(),                            // 釣到還沒賣的魚：uid → { id, kg, len, value }
     boxes: [], savedBoxes: null,                // 魚箱（見 fishBoxes.js）；savedBoxes：存檔讀回來、還沒放出來的箱子
     stored: {},                                 // 收在倉庫的船離開世界時的樣子：船種 → { fuel, cracks }
+    dex: {},                                    // 圖鑑：魚種 → { n 釣過幾條, len, kg 最大那條, at 在哪釣到 }（見 dex.js）
+    callAt: 0,                                  // 叫船的冷卻：這個時間以前不能再叫
     hold: null,                                 // 手上拿著什麼（給別人看的）：[魚種或 'can', 身長]
     line: null,                                 // 釣線另一頭的浮標在哪（給別人看的）：[x, y, z, 狀態]
     fishing: null,                              // 正在釣：{ x, z, state, fish, biteAt, biteUntil, fightAt }
@@ -63,13 +68,14 @@ export function profileOf(p) {
     kit.active = BOAT_ORDER.find((t) => kit.boats[t]);
     fish = [];
   } else if (p.boat) stored[p.boat.type] = { fuel: p.boat.s[10], cracks: p.boat.cracks };
-  return { kit, stored, fish, boxes: savedBoxesOf(p) };
+  return { kit, stored, fish, boxes: savedBoxesOf(p), dex: p.dex };
 }
 // 把存著的進度放回一個剛建好的玩家（魚重新編號：伺服器重開過，舊的編號可能跟別人撞）
 export function applyProfile(p, prof) {
   if (prof.kit && prof.kit.boats && BOAT_TYPES[prof.kit.active] && prof.kit.boats[prof.kit.active]) p.kit = { ...newKit(), ...prof.kit };
   p.stored = prof.stored && typeof prof.stored === 'object' ? prof.stored : {};
   loadBoxes(p, prof.boxes, () => nextUid++);
+  p.dex = loadDex(prof.dex);
   for (const f of Array.isArray(prof.fish) ? prof.fish.slice(0, 200) : []) {
     if (f && SPECIES[f.id]) p.fish.set(nextUid++, { id: f.id, kg: f.kg, len: f.len, value: f.value, by: f.by && typeof f.by.name === 'string' ? f.by : null });
   }
@@ -165,6 +171,8 @@ export class Room {
     p.boat = { type, s: [pose.x, pose.z, pose.heading, 0, 0, 0, 0, 0, 0, 1, was ? was.fuel : S.tank, Math.max(0, 1 - lost / S.hp)], cracks: was ? was.cracks : [], moor: -1, sunk: false };
     p.boatDirty = true;
   }
+  // 倉庫裡的船的油量、耐久（給平板看）
+  storedOf(p) { return storedInfo(p, (type, cracks) => Math.max(0, 1 - cracks.reduce((sum, c) => sum + c[2], 0) / BOAT_TYPES[type].hp)); }
   boatInfo(p) { return p.boat && { type: p.boat.type, s: p.boat.s, sunk: p.boat.sunk }; }
   roster(except) {
     return [...this.players.values()].filter((p) => p !== except).map((p) => ({ id: p.id, name: p.name, look: p.look, here: !!p.ws, pos: p.ws ? p.pos : null, boat: this.boatInfo(p), hold: p.ws ? p.hold : null, line: p.ws ? p.line : null }));
@@ -198,7 +206,7 @@ export class Room {
   snapshot(p, extra = {}) {
     return {
       id: p.id, token: p.token, name: p.name, room: { id: this.id, name: this.name, max: MAX_PLAYERS },
-      world: this.worldState(), kit: p.kit, berth: this.berthInfo(p), players: this.roster(p), boards: this.boards(), dev: DEV, loose: this.looseList(), boxes: boxList(this), ...extra,
+      world: this.worldState(), kit: p.kit, berth: this.berthInfo(p), players: this.roster(p), boards: this.boards(), dev: DEV, loose: this.looseList(), boxes: boxList(this), stored: this.storedOf(p), dex: p.dex, ...extra,
     };
   }
   // 斷線重連時還給他的進度
@@ -307,7 +315,7 @@ export class Room {
         return;
       }
       case 'h': {   // 手上拿著什麼（魚、油桶；空手是 ''）：只是轉給別人看
-        const ok = typeof m.id === 'string' && (m.id === '' || m.id === 'can' || SPECIES[m.id]) && typeof m.len === 'number' && m.len >= 0 && m.len < 30;
+        const ok = typeof m.id === 'string' && (m.id === '' || m.id === 'can' || m.id === 'tablet' || SPECIES[m.id]) && typeof m.len === 'number' && m.len >= 0 && m.len < 30;
         if (!ok) return;
         p.hold = m.id ? [m.id, m.len] : null;
         return this.all({ t: 'h', id: p.id, s: p.hold }, p);
@@ -339,15 +347,16 @@ export class Room {
         kit.active = BOAT_ORDER.find((t) => kit.boats[t]);
         return this.newBoat(p, { gift, wreck: true });
       }
-      case 'swap': {   // 在停船位置牌前換一艘船出來
+      case 'swap': {   // 平板的船 app：倉庫裡的換一艘出來，停到離人最近的空船位（人要在港口、船上沒人；見 boatCall.js）
         const type = m.type;
         if (!kit.boats[type] || type === kit.active || !p.boat || p.boat.sunk) return;
-        if (!this.near(p, BOARD_STAND_W.x, BOARD_STAND_W.z, 4.5)) return this.send(p, { t: 'no', msg: '要到停船位置牌前面才能換船' });
-        if (!inHarbor(p.boat.s[0], p.boat.s[1])) return this.send(p, { t: 'no', msg: '船不在港裡，要先開回來才能換' });
+        const why = moveBlocked(this, p);
+        if (why) return this.send(p, { t: 'no', msg: why });
         p.stored[kit.active] = { fuel: p.boat.s[10], cracks: p.boat.cracks };   // 收進倉庫的那艘：油量、破洞記著，下次換出來照舊
         kit.active = type;
-        return this.newBoat(p, {});
+        return this.newBoat(p, {}, true);
       }
+      case 'call': return callBoat(this, p, now);   // 平板的船 app：把船叫到離人最近的空船位
 
       // ---- 釣魚 ----
       case 'cast': {
@@ -384,7 +393,7 @@ export class Room {
         if (!ok) return this.send(p, { t: 'fishNo', msg: '魚掙脫跑掉了' });
         const { id, kg, len, value } = f.fish, uid = nextUid++;
         p.fish.set(uid, { id, kg, len, value, by: { pid: p.id, key: p.token, name: p.name } });   // by：釣到的人（值錢的魚，紀錄算他的）
-        return this.send(p, { t: 'caught', fish: { uid, id, kg, len, value } });   // 紀錄等賣掉才算（見 sell）
+        return this.send(p, { t: 'caught', fish: { uid, id, kg, len, value }, dex: recordDex(p, f.fish, f.at) });   // 紀錄等賣掉才算（見 sell）；圖鑑現在就記
       }
       case 'lose': {   // 魚跑了、自己收線、爆桿
         const f = p.fishing;
@@ -520,7 +529,7 @@ export class Room {
           // 直接塞一條魚（測排行榜用）
           const id = SPECIES[m.id] ? m.id : 'tuna', kg = +m.kg || 12, len = +(0.42 * Math.cbrt(kg)).toFixed(2), value = Math.round(100 * SPECIES[id].mult * kg), uid = nextUid++;
           p.fish.set(uid, { id, kg, len, value, by: { pid: p.id, key: p.token, name: p.name } });   // by：釣到的人（值錢的魚，紀錄算他的）
-          this.send(p, { t: 'caught', fish: { uid, id, kg, len, value } });   // 賣掉才上榜
+          this.send(p, { t: 'caught', fish: { uid, id, kg, len, value }, dex: recordDex(p, { id, kg, len }, '（測試）') });   // 賣掉才上榜
         }
         this.all(this.worldState());
         return;
@@ -537,6 +546,7 @@ export class Room {
     // 魚群熱點裡：咬得快、個頭大；洞穴的深潭下雨時咬得特別快
     const spot = fishingSpot(f.x, f.z, c, this.sea), hot = this.extras.inHot(f.x, f.z);
     f.fish = rollCatch({ ...spot, hot, bait: f.baitUsed });
+    f.at = placeOfSpot(spot);   // 圖鑑記「在哪釣到」
     f.biteAt = now + 1000 * biteDelay(p.kit.rodLv, Math.max(this.sea.rain, c.rain)) * (hot ? HOTSPOT.biteK : 1) * (spot.zone === 'cave' && spot.rain > 0.2 ? 0.5 : 1);
   }
 
@@ -550,23 +560,24 @@ export class Room {
     resetBoxes(this, p);
     p.fish.clear();
     p.stored = {};
+    p.dex = {};   // 圖鑑跟著存檔一起清（刷新時存檔整份清掉）
     p.hold = p.line = null;
     this.freeBerth(p);
     this.allocBerth(p);
     this.parkBoat(p);
     if (!p.ws) p.resetMsg = text;   // 斷線中：接回來時再告訴他
-    this.send(p, { t: 'reset', text, kit: p.kit, berth: this.berthInfo(p), boards: this.boards() });
+    this.send(p, { t: 'reset', text, kit: p.kit, berth: this.berthInfo(p), boards: this.boards(), stored: {}, dex: p.dex });
     this.all({ t: 'boat', id: p.id, boat: this.boatInfo(p) }, p);
     this.all({ t: 'h', id: p.id, s: null }, p);
     this.all({ t: 'fl', id: p.id, s: null }, p);
   }
 
-  // 換了一艘船放到世界裡（換船、沉了之後、送的小舢舨）：重新分配停船格
-  newBoat(p, extra) {
-    this.freeBerth(p);
-    this.allocBerth(p);
+  // 換了一艘船放到世界裡（換船、沉了之後、送的小舢舨）：重新分配停船格。near：停到離人最近的空格（平板換船）
+  newBoat(p, extra, near = false) {
+    if (near) reberthNear(this, p, p.kit.active);
+    else { this.freeBerth(p); this.allocBerth(p); }
     this.parkBoat(p);
-    this.send(p, { t: 'swapped', kit: p.kit, berth: this.berthInfo(p), ...extra });
+    this.send(p, { t: 'swapped', kit: p.kit, berth: this.berthInfo(p), stored: this.storedOf(p), ...extra });
     this.all({ t: 'boat', id: p.id, boat: this.boatInfo(p) }, p);
   }
 

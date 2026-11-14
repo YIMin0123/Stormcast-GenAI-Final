@@ -285,7 +285,7 @@ function refresh(test) {
   if (!test) hub.profiles.epoch = epochAt();
   hub.profiles.clear(hub.profiles.epoch);
   hub.daily.clear();
-  const text = `${test ? '（測試）' : ''}刷新時間到了（${refreshRule()}）：錢、船、裝備、還沒賣的魚和排行榜都清空，大家從港口重新開始`;
+  const text = `${test ? '（測試）' : ''}刷新時間到了（${refreshRule()}）：錢、船、裝備、還沒賣的魚、圖鑑和排行榜都清空，大家從港口重新開始`;
   let k = 0;
   hub.eachRoom((r) => {
     r.board = [];

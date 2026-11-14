@@ -48,12 +48,8 @@ export class Boards {
       this.boards[key] = s.face;
       this.unlit.push(s.face.mat);
     }
-    const b = stand(BOARDS.berth.x, BOARDS.berth.w, 1.5, DECK_Y + 0.95);
-    this.group.add(b.group);
-    this.berth = b.face;
-    this.unlit.push(b.face.mat);
+    // 以前這裡還有一塊「停船位置」牌：叫船、換船改到平板上（tablet.js 的「船」），牌子拿掉了
     this.set({ room: [], daily: [] });
-    this.setBerth('', '', false);
   }
 
   // 伺服器給的兩份名單：[{ name, id 魚種, len, kg, value }]（已經照價值排好）
@@ -106,22 +102,6 @@ export class Boards {
       m.position.set(-cv.width / PX / 2 + (88 / PX) + boxW / 2 + 0.02, BOARD_Y0 + BOARD_H - yc / PX, 0.03 + len * sp.w * 0.5);
       holder.add(m);
     }
-    tex.needsUpdate = true;
-  }
-
-  // 停船位置牌：你的船停在哪一格、是哪一艘；有別的船收在倉庫時提示可以換
-  setBerth(label, boatName, canSwap) {
-    const { cv, tex } = this.berth, g = cv.getContext('2d'), W = cv.width, H = cv.height;
-    g.fillStyle = '#efe2bd'; g.fillRect(0, 0, W, H);
-    g.fillStyle = '#34507a'; g.fillRect(0, 0, W, 86);
-    g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillStyle = '#f3ead6'; g.font = `bold 44px ${FONT}`; g.fillText('停船位置', W / 2, 46);
-    g.fillStyle = '#6a4a2a'; g.font = `30px ${FONT}`; g.fillText('你的船停在', W / 2, 140);
-    g.fillStyle = '#a3261a'; g.font = `bold ${label.length > 3 ? 72 : 96}px ${FONT}`; g.fillText(label || '—', W / 2, 232);
-    g.fillStyle = '#3a2412'; g.font = `bold 40px ${FONT}`; g.fillText(boatName, W / 2, 330);
-    g.fillStyle = '#6a4a2a'; g.font = `26px ${FONT}`;
-    g.fillText(canSwap ? '對準這裡按 E 換船' : '買了別的船', W / 2, 394);
-    if (!canSwap) g.fillText('可以在這裡換', W / 2, 428);
     tex.needsUpdate = true;
   }
 
