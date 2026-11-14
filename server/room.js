@@ -15,7 +15,7 @@ import { dangerAt, isWater, fishingSpot } from './world.js';
 import { mask } from './words.js';
 import { SERVER, SHARE } from '../src/config.js';
 import { callBoat, moveBlocked, reberthNear, storedInfo } from './boatCall.js';
-import { recordDex, loadDex } from './dex.js';
+import { recordDex } from './dex.js';
 import { placeOfSpot } from '../src/places.js';
 import { onBoxMsg, boxList, homeBoxes, savedBoxesOf, loadBoxes, dropBoxes, stowBoxes, resetBoxes, sellBox, buyBox, floatBoxes, inBoxes, expireOffers } from './fishBoxes.js';
 
@@ -68,14 +68,13 @@ export function profileOf(p) {
     kit.active = BOAT_ORDER.find((t) => kit.boats[t]);
     fish = [];
   } else if (p.boat) stored[p.boat.type] = { fuel: p.boat.s[10], cracks: p.boat.cracks };
-  return { kit, stored, fish, boxes: savedBoxesOf(p), dex: p.dex };
+  return { kit, stored, fish, boxes: savedBoxesOf(p) };   // 圖鑑另外存（dex.js 的 Dexbooks），刷新不清
 }
 // 把存著的進度放回一個剛建好的玩家（魚重新編號：伺服器重開過，舊的編號可能跟別人撞）
 export function applyProfile(p, prof) {
   if (prof.kit && prof.kit.boats && BOAT_TYPES[prof.kit.active] && prof.kit.boats[prof.kit.active]) p.kit = { ...newKit(), ...prof.kit };
   p.stored = prof.stored && typeof prof.stored === 'object' ? prof.stored : {};
   loadBoxes(p, prof.boxes, () => nextUid++);
-  p.dex = loadDex(prof.dex);
   for (const f of Array.isArray(prof.fish) ? prof.fish.slice(0, 200) : []) {
     if (f && SPECIES[f.id]) p.fish.set(nextUid++, { id: f.id, kg: f.kg, len: f.len, value: f.value, by: f.by && typeof f.by.name === 'string' ? f.by : null });
   }
@@ -560,7 +559,7 @@ export class Room {
     resetBoxes(this, p);
     p.fish.clear();
     p.stored = {};
-    p.dex = {};   // 圖鑑跟著存檔一起清（刷新時存檔整份清掉）
+    // 圖鑑不清：另外存在 dexbook.json，刷新後還在
     p.hold = p.line = null;
     this.freeBerth(p);
     this.allocBerth(p);

@@ -1,4 +1,7 @@
-// 圖鑑：每個人釣過哪些魚（跟著存檔）。每種記：釣過幾條、最大的那條多長多重、在哪裡釣到
+// 圖鑑：每個人釣過哪些魚。每種記：釣過幾條、最大的那條多長多重、在哪裡釣到。
+// 跟家當分開存（dexbook.json）：定時全服刷新清掉錢、船、魚，圖鑑留著
+import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
+import { join } from 'node:path';
 import { SPECIES } from '../src/fishdata.js';
 
 // 釣到一條：更新圖鑑，回傳要告訴他的那一筆（isNew：第一次釣到這種）
@@ -7,6 +10,41 @@ export function recordDex(p, f, at) {
   e.n++;
   if (f.len > e.len) { e.len = f.len; e.kg = f.kg; e.at = at || e.at; }
   return { id: f.id, e, isNew: e.n === 1 };
+}
+
+// 圖鑑的檔案：認人代碼 → 圖鑑。不分期、刷新不清（存法照 profiles.js）
+export class Dexbooks {
+  constructor(dir) {
+    mkdirSync(dir, { recursive: true });
+    this.file = join(dir, 'dexbook.json');
+    this.raw = new Map();   // 代碼 → JSON 字串（比字串就知道有沒有變）
+    this.dirty = false;
+    try {
+      const d = JSON.parse(readFileSync(this.file, 'utf8'));
+      if (d && d.list && typeof d.list === 'object') for (const [k, v] of Object.entries(d.list)) this.raw.set(k, JSON.stringify(v));
+    } catch { /* 沒有檔案、或檔案壞了：從空的開始 */ }
+  }
+  get(token) {
+    const s = token && this.raw.get(token);
+    if (!s) return null;
+    try { return JSON.parse(s); } catch { return null; }
+  }
+  put(token, dex) {
+    if (!token || !dex || !Object.keys(dex).length) return;
+    const s = JSON.stringify(dex);
+    if (this.raw.get(token) === s) return;
+    this.raw.set(token, s);
+    this.dirty = true;
+  }
+  save() {
+    if (!this.dirty) return;
+    this.dirty = false;
+    try {
+      const list = [...this.raw].map(([k, v]) => `${JSON.stringify(k)}:${v}`).join(',');
+      writeFileSync(this.file + '.tmp', `{"list":{${list}}}`);
+      renameSync(this.file + '.tmp', this.file);
+    } catch (err) { console.error('[dexbook] 存檔失敗', err.message); }
+  }
 }
 
 // 存檔讀回來：只留認得的魚種、數字正常的

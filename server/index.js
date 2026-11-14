@@ -16,6 +16,7 @@ import { Room, newPlayer, profileOf, applyProfile, MAX_PLAYERS, TICK } from './r
 import { boxPub, inBoxes } from './fishBoxes.js';
 import { Daily } from './daily.js';
 import { Profiles, epochAt } from './profiles.js';
+import { Dexbooks, loadDex } from './dex.js';
 import { SERVER } from '../src/config.js';
 import { refreshRule } from '../src/announce.js';
 import { cleanName, isRude } from './words.js';
@@ -35,11 +36,12 @@ const hub = {
   lobby: new Set(),       // 還在大廳裡的連線
   daily: new Daily(DATA),
   profiles: new Profiles(DATA),
+  dexbook: new Dexbooks(DATA),   // 圖鑑：跟家當分開存，刷新不清
   nextId: 1,
   merge: null,            // 正在進行的合併：{ from, to, phase: 'wait' | 'count', left }
   eachRoom(fn) { for (const r of this.rooms.values()) fn(r); },
   // 把這個人現在的進度記下來（存檔在 save 時才寫）
-  keep(p) { if (p.owner && p.token) this.profiles.put(p.token, profileOf(p)); },
+  keep(p) { if (p.owner && p.token) { this.profiles.put(p.token, profileOf(p)); this.dexbook.put(p.token, p.dex); } },
   refresh,
 };
 // 伺服器關著的時候刷新過了：今日紀錄也一起清
@@ -239,6 +241,7 @@ wss.on('connection', (ws) => {
       me = newPlayer(hub.nextId++, ws, token, name, look);
       const prof = hub.profiles.get(token);
       if (prof) applyProfile(me, prof);
+      me.dex = loadDex(hub.dexbook.get(token));
       hub.sessions.set(token, me);
       hub.lobby.delete(ws);
       r.enter(me);
@@ -272,6 +275,7 @@ setInterval(() => {
   if (n % (SAVE_EVERY * 10) === 0) {
     hub.eachRoom((r) => { for (const p of r.players.values()) hub.keep(p); });
     hub.profiles.save();
+    hub.dexbook.save();
   }
   if (n % 600 === 0) {
     if (hub.daily.roll()) hub.eachRoom((r) => r.all(r.boards()));   // 午夜：今日紀錄清空
@@ -285,7 +289,7 @@ function refresh(test) {
   if (!test) hub.profiles.epoch = epochAt();
   hub.profiles.clear(hub.profiles.epoch);
   hub.daily.clear();
-  const text = `${test ? '（測試）' : ''}刷新時間到了（${refreshRule()}）：錢、船、裝備、還沒賣的魚、圖鑑和排行榜都清空，大家從港口重新開始`;
+  const text = `${test ? '（測試）' : ''}刷新時間到了（${refreshRule()}）：錢、船、裝備、還沒賣的魚和排行榜都清空（圖鑑會留著），大家從港口重新開始`;
   let k = 0;
   hub.eachRoom((r) => {
     r.board = [];
@@ -293,10 +297,11 @@ function refresh(test) {
     r.all(r.boards());
   });
   hub.profiles.save();
+  hub.dexbook.save();
   console.log(`[refresh] ${test ? '（測試）' : ''}刷新：重置了 ${k} 人（第 ${hub.profiles.epoch} 期）`);
 }
 
-const stop = () => { hub.eachRoom((r) => { for (const p of r.players.values()) hub.keep(p); }); hub.profiles.save(); hub.daily.save(); process.exit(0); };
+const stop = () => { hub.eachRoom((r) => { for (const p of r.players.values()) hub.keep(p); }); hub.profiles.save(); hub.dexbook.save(); hub.daily.save(); process.exit(0); };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
 http.listen(PORT, HOST, () => console.log(`Stormcast 伺服器：ws://${HOST}:${PORT}　今日紀錄、進度存在 ${DATA}`));
