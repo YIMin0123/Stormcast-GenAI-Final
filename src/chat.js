@@ -57,6 +57,7 @@ export class Chat {
     this.input.blur();
     this.env.onClose();
     this._fade();
+    this.log.scrollTop = this.log.scrollHeight;   // 收起來時訊息區變矮：捲回最底下，不然最新的幾則會被藏在下面、只露出半個泡泡
   }
 
   _line(cls) {
