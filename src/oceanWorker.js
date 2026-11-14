@@ -45,6 +45,7 @@ function pack(out, dh, sh, t, foamScale) {
 
 function init(o) {
   N = o.N; chop = o.chop; H0 = o.h0; PATCH = o.patch;
+  const speed = o.speed ?? 1;   // 浪往前跑的快慢（weather.js 的 WAVE_SPEED），要跟顯示晶片那份一樣
   lite = o.lite ? { bias: o.lite.bias, tau: o.lite.tau, foam: new Float32Array(o.N * o.N), last: 0 } : null;
   stages = Math.round(Math.log2(N));
   const n = N * N;
@@ -57,7 +58,7 @@ function init(o) {
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
       const m = i >= N / 2 ? i - N : i, q = j >= N / 2 ? j - N : j;
       const x = 6.2831853 * m / PATCH[ci], z = 6.2831853 * q / PATCH[ci], kl = Math.hypot(x, z), p = j * N + i;
-      w[p] = Math.floor(Math.sqrt(9.81 * kl) / 0.0030679616 + 0.5) * 0.0030679616;
+      w[p] = Math.floor(Math.sqrt(9.81 * kl) * speed / 0.0030679616 + 0.5) * 0.0030679616;
       kx[p] = kl > 1e-6 ? x / kl : 0; kz[p] = kl > 1e-6 ? z / kl : 0; k2[p] = kl * kl;
     }
     W.push(w); KX.push(kx); KZ.push(kz); K2.push(k2);

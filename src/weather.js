@@ -77,6 +77,9 @@ export const SWELL = { amp: 6.5, waves: [[310, 0.5, 0], [215, 0.32, 0.22], [150,
 // 海浪的時間每 WAVE_LOOP 秒繞一圈：每道浪的角速度都湊成「一圈剛好轉整數次」，繞回來時接得起來。
 // 多人模式下大家的時鐘對到同一間房的時鐘（差幾圈沒關係），看到的浪就一模一樣，別人的船才會剛好浮在你看到的水面上
 export const WAVE_LOOP = 2048, WAVE_W0 = 2 * Math.PI / WAVE_LOOP;
+// 風浪（FFT 那幾層）往前推的速度是深水波物理速度的幾成：1 = 照物理（站在碼頭上看起來太快），調小就變慢。
+// 只動浪往前跑的快慢，浪高、波長不變；長浪（SWELL）不受影響；顯示晶片版（ocean.js）和背景算浮力的那份（oceanWorker.js）都吃這個值
+export const WAVE_SPEED = 0.6;
 export const SWELL_K = SWELL.waves.map(([lam, a, ang]) => ({ a, k: 2 * Math.PI / lam, w: Math.round(Math.sqrt(9.8 * 2 * Math.PI / lam) / WAVE_W0) * WAVE_W0, c: Math.cos(ang), s: Math.sin(ang) }));
 // 長浪在 (x, z) 的高度（-1 到 1，還沒乘上 amp 和當下的強度）。dx, dz：風（浪）往哪邊走
 export function swellAt(x, z, t, dx, dz) {

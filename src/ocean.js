@@ -1,6 +1,7 @@
 // FFT 頻譜海浪（Tessendorf 方法）：三層級聯，每層 256×256 個波，全部在 GPU 上算。
 // 每幀流程：頻譜隨時間演化 → 逆 FFT → 位移圖（含累積泡沫）→ 斜率圖（含 mipmap）。
 import * as THREE from 'three';
+import { WAVE_SPEED } from './weather.js';
 
 const G = 9.81;
 const TAU = Math.PI * 2;
@@ -26,7 +27,7 @@ void main() {
   float kl = length(k);
   vec4 h0 = texelFetch(uH0, p, 0) * (kl > 1e-6 ? uShape.y * exp(-0.625 * uShape.x / (kl * kl)) : 0.0);
   // 每道浪的角速度湊成 2π/2048 的整數倍：時間每 2048 秒繞一圈時接得起來（多人模式下大家的浪才對得上，見 weather.js 的 WAVE_LOOP）
-  float w = floor(sqrt(9.81 * kl) / 0.0030679616 + 0.5) * 0.0030679616 * uTime;
+  float w = floor(sqrt(9.81 * kl) * ${WAVE_SPEED.toFixed(5)} / 0.0030679616 + 0.5) * 0.0030679616 * uTime;   // WAVE_SPEED：浪往前跑的快慢（見 weather.js）
   float c = cos(w), s = sin(w);
   vec2 h = vec2(h0.x * c + h0.y * s, h0.y * c - h0.x * s) + vec2(h0.z * c - h0.w * s, h0.w * c + h0.z * s);
   vec2 ih = vec2(-h.y, h.x);
@@ -399,7 +400,7 @@ export class FftOcean {
             st.spareH = [];
             st.ta = st.tb = st.pool[0];
           }
-          w.postMessage({ init: { N: M, chop: this.chop, patch: [this.patches[ci]], h0: [h0], lite: this.lite ? { bias: [0.95, 0.93][ci], tau: [5.5, 2.2][ci] } : null } });
+          w.postMessage({ init: { N: M, speed: WAVE_SPEED, chop: this.chop, patch: [this.patches[ci]], h0: [h0], lite: this.lite ? { bias: [0.95, 0.93][ci], tau: [5.5, 2.2][ci] } : null } });
           w.onmessage = (e) => {
             st.busy = false; st.jobs++;
             st.cost = 0.8 * st.cost + 0.2 * (performance.now() - st.sent) / 1000;   // 算一張要多久（秒）
