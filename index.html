@@ -26,6 +26,8 @@
     #panel > summary:hover { background: rgba(255, 255, 255, 0.06); border-radius: 10px; }
     .sec { padding: 10px 14px 11px; border-bottom: 1px solid rgba(240, 214, 160, 0.14); }
     .sec:last-child { border-bottom: 0; }
+    .devGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-top: 6px; }
+    .devGrid button { padding: 5px 4px; }
     .sec h4 { margin: 0 0 7px; font-size: 11px; font-weight: 600; letter-spacing: 2px; color: #c9a86a; }
     .line { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 6px 0 0; color: #dccba6; }
     .line:first-of-type { margin-top: 0; }
@@ -287,6 +289,17 @@
       <p class="note"><i data-ic="fish"></i> 釣魚：按住蓄力、放開拋竿；魚咬了按一下；收線時按住／放開控制力道</p>
       <p class="note"><i data-ic="jump"></i> 跳</p>
       <p class="note">右上角：<i data-ic="map"></i> 地圖　<i data-ic="chat"></i> 聊天　<i data-ic="emote"></i> 表情（點一格就播放）　<i data-ic="view"></i> 切換第一／第三人稱　<i data-ic="full"></i> 全螢幕</p>
+    </div>
+    <div id="devSec" class="sec main" hidden><h4>開發者模式（只有測試環境）</h4>
+      <div class="line"><span>飛行</span><button id="devFly" class="sw">關</button></div>
+      <p class="note">連按兩下空白鍵也能切換。飛行時 Shift 上升、Q 下降、按住 R 衝刺；開發者模式不會累、不會溺水</p>
+      <div class="line"><span>錢</span><div class="seg"><button data-dev="money" data-n="1000">+1,000</button><button data-dev="money" data-n="10000">+10,000</button></div></div>
+      <div class="line"><span>給一條魚</span><div class="seg"><button data-dev="fish" data-kg="3">3 公斤</button><button data-dev="fish" data-kg="12">12 公斤</button><button data-dev="fish" data-kg="60">60 公斤</button></div></div>
+      <div class="line"><span>海上事件</span></div>
+      <div class="devGrid"><button data-dev="event" data-kind="storm">暴風雨</button><button data-dev="event" data-kind="thunder">雷雨</button><button data-dev="event" data-kind="spout">水龍捲</button><button data-dev="event" data-kind="whirl">漩渦</button><button data-dev="event" data-kind="tsunami">海嘯</button><button data-dev="event" data-kind="typhoon">颱風</button></div>
+      <div class="line"><span>天氣、時間</span><div class="seg"><button data-dev="calm">恢復平靜</button><button data-dev="skip" data-hours="3">快轉 3 小時</button></div></div>
+      <div class="line"><span>刷新</span><button data-dev="refresh">立刻刷新</button></div>
+      <p class="note">立刻刷新會清掉這台測試伺服器上所有人的錢、船、魚和排行榜</p>
     </div>
     <div class="sec main"><button id="reset">離開房間（回到大廳）</button><p class="note">錢、船、裝備和還沒賣的魚會留著，下次進房從港口出發（每兩天早上 8 點全部刷新）</p></div>
   </details>
