@@ -2229,7 +2229,7 @@ function aimTarget() {
   if (hb || (fish.held && !fish.held.can)) {
     for (const [id, o] of others.map) {
       const fig = o.fig && o.fig.mesh;
-      if (!fig || !o.here || !fig.visible) continue;
+      if (!fig || !o.st || !fig.visible) continue;   // o.st：收到過他的位置（還在線上）
       const p = fig.getWorldPosition(new THREE.Vector3());
       if (Math.hypot(p.x - player.pos.x, p.z - player.pos.z) > FISHBOX.giveReach || Math.abs(p.y - player.pos.y) > 1.5) continue;
       add('player', p.setY(p.y + 1.1), 0.45, { pid: id, name: o.name });
