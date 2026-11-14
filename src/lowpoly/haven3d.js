@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { mirrored } from './kit.js';
 import { rockGeo, broadleafGeo, islandTerrain } from './shapes.js';
-import { havenHeight, caveCoords } from './havenShape.js';
+import { havenHeight, caveCoords, skyEdge, CAVE_AXIS } from './havenShape.js';
 import { buildCave, cavePatch } from './cave3d.js';
 import * as V from './havenPlan.js';
 
@@ -26,7 +26,7 @@ export function buildHaven({ P, r, place, mat, group, phone = false }) {
   const out = { groundAt: ground.at, kind: ground.kind, rocks: [] };
   buildCave({ P, r, mat, group, groundAt: ground.at, tint });
   // 天窗口、暗門洞口和它外面的海蝕溝不放石頭和樹（會擋住洞口，或浮在天窗上）
-  const keepOut = (x, z) => { const [s, l] = caveCoords(x, z); return cavePatch(x, z, -4) || (s > 0 && Math.abs(l) < 12); };
+  const keepOut = (x, z) => { const [s, l] = caveCoords(x, z); return skyEdge(x, z) < 3 || (s > 0 && Math.abs(l) < 12); };
   const randPt = () => { for (;;) { const x = G.cx + (r() - 0.5) * 2 * half, z = G.cz + (r() - 0.5) * 2 * half; if (!keepOut(x, z)) return [x, z, ground.at(x, z)]; } };
 
   // ---- 岩塊：3 種形狀 × 原版／鏡像 = 6 份樣板 ----
@@ -55,6 +55,23 @@ export function buildHaven({ P, r, place, mat, group, phone = false }) {
     const s = 2.2 + r() * 3.4;
     const scl = new THREE.Vector3(s * (0.7 + r() * 0.4), s * (1.5 + r() * 1.5), s * (0.7 + r() * 0.4));
     addRock(1, new THREE.Vector3(x, h - scl.y * (0.4 + r() * 0.2), z), scl, r() < 0.5);
+  }
+  // 天窗邊：幾顆石頭散在洞口四周（不是等距排一圈），把洞口的輪廓打散。
+  // 不擋路：擋路的東西只看平面位置，這些石頭在洞頂上，算進去的話連正下方深潭裡的船和人也會被擋住
+  for (let i = 0, n = V.CAVE.sky.rocks; i < n; i++) {
+    const a = (i + r() * 0.9) / n * Math.PI * 2 + 0.4, s = 1.4 + r() * 1.4;
+    let d = 3;
+    while (skyEdge(V.CAVE.x + Math.cos(a) * d, V.CAVE.z + Math.sin(a) * d) < s * 0.55 + r() * 1.6) d += 0.25;
+    const x = V.CAVE.x + Math.cos(a) * d, z = V.CAVE.z + Math.sin(a) * d;
+    const scl = new THREE.Vector3(s * (0.8 + r() * 0.5), s * (0.6 + r() * 0.6), s * (0.8 + r() * 0.5));
+    addRock(i % 3, new THREE.Vector3(x, ground.at(x, z) - scl.y * 0.3, z), scl, false);
+  }
+  // 暗門洞口兩旁：幾根岩柱貼著崖面站在水裡，洞口才不是一面牆上光禿禿的一個洞
+  for (const [l, ds, size] of V.CAVE.door.mouth.pillars) {
+    const sd = V.CAVE.face + ds, x = V.CAVE.x + CAVE_AXIS[0] * sd - CAVE_AXIS[1] * l, z = V.CAVE.z + CAVE_AXIS[1] * sd + CAVE_AXIS[0] * l;
+    const scl = new THREE.Vector3(size * (0.75 + r() * 0.3), size * (1.7 + r() * 0.9), size * (0.75 + r() * 0.3));
+    addRock(1, new THREE.Vector3(x, scl.y * 0.3 - 1, z), scl, r() < 0.5);
+    out.rocks.push({ x, z, r: size * 0.7, top: 99 });
   }
   rg.forEach((g, i) => place(g, rl[i], true, true));
 

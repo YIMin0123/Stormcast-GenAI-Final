@@ -6,14 +6,14 @@
 import * as THREE from 'three';
 import { FaceBuilder, fbm } from './kit.js';
 import { jitter } from './palette.js';
-import { cavitySdf, caveCoords } from './havenShape.js';
+import { cavitySdf, caveCoords, SKY_MAX } from './havenShape.js';
 import { CAVE } from './havenPlan.js';
 
 // 這一點是不是在「由洞穴模型接手畫地面」的那兩塊裡：天窗口一圈、暗門洞口前後。shrink：往內縮幾公尺
 // （山坡的地形用縮過的範圍挖洞，兩邊重疊一圈，接縫才不會露出來）
 export function cavePatch(x, z, shrink = 0) {
   const [s, l, rho] = caveCoords(x, z);
-  return rho < CAVE.sky.r + 3.5 - shrink || (Math.abs(l) < 8 - shrink && s > CAVE.face - 6 + shrink && s < CAVE.face + 5 - shrink);
+  return rho < SKY_MAX + 3.5 - shrink || (Math.abs(l) < 8 - shrink && s > CAVE.face - 6 + shrink && s < CAVE.face + 5 - shrink);
 }
 
 // 在立體格子上找表面。f(x, y, z)：負的 = 實心裡面。回傳三角形 [[a, b, c], ...]（Vector3，正面朝實心的外面）

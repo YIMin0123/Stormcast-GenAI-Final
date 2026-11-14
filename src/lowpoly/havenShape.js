@@ -67,6 +67,17 @@ export function caveCoords(x, z) {
   const dx = x - CV.x, dz = z - CV.z;
   return [dx * AX[0] + dz * AX[1], -dx * AX[1] + dz * AX[0], Math.hypot(dx, dz)];
 }
+// 天窗的邊離深潭中心多遠（照方向不一樣，不是正圓）。dx, dz：從深潭中心算起
+function skyR(dx, dz) {
+  const a = Math.atan2(dz, dx);
+  let k = 1;
+  for (const [n, amp, ph] of CV.sky.lobes) k += amp * Math.sin(n * a + ph);
+  return CV.sky.r * k;
+}
+// 離天窗的邊多遠（負的 = 在天窗裡面）
+export const skyEdge = (x, z) => Math.hypot(x - CV.x, z - CV.z) - skyR(x - CV.x, z - CV.z);
+// 天窗最寬的地方離中心多遠
+export const SKY_MAX = (() => { let m = 0; for (let i = 0; i < 360; i++) m = Math.max(m, skyR(Math.cos(i * Math.PI / 180), Math.sin(i * Math.PI / 180))); return m; })();
 // 圓穹在離中心 rho 的地方多高
 const domeY = (rho) => CV.dome.cy + CV.dome.ry * Math.sqrt(Math.max(0, 1 - (rho / CV.dome.rx) ** 2));
 
@@ -75,9 +86,13 @@ function caveTerrain(x, z, h) {
   const [s, l, rho] = caveCoords(x, z), D = CV.dome;
   if (rho > 120) return h;
   if (rho < D.rx + 12) h = Math.max(h, rho < D.rx ? domeY(rho) + CV.roof : (D.cy + CV.roof) * (1 - smooth(D.rx, D.rx + 12, rho)));
-  if (s > CV.face - 2) {
-    const C = CV.cove, w = C.half + (s - CV.face) * C.widen;
-    const k = (1 - smooth(w, w + C.wall, Math.abs(l))) * smooth(CV.face - 2, CV.face + 1.5, s);
+  const C = CV.cove;
+  if (s > CV.face - 2 - C.face) {
+    // 兩側的崖壁各自凹凸（只會比原本寬）；盡頭的崖面也不是一道平牆，這裡凹進去多一點、那裡少一點
+    const side = l < 0 ? 17.3 : 41.9;
+    const w = C.half + (s - CV.face) * C.widen + C.rough * fbm(s * 0.11 + side, side * 0.7);
+    const sf = s + C.face * fbm(l * 0.21 + 23.1, 4.7);
+    const k = (1 - smooth(w, w + C.wall, Math.abs(l))) * smooth(CV.face - 2, CV.face + 1.5, sf);
     if (k > 0) h += (Math.min(h, C.floor) - h) * k;
   }
   return h;
@@ -98,7 +113,7 @@ export function caveFloor(x, z, extra = 0) {
 // 洞裡這一點頭上的洞頂多高（天窗底下是 Infinity：頭上沒有東西）
 export function caveCeil(x, z) {
   const rho = caveCoords(x, z)[2];
-  return rho < CV.sky.r ? Infinity : rho < CV.r ? domeY(rho) : CV.door.ceil;
+  return skyEdge(x, z) < 0 ? Infinity : rho < CV.r ? domeY(rho) : CV.door.ceil;
 }
 // 高度 y 的人或東西在 (x, z)：如果它其實在洞裡（比洞頂低，或正好在天窗底下），回傳洞底的高度；在洞頂上面或洞外就回傳 null（照上層的地面）
 export function caveUnder(x, z, y) {
@@ -129,13 +144,16 @@ export const havenLow = (x, z) => caveFloor(x, z) ?? havenHeight(x, z);
 export const caveRock = (x, y, z, pad = 0.3) => cavitySdf(x, y, z) > -pad && y < havenHeight(x, z) + pad;
 
 // 洞穴的空腔（立體的，給模型用）：負的 = 在空腔裡，正的 = 在岩石裡，數字大約是離洞壁幾公尺。
-// 圓穹（橢球，潭底以上）＋天窗的豎井＋暗門水道（圓角的長方形斷面），洞壁照雜訊凹凸
+// 圓穹（橢球，潭底以上）＋天窗的豎井（邊緣不是正圓）＋暗門水道（圓角的長方形斷面，到洞口變成一道歪斜、頂端收尖的裂口），洞壁照雜訊凹凸
 export function cavitySdf(x, y, z) {
   const [s, l, rho] = caveCoords(x, z), D = CV.dome, T = CV.door;
   const n = fbm(x * 0.21 + y * 0.13 + 3.7, z * 0.21 - y * 0.17 + 8.1) - 0.5;
   const dome = Math.max((Math.hypot(rho / D.rx, (y - D.cy) / D.ry) - 1) * D.rx + n * 1.6, poolFloor(s, rho) - y);
-  const shaft = Math.max(rho - CV.sky.r + n * 1.0, D.cy + D.ry - 7 - y);
-  const rr = 1.4, ax = Math.abs(l) - (T.half - rr), ay = Math.abs(y - (T.ceil + T.floor) / 2) - ((T.ceil - T.floor) / 2 - rr);
-  const tun = Math.max(Math.hypot(Math.max(ax, 0), Math.max(ay, 0)) + Math.min(Math.max(ax, ay), 0) - rr + n * 0.5, 8 - s, s - (CV.face + 10));
+  const shaft = Math.max(skyEdge(x, z) + n * 1.0, D.cy + D.ry - 7 - y);
+  const M = T.mouth, m = smooth(CV.face - M.from, CV.face + 1, s);   // 0 = 水道裡面，1 = 洞口
+  const top = T.ceil + m * (M.rise + M.tilt * l), up = smooth(0.5, 3, y);
+  const hw = (T.half + m * M.flare * up) * (1 - 0.8 * m * smooth(top - 6, top, y)), lc = l - m * M.lean * smooth(1, top, y);
+  const rr = 1.4, ax = Math.abs(lc) - (hw - rr), ay = Math.abs(y - (top + T.floor) / 2) - ((top - T.floor) / 2 - rr);
+  const tun = Math.max(Math.hypot(Math.max(ax, 0), Math.max(ay, 0)) + Math.min(Math.max(ax, ay), 0) - rr + n * (0.5 + 1.1 * m), 8 - s, s - (CV.face + 10));
   return Math.min(dome, shaft, tun);
 }
