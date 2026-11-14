@@ -45,6 +45,7 @@ export class Player {
     this.tilt = 0;                         // 游泳時身體往前趴的角度
     this.wPitch = 0; this.wRoll = 0;       // 跟著浪面傾斜的角度
     this.clock = 0; this.bob = 0; this.lean = 0; this.roll = 0;   // 動作用：時間、上下起伏、前傾、左右晃
+    this.airSide = 1; this.wasAir = false;   // 跳起來時哪隻腳在前（每跳一次換一邊）
     this.lookYaw = 0; this.lookPitch = 0;  // 鏡頭看的方向（頭會跟著轉）
     this.eyeH = 1.25;                      // 眼睛離腳多高（游泳時只剩頭露出水面）
     this.seat = null;                      // 坐在船上的哪個位子：{ boat, x, z, h 坐墊高度, yaw 面向（相對船首） }；沒坐是 null
@@ -356,7 +357,10 @@ export class Player {
     const stroke = Math.sin(this.phase);
     const idle = !this.moving && !air && !swim;
     const T = (this.clock += dt);
-    const swing = air ? 0.65 : this.moving ? stroke * (swim ? 0.45 : run ? 1.1 : 0.78) : 0;
+    // 每次離地換一邊：這次左腳右手在前，下次就右腳左手在前（別人看你跳也一樣會換）
+    if (air && !this.wasAir) this.airSide = -this.airSide;
+    this.wasAir = air;
+    const swing = air ? 0.65 * this.airSide : this.moving ? stroke * (swim ? 0.45 : run ? 1.1 : 0.78) : 0;
     const { legs, arms, head } = this.mesh.userData;
     const ease = 1 - Math.exp(-dt * 14);
     const shift = idle ? 0.06 * Math.sin(T * 1.3) : 0;
