@@ -21,7 +21,7 @@ import { makeHavenFx } from './havenFx.js';
 import { HOME_GROUND, ZONE_LABEL } from './lowpoly/harborPlan.js';
 import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SWITCHES_W, ROOFS_W, underRoof, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
 import { fishLabel, FishWorld } from './fish.js';
-import { money as cash } from './fishdata.js';
+import { money as cash, rarityOf } from './fishdata.js';
 import { Fishing } from './fishing.js';
 import { EmoteWheel } from './emotes.js';
 import { TOUCH, TouchUI, touchText, touchSet, canFullscreen, isFullscreen, setFullscreen } from './touch.js';
@@ -3293,7 +3293,8 @@ net.on('caught', (m) => {
   const f = m.fish;
   if (fish.held) return fish.stowDeck(myBoat, 0, 0, f.id, f.kg, f.len, f.uid, f.value);   // 手上有東西（只有測試指令會這樣）：放到船上
   const it = fish.spawnHeld(f.id, f.kg, f.len, f.uid, f.value);
-  toast(`釣到 ${fishLabel(it)}　值 ${cash(it.value)}`);
+  if (it.sp.kind === 'junk') toast(`釣到 ${it.sp.name}（值 ${cash(it.value)}）　${it.sp.notes[Math.floor(Math.random() * it.sp.notes.length)]}`);
+  else toast(`釣到${it.sp.rarity === 'common' ? '' : `【${rarityOf(it.id).label}】`}${fishLabel(it)}　值 ${cash(it.value)}`);
 });
 
 // ---- 買賣、換船 ----

@@ -10,7 +10,7 @@ import { PORT } from '../src/lowpoly/havenPlan.js';
 import { HOTSPOT, CHESTS } from '../src/extrasPlan.js';
 import { Extras } from './extras.js';
 import { BOAT_TYPES, BOAT_ORDER, newKit, shopItem } from '../src/boatdata.js';
-import { SPECIES, rollCatch, minFightTime, biteDelay, castRange, money } from '../src/fishdata.js';
+import { SPECIES, isJunk, rollCatch, minFightTime, biteDelay, castRange, money } from '../src/fishdata.js';
 import { dangerAt, isWater, fishingSpot } from './world.js';
 import { mask } from './words.js';
 import { SERVER } from '../src/config.js';
@@ -384,7 +384,7 @@ export class Room {
           const f = p.fish.get(u);
           if (!f) continue;
           total += f.value; sold.push(u); p.fish.delete(u);
-          if (!best || f.value > best.value) best = f;
+          if (!isJunk(f.id) && (!best || f.value > best.value)) best = f;   // 雜物賣得到錢，但不算紀錄
         }
         if (haven) total = Math.round(total * (1 + PORT.bonus));
         kit.money += total;

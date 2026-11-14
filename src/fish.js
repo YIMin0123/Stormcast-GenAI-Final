@@ -7,8 +7,95 @@ import { THROW } from './config.js';
 // 魚種資料、「釣到什麼、多大、值多少」的規則在 fishdata.js（伺服器也用同一份）
 export { SPECIES, SPECIALTY, pickSpecies, rollFish, fishValue, fishLabel } from './fishdata.js';
 
+// 雜物與章魚的模型：長邊朝 +X、Y 朝上，先照身長 1 蓋好，最後整個乘上 len
+const JUNK_MODELS = {
+  slipper(g, col, M) {
+    M(0xf2efe6, 1, 0.07, 0.38, 0, 0.035, 0);                      // 鞋底
+    M(col, 0.34, 0.07, 0.38, 0.18, 0.1, 0);                       // 腳背的帶子
+    M(col, 0.1, 0.05, 0.1, 0.34, 0.08, 0);
+  },
+  tin(g, col, M, C) {
+    C(0xbfc4ca, 0.2, 0.2, 0.5, 0, 0.2, 0);
+    C(0xc23a2e, 0.205, 0.205, 0.16, 0, 0.2, 0);                   // 標籤
+    C(0x8d9399, 0.19, 0.19, 0.03, 0.26, 0.2, 0);
+  },
+  bottle(g, col, M, C) {
+    C(col, 0.13, 0.13, 0.5, -0.06, 0.13, 0, 0.55);
+    C(col, 0.07, 0.07, 0.18, 0.28, 0.13, 0, 0.55);
+    C(0x2b77c9, 0.06, 0.06, 0.06, 0.4, 0.13, 0);                  // 瓶蓋
+  },
+  msgbottle(g, col, M, C) {
+    C(col, 0.14, 0.14, 0.52, -0.05, 0.14, 0, 0.5);
+    C(col, 0.075, 0.075, 0.18, 0.3, 0.14, 0, 0.5);
+    C(0xf1e3b8, 0.06, 0.06, 0.34, -0.02, 0.14, 0);                // 裡面的紙捲
+    C(0x9a6b3a, 0.06, 0.06, 0.07, 0.42, 0.14, 0);                 // 軟木塞
+  },
+  net(g, col, M) {
+    for (let i = 0; i < 9; i++) {
+      const a = Math.random() * Math.PI, y = 0.04 + Math.random() * 0.08;
+      const m = M(col, 0.9, 0.02, 0.02, (Math.random() - 0.5) * 0.3, y, (Math.random() - 0.5) * 0.3);
+      m.rotation.y = a; m.rotation.z = (Math.random() - 0.5) * 0.5;
+    }
+    for (let i = 0; i < 3; i++) M(0xe0553a, 0.07, 0.07, 0.07, (Math.random() - 0.5) * 0.7, 0.07, (Math.random() - 0.5) * 0.5);   // 浮標
+  },
+  tire(g, col) {
+    const t = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.14, 8, 18), new THREE.MeshLambertMaterial({ color: col }));
+    t.rotation.x = Math.PI / 2; t.position.y = 0.14; g.add(t);
+  },
+  key(g, col, M) {
+    const r = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.04, 6, 12), new THREE.MeshLambertMaterial({ color: col }));
+    r.rotation.x = Math.PI / 2; r.position.set(-0.4, 0.04, 0); g.add(r);
+    M(col, 0.7, 0.05, 0.06, 0.05, 0.04, 0);
+    M(col, 0.06, 0.05, 0.14, 0.32, 0.04, 0.06); M(col, 0.06, 0.05, 0.1, 0.42, 0.04, 0.05);
+  },
+  duck(g, col) {
+    const mat = new THREE.MeshLambertMaterial({ color: col });
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 8), mat); body.scale.set(1.2, 0.85, 0.9); body.position.y = 0.28; g.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), mat); head.position.set(0.3, 0.6, 0); g.add(head);
+    const beak = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.05, 0.14), new THREE.MeshLambertMaterial({ color: 0xf08a2a })); beak.position.set(0.5, 0.58, 0); g.add(beak);
+    for (const s of [-1, 1]) { const e = new THREE.Mesh(new THREE.SphereGeometry(0.03, 6, 5), new THREE.MeshBasicMaterial({ color: 0x111111 })); e.position.set(0.42, 0.66, s * 0.1); g.add(e); }
+  },
+  float(g, col) {
+    const s = new THREE.Mesh(new THREE.SphereGeometry(0.4, 14, 10), new THREE.MeshLambertMaterial({ color: col, transparent: true, opacity: 0.7 }));
+    s.position.y = 0.4; g.add(s);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.1, 8), new THREE.MeshLambertMaterial({ color: 0x4a5a3a })); cap.position.y = 0.82; g.add(cap);
+  },
+  coins(g, col) {
+    const bag = new THREE.Mesh(new THREE.SphereGeometry(0.36, 10, 8), new THREE.MeshLambertMaterial({ color: 0x6b4a2a })); bag.scale.y = 0.9; bag.position.y = 0.32; g.add(bag);
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.14, 0.14, 8), new THREE.MeshLambertMaterial({ color: 0x4a321c })); neck.position.y = 0.66; g.add(neck);
+    const gold = new THREE.MeshLambertMaterial({ color: col });
+    for (let i = 0; i < 5; i++) {
+      const c = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.03, 10), gold);
+      c.position.set(0.3 + (i % 3) * 0.12 - 0.2, 0.03 + Math.floor(i / 3) * 0.04, 0.4 + (i % 2) * 0.1); g.add(c);
+    }
+  },
+  octopus(g, col) {
+    const mat = new THREE.MeshLambertMaterial({ color: col });
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8), mat); head.scale.set(0.95, 1.2, 0.95); head.position.set(-0.28, 0.34, 0); g.add(head);
+    for (const s of [-1, 1]) { const e = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 5), new THREE.MeshBasicMaterial({ color: 0x111111 })); e.position.set(-0.12, 0.28, s * 0.14); g.add(e); }
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2, leg = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.07, 0.62, 6), mat);
+      leg.position.set(0.05 + Math.cos(a) * 0.3, 0.06, Math.sin(a) * 0.3);
+      leg.rotation.set(Math.sin(a) * 1.25, 0, -Math.cos(a) * 1.25);
+      g.add(leg);
+    }
+  },
+};
+function makeJunkMesh(sp, len) {
+  const g = new THREE.Group(), col = sp.color;
+  const mats = new Map();
+  const mat = (c, o) => { const k = `${c}|${o ?? 1}`; if (!mats.has(k)) mats.set(k, new THREE.MeshLambertMaterial({ color: c, transparent: o < 1, opacity: o ?? 1 })); return mats.get(k); };
+  const M = (c, sx, sy, sz, x, y, z) => { const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat(c)); m.position.set(x, y, z); g.add(m); return m; };
+  // 橫躺的圓柱（軸朝 +X）
+  const C = (c, rt, rb, h, x, y, z, o) => { const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, 12), mat(c, o)); m.rotation.z = Math.PI / 2; m.position.set(x, y, z); g.add(m); return m; };
+  JUNK_MODELS[sp.model](g, col, M, C);
+  g.scale.setScalar(len);
+  return g;
+}
+
 // 魚的模型：+X 是頭，Y 是背。背上是魚種的顏色、肚子是白的
 export function makeFishMesh(sp, len) {
+  if (sp.model) return makeJunkMesh(sp, len);
   const g = new THREE.Group();
   const geo = new THREE.SphereGeometry(0.5, 12, 8);
   const pos = geo.attributes.position, col = new Float32Array(pos.count * 3);
@@ -33,10 +120,10 @@ export function makeFishMesh(sp, len) {
     b.computeVertexNormals();
     g.add(new THREE.Mesh(b, finMat));
   };
-  const hh = sp.h * 0.5;
+  const hh = sp.h * 0.5, fin = sp.fin ?? 1;   // fin：背鰭放大幾倍（鯊魚）
   tri([[-0.34, 0, 0], [-0.52, hh * 1.15, 0], [-0.46, 0, 0]]);        // 尾鰭上半
   tri([[-0.34, 0, 0], [-0.46, 0, 0], [-0.52, -hh * 1.15, 0]]);       // 尾鰭下半
-  tri([[0.12, hh * 0.9, 0], [-0.16, hh * 0.85, 0], [-0.12, hh * 1.45, 0]]); // 背鰭
+  tri([[0.12, hh * 0.9, 0], [-0.16, hh * 0.85, 0], [-0.12, hh * (0.85 + 0.6 * fin), 0]]); // 背鰭
   const eyeMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
   for (const side of [-1, 1]) {
     const e = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.012, len * 0.022), 6, 5), eyeMat);
@@ -82,8 +169,8 @@ export class FishWorld {
       uid, id, sp, kg, value, len, thick: len * sp.w,
       mesh: makeFishMesh(sp, len), state: 'held', boat: null,
       x: 0, z: 0, y: 0, lx: 0, lz: 0, yaw: 0, vx: 0, vz: 0,
-      lively: 80,                 // 還會活蹦亂跳多久（秒）
-      flopT: rand(2, 5), hop: null, wash: 0, t: Math.random() * 10,
+      lively: sp.kind === 'junk' ? 0 : 80,   // 還會活蹦亂跳多久（秒）；雜物不會動
+      flopT: sp.kind === 'junk' ? 1e9 : rand(2, 5), hop: null, wash: 0, t: Math.random() * 10,
     };
     this._hold(it);
     return it;

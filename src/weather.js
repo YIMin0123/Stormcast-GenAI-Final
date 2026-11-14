@@ -227,6 +227,7 @@ const CALM = { storm: 0, gloom: 0, lull: 1, rumble: 0, rain: 0, surge: 0, thunde
 // 海上的事件。平常是 calm，偶爾隨機發生一種：
 //   storm 風暴、thunder 雷暴雨、omen → waves 巨浪、whirl 漩渦、brew → typhoon 颱風
 // 風暴、雷暴雨、颱風時外海還可能出現水龍捲
+export const SEA_AFTER = 600;   // 風暴過後「剛過去」的期間（秒，約遊戲裡八小時）
 export class Sea {
   constructor() {
     this.phase = 'calm';
@@ -249,7 +250,11 @@ export class Sea {
     this.vortices = [];              // 漩渦與水龍捲：{ kind, x, z, vx, vz, s, age, life }
     this.spoutIn = Infinity;         // 再過幾秒可能冒出一道水龍捲
     this.spoutLeft = 0;
+    this.after = 0;                  // 風暴、颱風、海嘯剛過去：還剩幾秒（這段時間海裡會冒出平常看不到的魚與漂流物）
   }
+
+  // 對釣魚來說現在的海況：'before' 快要有大事了（颱風醞釀、海嘯前兆）、'after' 剛過去、其餘 null
+  get fishStorm() { return this.phase === 'brew' || this.phase === 'omen' ? 'before' : this.after > 0 ? 'after' : null; }
 
   // 讓一次事件現在開始。已經有事件在進行就不理會。env：{ near: {x, z}, dangerAt(x, z) }
   trigger(kind, env) {
@@ -310,6 +315,7 @@ export class Sea {
   update(dt, env) {
     this.t += dt;
     const p = this.phase;
+    if (this.after > 0) this.after = p === 'calm' ? Math.max(0, this.after - dt) : 0;
     // remote：不自己引發新的事件。多人模式的瀏覽器一律如此（事件由伺服器決定，這裡只把已經在進行的順順地演下去，伺服器每半秒校正一次）；
     // 伺服器在房間準備合併時也會暫時打開
     if (p === 'calm') {
@@ -368,6 +374,7 @@ export class Sea {
   }
 
   _calm() {
+    if (['storm', 'thunder', 'typhoon', 'waves'].includes(this.phase)) this.after = SEA_AFTER;
     this.phase = 'calm'; this.t = 0; this.slow = 1;
     this.next = rand(480, 840);
     this.goal = { ...CALM };

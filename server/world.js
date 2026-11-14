@@ -33,7 +33,7 @@ export function fishingSpot(x, z, climate, sea) {
   let near = ISLANDS[0], dist = Infinity;
   for (const o of ISLANDS) { const d = Math.hypot(x - o.x, z - o.z); if (d < dist) { dist = d; near = o; } }
   const d = dangerAt(x, z), level = seaLevel(windWave(climate.wind * (1 + 0.7 * climate.rain)) * sea.lull, sea.storm, sea.surge, d, d);
-  return { depth: -bedAt(x, z), island: near.id, off: offAt(x, z), night: climate.night, rough: clamp((level - 0.5) / 1.5, 0, 1), zone: fishZone(x, z), rain: Math.max(sea.rain, climate.rain) };
+  return { depth: -bedAt(x, z), island: near.id, off: offAt(x, z), night: climate.night, hour: climate.hour, storm: sea.fishStorm, rough: clamp((level - 0.5) / 1.5, 0, 1), zone: fishZone(x, z), rain: Math.max(sea.rain, climate.rain) };
 }
 
 // 開機時檢查每個停船格的水夠不夠深（地形改了、格子擺到淺灘上的話，這裡會講）
