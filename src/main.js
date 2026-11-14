@@ -1032,6 +1032,7 @@ scene.add(grass);
 const _gd = new THREE.Vector3();
 // 水下時讓這些物件也罩上同樣的水霧
 const underFog = new THREE.FogExp2(0x06323f, 0.032);
+const CAM_ABOVE_WATER = 0.35;   // 人在船上時，鏡頭至少高出水面這麼多（公尺）
 const airFog = new THREE.FogExp2(0xb4bcc6, HAZE);    // 遠景的薄霧；起霧時船、碼頭、樹也要罩在霧裡
 
 const scenery = makeScenery({
@@ -4430,6 +4431,10 @@ function drawFrame(dt) {
     if (Math.abs(depth) < 6) {
       depth += ocean.sampleHeight(cp.x, cp.z) * clamp((-bedHere - 0.3) / 7.7, 0, 1) * waveK(cp.x, cp.z);
     }
+    // 人在船上（掌舵、坐著、站在甲板上，船沒在沉）：鏡頭不准低於水面。暴風雨的浪又高又陡，船身跟不上每個浪頭，
+    // 小舢舨上坐著、掌舵的眼睛很低，浪頭一高過眼睛就被當成在水裡，畫面被水線切成一半、另一半變成一片深藍
+    const ride = mode === 'helm' ? boat : mode === 'walk' && !player.swim ? player.boat : null;
+    if (ride && !ride.sinking && depth > -CAM_ABOVE_WATER) { cp.y += depth + CAM_ABOVE_WATER; depth = -CAM_ABOVE_WATER; }
   }
   const under = depth > 0;
   shared.uUnder.value = under ? 1 : 0;
