@@ -159,11 +159,11 @@ uniform float uFlagAmp;`)
     .replace('#include <begin_vertex>', `vec3 transformed = vec3( position );
 {
   float u = clamp( position.x / ${W.toFixed(2)}, 0.0, 1.0 );   // 0 在旗桿、1 在尾端
-  float a = uFlagAmp, k = 1.4 + 0.6 * a, sp = 3.0 + 4.0 * a;
+  float a = uFlagAmp, k = 1.1 + 0.4 * a, sp = 1.5 + 2.0 * a;          // 波長長一點、速度慢一點：不要抖
   float ph = position.x * k - uFlagT * sp + ${seed.toFixed(2)};
-  float w = sin( ph ) * 0.2 + sin( ph * 1.9 + position.y * 1.4 + 1.3 ) * 0.07;
-  transformed.z += w * u * ( 0.35 + a );
-  transformed.x -= u * u * 0.12 * ( 0.35 + a );                     // 波浪把布收短一點
+  float w = sin( ph ) * 0.13 + sin( ph * 1.7 + position.y * 1.2 + 1.3 ) * 0.03;
+  transformed.z += w * u * ( 0.3 + 0.6 * a );
+  transformed.x -= u * u * 0.07 * ( 0.3 + 0.6 * a );                 // 波浪把布收短一點
   transformed.y -= u * u * max( 0.0, 1.0 - a ) * 0.9;                 // 風小：尾端垂下來
   transformed.x -= u * u * max( 0.0, 1.0 - a ) * 0.35;
 }`);
