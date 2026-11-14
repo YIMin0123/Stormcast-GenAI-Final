@@ -1771,15 +1771,15 @@ function releaseHelm() {
   applyViewSettings();
 }
 
-// ---- 大港：吊鉤大秤收購站（收購價比母島多 15%）、碼頭加油柱 ----
+// ---- 大港：吊鉤大秤收購站（收購價比潮汐灣多 15%）、碼頭加油柱 ----
 const boatWithin = (p, r) => !myBoat.sinking && !myBoat.stored && Math.hypot(myBoat.x - p.x, myBoat.z - p.z) < r;
 // 這一秤要賣哪些魚：手上那一條；手上沒東西就是停在碼頭的船上整箱
 const hookFish = () => (fish.held ? (fish.held.can ? [] : [fish.held]) : boatWithin(HAVEN_SELL_W, PORT.sell.range) ? myBoat.boxFish : []);
 const hookPrice = (list) => Math.round(list.reduce((s, it) => s + it.value, 0) * (1 + PORT.bonus));
 function hookText() {
   const list = hookFish(), pct = Math.round(PORT.bonus * 100);
-  if (fish.held && fish.held.can) return `大港收購站（比母島多 ${pct}%）　油桶不能賣`;
-  if (!list.length) return `大港收購站（比母島多 ${pct}%）　手上拿一條魚過來，或把船停在碼頭整箱一起秤`;
+  if (fish.held && fish.held.can) return `大港收購站（比潮汐灣多 ${pct}%）　油桶不能賣`;
+  if (!list.length) return `大港收購站（比潮汐灣多 ${pct}%）　手上拿一條魚過來，或把船停在碼頭整箱一起秤`;
   return fish.held ? `按 E 把這條魚掛上大秤賣出（$${hookPrice(list)}，多 ${pct}%）` : `按 E 把船上整箱 ${list.length} 條魚吊上來賣出（$${hookPrice(list)}，多 ${pct}%）`;
 }
 function havenSell() {
@@ -3237,7 +3237,7 @@ function drawMap() {
   g.beginPath(); g.arc(hx, hy, 5, 0, Math.PI * 2);
   g.lineWidth = 2.5; g.strokeStyle = 'rgba(20, 30, 40, 0.9)'; g.stroke();
   g.fillStyle = '#fff'; g.fill();
-  label('母港', hx, hy, '#fff', 3);
+  label('潮汐灣', hx, hy, '#fff', 3);
 
   // 同房的其他人和他們的船（白色）
   for (const o of others.list()) {
@@ -3283,7 +3283,7 @@ function toggleMap() {
   syncAim();
   if (!mapOpen) return;
   if (!mapBase) mapBase = makeMapBase();
-  if (document.fonts) document.fonts.load(`13px ${MAP_FONT}`, '北母港大港灣島石拱門沉船環礁燈標岩你魚群').catch(() => {});
+  if (document.fonts) document.fonts.load(`13px ${MAP_FONT}`, '北潮汐灣大港灣島石拱門沉船環礁燈標岩你魚群').catch(() => {});
   drawMap();
 }
 $('mapX').addEventListener('click', (e) => { e.stopPropagation(); if (mapOpen) toggleMap(); });

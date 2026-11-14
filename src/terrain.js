@@ -17,7 +17,7 @@ export const SEA_FLOOR = -30;
 // 島的資料（各自的設計圖座標；to：轉成世界座標的函式）。R：島的大概半徑（著色與佈景用）；look：地表的樣子；flora：舊的佈景（樹、石頭）—— 新島的樹和岩石是低面模型，這裡不種
 const LOCAL_ISLANDS = [
   {
-    id: 'home', name: '母港島', x: H.ISLAND.x, z: H.ISLAND.z, R: 85, bumps: [{ x: H.HILL.x, z: H.HILL.z, r: 50, peak: H.HILL.peak }],
+    id: 'home', name: '潮汐灣', x: H.ISLAND.x, z: H.ISLAND.z, R: 85, bumps: [{ x: H.HILL.x, z: H.HILL.z, r: 50, peak: H.HILL.peak }],
     shape: { beach: 0, bw: 1, jag: 0, cliff: 0, hill: 0 },
     look: { rock: 0.12, veg: 1.0, white: 0.15, dry: 0.15 },
     flora: { broadleaf: 0, conifer: 0, palm: 0, bush: 0, shoreRock: 0, landRock: 0 },
