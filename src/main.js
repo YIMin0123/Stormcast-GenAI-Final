@@ -872,7 +872,9 @@ function aimLight(l, dir, center, half, size) {
 //    太陽走了 1 度才換一次，新舊兩組影子用 2 秒淡入淡出（不會一格一格跳）。太陽的光照方向照舊每一幀跟著走
 // 做法：四盞不發光（亮度 0）的平行光只負責畫陰影貼圖——遠新、遠舊、近新、近舊；這時太陽本身不投影，
 // 它的影子由 sunShadowPlus（上面改的 three.js 著色器）把四張合起來。舊的那兩張只在淡入淡出的那 2 秒裡畫
-const NEAR_SIZES = [2048, 2048, 4096], NEAR_HALVES = [6, 6, 8], SH_STEP = THREE.MathUtils.degToRad(1), SH_FADE = 2;
+//    （2026-11-14 起預設改成即時：SH_LIVE。太陽每 5 秒走 1 度，淡入淡出那 2 秒會看到新舊兩個半透明的影子疊在一起，使用者不要；
+//      想換回「每 1 度淡換一次」就把 SH_LIVE 改成 false）
+const NEAR_SIZES = [2048, 2048, 4096], NEAR_HALVES = [6, 6, 8], SH_STEP = THREE.MathUtils.degToRad(1), SH_FADE = 2, SH_LIVE = true;
 let NEAR_SIZE = NEAR_SIZES[gs.shNear], NEAR_HALF = NEAR_HALVES[gs.shNear];   // 近處那張：最高規格 4096 格蓋 16 公尺（一格 0.4 公分）
 function shadowOnly(half, size, normalBias) {
   const l = new THREE.DirectionalLight(0xffffff, 0);
@@ -931,7 +933,7 @@ function placeSun(center, dt = 0, even = true) {
     return;
   }
   aimLight(sun, sunDir, center, SHADOW_HALF, SHADOW_SIZE);   // 光照方向照舊每一幀跟著走（太陽自己不投影）
-  if (shFresh) { shDir.copy(sunDir); shWOld = 0; shFresh = false; }
+  if (shFresh || SH_LIVE) { shDir.copy(sunDir); shWOld = 0; shFresh = false; }   // 即時：影子方向每一幀跟著太陽，沒有新舊兩組疊在一起的殘影
   else if (shWOld > 0) shWOld = shDir.angleTo(sunDir) > SH_STEP * 4 ? 0 : Math.max(0, shWOld - dt / SH_FADE);   // 太陽動得快（時間被調、跟伺服器對時）：不等淡完，免得越落越遠
   else {
     const a = shDir.angleTo(sunDir);
