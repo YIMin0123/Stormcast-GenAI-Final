@@ -426,10 +426,10 @@ void main() {
   vec2 q = mat2(ca, -sa, sa, ca) * vP;                       // 整片雲繞著漏斗慢慢轉
   float n = 0.6 * vn(q / 300.0 + uSeed) + 0.4 * vn(q / 95.0 + 7.0);
   float dens = smoothstep(0.0, 0.06, n * 0.75 + 0.62 - vU * 1.25);
-  // 雲底是一塊一塊深淺不同的暗灰，越靠近漏斗越黑
+  // 雲底是一塊一塊深淺不同的暗灰，越靠近漏斗越黑。三個色階跟天上風暴低雲的雲底、背光面同一套（renderShaders.js 的 paintShade），交界是乾淨的線
   float lump = 0.55 * vn(q / 170.0 + 31.0 + uSeed) + 0.45 * vn(q / 60.0 + 3.0);
-  vec3 col = mix(vec3(0.085, 0.10, 0.135), vec3(0.19, 0.225, 0.28), smoothstep(0.47, 0.53, lump + 0.45 * vU - 0.12));
-  col = mix(col, vec3(0.27, 0.31, 0.37), smoothstep(0.50, 0.56, n + 0.5 * vU - 0.3)) * uAmbient;
+  vec3 col = mix(vec3(0.12, 0.13, 0.165), vec3(0.17, 0.19, 0.235), smoothstep(0.49, 0.51, lump + 0.45 * vU - 0.12));
+  col = mix(col, vec3(0.27, 0.31, 0.37), smoothstep(0.52, 0.54, n + 0.5 * vU - 0.3)) * uAmbient;
   gl_FragColor = vec4(hazed(col, vWorld, 0.06), 0.95 * dens * uFade);
   ${spoutEnd}
 }`;

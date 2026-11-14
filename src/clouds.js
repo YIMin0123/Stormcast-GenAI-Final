@@ -18,8 +18,9 @@ function rng(seed) {
 
 const MAX_BALLS = 61;   // 一朵雲最多幾顆球（貼圖一列 64 格：前三格是整朵雲的資料）
 
-// 一朵雲：az 在哪個方位、dist 多遠、base 雲底多高、w 多寬、h 堆多高（單位：公里，人在原點）
-function heap(R, az, dist, base, w, h, n) {
+// 一朵雲：az 在哪個方位、dist 多遠、base 雲底多高、w 多寬、h 堆多高（單位：公里，人在原點）。
+// deep：前後有多厚（寬度的幾成）。遠處的雲只看得到側面，0 就好；會飄到頭頂的雲要有厚度，從底下看才是一團，不是一串珠子
+function heap(R, az, dist, base, w, h, n, deep = 0) {
   const cx = Math.cos(az) * dist, cz = Math.sin(az) * dist;
   const tx = -Math.sin(az), tz = Math.cos(az);   // 橫向（從人看過去的左右）
   const rx = Math.cos(az), rz = Math.sin(az);    // 縱深
@@ -27,19 +28,29 @@ function heap(R, az, dist, base, w, h, n) {
   const peak = (R() - 0.5) * 0.7;                // 最高的那一團偏左還是偏右
   const top = (u) => h * Math.max(0, 1 - Math.abs(u - peak) ** 1.7 / (1 + Math.abs(peak)) ** 1.7) ** 0.75;   // 這個橫向位置可以堆到多高
   const add = (u, y, r, dep) => balls.push([cx + tx * u * w * 0.5 + rx * dep, base + y, cz + tz * u * w * 0.5 + rz * dep, r]);
-  // 最底下一排：寬寬扁扁的，雲底才是連續的一條
+  // 最底下一排：一顆顆高低不齊的球，雲底是圓圓的、一彎一彎的（不是切平的）
   const r0 = Math.min(h * 0.30, w * 0.16);
   const nb = Math.max(3, Math.round(w / (r0 * 1.25)));
-  for (let i = 0; i < nb; i++) {
-    const u = -1 + 2 * (i + 0.5) / nb;
-    add(u * 0.92, r0 * (0.35 + 0.25 * R()), r0 * (0.85 + 0.4 * R()) * (0.6 + 0.4 * Math.min(1, top(u) / (h * 0.5))), (R() - 0.5) * w * 0.18);
+  const ell = (u) => Math.sqrt(Math.max(0, 1 - u * u));   // 從上面看是橢圓的：兩端比較薄
+  if (deep > 0) {
+    // 有厚度的雲：底下是幾顆大球圍成的橢圓（中間一顆、外圍一圈），從底下看是一整團、邊緣一彎一彎的
+    const rb = w * 0.22;
+    for (let i = 0; i < 8; i++) {
+      const t = (i + R() * 0.5) / 7 * Math.PI * 2, rr = i === 0 ? 0 : 0.62;
+      add(rr * Math.cos(t), rb * (0.15 + 0.45 * R()), rb * (0.85 + 0.3 * R()), rr * Math.sin(t) * w * deep * 0.5);
+    }
+  } else {
+    for (let i = 0; i < nb; i++) {
+      const u = -1 + 2 * (i + 0.5) / nb;
+      add(u * 0.92, r0 * (0.15 + 0.5 * R()), r0 * (0.85 + 0.4 * R()) * (0.6 + 0.4 * Math.min(1, top(u) / (h * 0.5))), (R() - 0.5) * w * 0.18);
+    }
   }
   // 往上堆：越高的球越小，集中在最高的那一團附近
   while (balls.length < n * 0.7) {
     const u = (R() + R() + R()) / 1.5 - 1, H = top(u);
     if (H < h * 0.12) continue;
     const k = R() ** 0.8, y = k * H * 0.92;
-    add(u, y, Math.max(h * 0.07, r0 * (1.25 - 0.75 * k) * (0.7 + 0.5 * R())), (R() - 0.5) * w * 0.22 * (1 - 0.5 * k));
+    add(u, y, Math.max(h * 0.07, r0 * (1.25 - 0.75 * k) * (0.7 + 0.5 * R())), (R() - 0.5) * (w * 0.22 + w * deep * ell(u)) * (1 - 0.5 * k));
   }
   // 輪廓上的小疙瘩：花椰菜那種一球一球的邊
   while (balls.length < n) {
@@ -53,25 +64,48 @@ function heap(R, az, dist, base, w, h, n) {
   mx /= balls.length; my /= balls.length; mz /= balls.length;
   let br = 0;
   for (const b of balls) br = Math.max(br, Math.hypot(b[0] - mx, b[1] - my, b[2] - mz) + b[3]);
-  return { bound: [mx, my, mz, br], info: [base, balls.length, h, 0], core: [cx, base + h * 0.22, cz, 0], balls };
+  return { bound: [mx, my, mz, br], info: [base, balls.length, h, 0], core: [cx, base + h * 0.22, cz, 0], balls, w };
 }
 
-function layout(seed) {
-  const R = rng(seed), heaps = [], TAU = Math.PI * 2;
-  const ring = (count, dist, base, w, h, n, skip) => {
+// 一圈雲：count 朵平均分在四周，距離、雲底、寬、高各在範圍裡亂取；skip 是留缺口的機率
+function ringOf(R, heaps) {
+  const TAU = Math.PI * 2;
+  return (count, dist, base, w, h, n, skip, deep = 0) => {
     const off = R() * TAU;
     for (let i = 0; i < count; i++) {
       if (R() < skip) continue;   // 留幾個缺口：不是一整圈牆
       const az = off + (i + (R() - 0.5) * 0.7) * TAU / count;
       heaps.push(heap(R, az, dist[0] + R() * (dist[1] - dist[0]), base[0] + R() * (base[1] - base[0]),
-        w[0] + R() * (w[1] - w[0]), h[0] + R() ** 1.6 * (h[1] - h[0]), n));
+        w[0] + R() * (w[1] - w[0]), h[0] + R() ** 1.6 * (h[1] - h[0]), n, deep));
     }
   };
+}
+
+function layout(seed) {
+  const R = rng(seed), heaps = [], ring = ringOf(R, heaps);
   ring(13, [95, 120], [-1.2, -0.6], [36, 64], [9, 20], 46, 0.10);    // 最遠的一排：矮矮的，貼著地平線
   ring(11, [46, 64], [-0.6, -0.2], [22, 42], [9, 36], 60, 0.20);     // 地平線上的大積雲：有幾朵堆得特別高
   ring(9, [10, 17], [1.9, 2.5], [4.5, 8.5], [1.8, 4.2], 46, 0.25);   // 半空中的
   ring(5, [4.2, 6.5], [2.3, 2.8], [1.8, 3.2], [0.8, 1.6], 30, 0.2);  // 比較高、比較近的小朵
+  ring(7, [0.6, 3.5], [2.2, 2.6], [0.8, 1.6], [0.4, 0.9], 34, 0.15, 0.7); // 頭頂附近的小朵：雲順風飄過頭頂、地上有影子的就是這幾朵
   return heaps;
+}
+
+// 風暴的雲：頭頂一整層又寬又扁的低雲（越近越密），中距離一團團，地平線上是高高的積雨雲
+function stormLayout(seed) {
+  const R = rng(seed), heaps = [], ring = ringOf(R, heaps);
+  ring(13, [90, 120], [-1.2, -0.6], [36, 64], [6, 14], 40, 0.05);   // 最遠的一排
+  ring(10, [40, 70], [-0.4, 0.0], [25, 50], [15, 35], 56, 0.15);    // 地平線上的積雨雲
+  ring(14, [9, 25], [0.8, 1.2], [6, 12], [1.0, 3.0], 40, 0.1);      // 中距離的
+  ring(22, [4.5, 9], [0.9, 1.3], [2.5, 4], [0.6, 1.2], 56, 0.05, 0.5);     // 頭頂那一層：外圈
+  ring(16, [1.5, 4.5], [0.9, 1.25], [1.6, 2.6], [0.5, 0.9], 56, 0.05, 0.7);  //               中圈
+  ring(8, [0.0, 1.5], [0.95, 1.15], [1.4, 2.2], [0.45, 0.8], 56, 0, 0.8);  //               正上方
+  return heaps;
+}
+
+// 雲影用：每朵雲（雲底在地平線以上的）的核心位置與寬度（公里，人在原點）
+export function cloudCores(seed = 20261112) {
+  return layout(seed).filter((hp) => hp.info[0] > 0).map((hp) => ({ x: hp.core[0], y: hp.core[1], z: hp.core[2], w: hp.w }));
 }
 
 const bakeVert = /* glsl */ `
@@ -85,31 +119,32 @@ const bakeFrag = /* glsl */ `
 precision highp float;
 uniform sampler2D uHeaps;   // 一列一朵雲：[0] 外接球、[1] (雲底高度, 球數, 雲高)、[2] 雲的重心、[3..] 每顆球 (中心, 半徑)
 uniform int uCount;
+uniform int uDepth;         // 1：A 存的不是「有沒有雲」而是「視線穿進雲裡多深」（風暴那張：門檻一降，雲就一塊塊長出來）
 varying vec3 vDir;
 
 // 從原點往 d 看出去，最先碰到哪朵雲的哪裡。回傳 (表面的方向, 有沒有碰到)
+float gDep = 0.0;
 vec4 trace(vec3 d) {
   float best = 1e9;
   vec3 bn = vec3(0.0);
+  gDep = 0.0;
   for (int i = 0; i < uCount; i++) {
     vec4 bs = texelFetch(uHeaps, ivec2(0, i), 0);
     float bb = dot(d, bs.xyz);
     if (bb < 0.0 || bb * bb - dot(bs.xyz, bs.xyz) + bs.w * bs.w < 0.0) continue;
     vec4 inf = texelFetch(uHeaps, ivec2(1, i), 0);
-    // 雲底是平的：視線要先穿過雲底那個高度才算進到雲裡
-    float tb = 0.0;
-    if (inf.x > 0.0) { if (d.y < 1e-4) continue; tb = inf.x / d.y; }
     vec3 core = texelFetch(uHeaps, ivec2(2, i), 0).xyz;
     int n = int(inf.y);
     for (int j = 0; j < n; j++) {
       vec4 s = texelFetch(uHeaps, ivec2(3 + j, i), 0);
       float b = dot(d, s.xyz), disc = b * b - dot(s.xyz, s.xyz) + s.w * s.w;
       if (disc < 0.0) continue;
-      float sq = sqrt(disc), t0 = b - sq, t1 = b + sq, te = max(t0, tb);
-      if (te >= t1 || te <= 0.0 || te >= best) continue;
+      float sq = sqrt(disc), t0 = b - sq, te = t0;
+      if (te <= 0.0) continue;
+      gDep = max(gDep, sq / s.w);   // 穿過球心是 1、擦過邊緣是 0
+      if (te >= best) continue;
       best = te;
       vec3 p = d * te;
-      if (t0 < tb) { bn = vec3(0.0, -1.0, 0.0); continue; }   // 從雲底看進去：朝下的平面
       // 打光用的方向：這顆球自己的弧度，加上整朵雲的大弧度（亮暗才會是一大塊一大塊，不是每顆球各一道月牙），
       // 再照高度偏一點：頂端朝上（亮）、靠近雲底朝下（暗）
       float hh = clamp((p.y - inf.x) / inf.z, 0.0, 1.0);
@@ -126,16 +161,16 @@ void main() {
   const vec2 OFF[4] = vec2[4](vec2(-0.375, -0.125), vec2(0.125, -0.375), vec2(0.375, 0.125), vec2(-0.125, 0.375));
   for (int k = 0; k < 4; k++) {
     vec4 h = trace(normalize(vDir + dx * OFF[k].x + dy * OFF[k].y));
-    n += h.xyz * h.w; a += h.w;
+    n += h.xyz * h.w; a += uDepth == 1 ? gDep : h.w;
   }
   n = a > 0.0 ? normalize(n) : vec3(0.0);
   gl_FragColor = vec4(n * 0.5 + 0.5, a * 0.25);
 }
 `;
 
-// 把雲畫進一張環景圖（立方體六個面，每面 size × size）。回傳 { texture, dispose }
-export function bakeClouds(renderer, size = 1024, seed = 20261112) {
-  const heaps = layout(seed);
+// 把雲畫進一張環景圖（立方體六個面，每面 size × size）。storm：畫風暴那一層（A 存深度）。回傳 { texture, dispose }
+export function bakeClouds(renderer, size = 1024, { seed = 20261112, storm = false } = {}) {
+  const heaps = storm ? stormLayout(seed + 7) : layout(seed);
   const W = 64, data = new Float32Array(W * heaps.length * 4);
   heaps.forEach((hp, i) => {
     const row = i * W * 4;
@@ -147,7 +182,7 @@ export function bakeClouds(renderer, size = 1024, seed = 20261112) {
   tex.minFilter = tex.magFilter = THREE.NearestFilter;
   tex.needsUpdate = true;
   const rt = new THREE.WebGLCubeRenderTarget(size, { format: THREE.RGBAFormat, type: THREE.UnsignedByteType, generateMipmaps: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false });
-  const mat = new THREE.ShaderMaterial({ vertexShader: bakeVert, fragmentShader: bakeFrag, uniforms: { uHeaps: { value: tex }, uCount: { value: heaps.length } }, side: THREE.BackSide, depthTest: false, depthWrite: false });
+  const mat = new THREE.ShaderMaterial({ vertexShader: bakeVert, fragmentShader: bakeFrag, uniforms: { uHeaps: { value: tex }, uCount: { value: heaps.length }, uDepth: { value: storm ? 1 : 0 } }, side: THREE.BackSide, depthTest: false, depthWrite: false });
   const scene = new THREE.Scene();
   scene.add(new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), mat));
   const cam = new THREE.CubeCamera(0.1, 10, rt);
