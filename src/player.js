@@ -343,26 +343,34 @@ export class Player {
     const { legs, arms, head } = this.mesh.userData;
     const ease = 1 - Math.exp(-dt * 14);
     const shift = idle ? 0.06 * Math.sin(T * 1.3) : 0;
-    legs[0].rotation.z += ((seat ? 1.36 : swing + shift) - legs[0].rotation.z) * ease;   // 坐著：兩條腿往前伸
-    legs[1].rotation.z += ((seat ? 1.36 : -swing - shift) - legs[1].rotation.z) * ease;
+    // 游泳：往前游時兩腿快速交替打水；停著踩水時兩腿慢慢一前一後地踩
+    const kick = swim ? (this.moving ? 0.42 * Math.sin(T * 13) : 0.32 * Math.sin(T * 3.2)) : 0;
+    const legSwing = swim ? kick : swing + shift;
+    legs[0].rotation.z += ((seat ? 1.36 : legSwing) - legs[0].rotation.z) * ease;   // 坐著：兩條腿往前伸
+    legs[1].rotation.z += ((seat ? 1.36 : -legSwing) - legs[1].rotation.z) * ease;
     const paddle = swim && !this.carry;
+    const tread = paddle && !this.moving;   // 停在水裡踩水：雙手在胸前左右撥水
     const loose = idle ? 0.10 * Math.sin(T * 1.7) : 0;
-    const armL = this.carry ? 1.15 : paddle ? 2.3 + stroke * (this.moving ? 0.9 : 0.25) : -swing * 1.05 + loose;
-    const armR = this.carry ? 1.15 : paddle ? 2.3 - stroke * (this.moving ? 0.9 : 0.25) : this.rod ? 0.95 : swing * 1.05 - loose;
+    const scull = 0.15 * Math.sin(T * 3.2);
+    const armL = this.carry ? 1.15 : tread ? 1.25 + scull : paddle ? 2.3 + stroke * 0.9 : -swing * 1.05 + loose;
+    const armR = this.carry ? 1.15 : tread ? 1.25 - scull : paddle ? 2.3 - stroke * 0.9 : this.rod ? 0.95 : swing * 1.05 - loose;
     arms[0].rotation.z += (armL - arms[0].rotation.z) * ease;
     arms[1].rotation.z += (armR - arms[1].rotation.z) * ease;
     // 手臂往兩旁張開多少：平常張成 A 字（手才不會插進裙子，也比較像設定圖），走路時多一點，跳起來時舉高
     for (const arm of arms) {
-      const side = arm.userData.side, busy = this.carry || paddle || (this.rod && side > 0);
-      const out = busy ? 0 : 0.48 + (air ? 0.8 : this.moving ? 0.08 : 0.04 * Math.sin(T * 1.7 + side));
+      const side = arm.userData.side, busy = this.carry || (paddle && !tread) || (this.rod && side > 0);
+      const out = tread ? 0.55 + 0.35 * Math.sin(T * 3.2) : busy ? 0 : 0.48 + (air ? 0.8 : this.moving ? 0.08 : 0.04 * Math.sin(T * 1.7 + side));
       arm.rotation.x += (-side * out - arm.rotation.x) * ease;
     }
     if (swim && !this.moving) this.phase += dt * 2.5;   // 停在水裡時踩水
     const walking = this.moving && !swim && !air;
     const slowEase = 1 - Math.exp(-dt * 8);
-    this.bob += ((walking ? Math.abs(Math.cos(this.phase)) * (run ? 0.075 : 0.05) : idle ? 0.012 * Math.sin(T * 2.2) : 0) - this.bob) * ease;
+    // 游泳時身體自己也在動：每划一下往前竄、浮起一點再沉下去，身體跟著划手左右翻；踩水時整個人慢慢上下浮沉
+    const swimBob = !swim ? 0 : this.moving ? 0.07 * Math.abs(Math.sin(this.phase)) - 0.035 : 0.06 * Math.sin(T * 1.9) + 0.02 * Math.sin(T * 6.4);
+    this.bob += ((walking ? Math.abs(Math.cos(this.phase)) * (run ? 0.075 : 0.05) : idle ? 0.012 * Math.sin(T * 2.2) : swimBob) - this.bob) * ease;
     this.lean += ((walking ? (run ? 0.17 : 0.06) : 0) - this.lean) * slowEase;
-    this.roll += ((walking ? stroke * 0.06 : idle ? 0.025 * Math.sin(T * 1.3) : 0) - this.roll) * ease;
+    const swimRoll = !swim ? 0 : this.moving ? stroke * 0.22 : 0.05 * Math.sin(T * 1.3);
+    this.roll += ((walking ? stroke * 0.06 : idle ? 0.025 * Math.sin(T * 1.3) : swimRoll) - this.roll) * ease;
     // 頭跟著鏡頭看的方向轉（轉不過去就看前面）；游泳時把頭抬起來
     let rel = this.lookYaw - this.yaw;
     rel = Math.atan2(Math.sin(rel), Math.cos(rel));
@@ -371,7 +379,8 @@ export class Player {
     const hp = Math.max(-0.5, Math.min(0.45, this.lookPitch * 0.7 + 0.05)) + this.tilt * 0.75 - this.lean * 0.6;
     head.rotation.y += (hy - head.rotation.y) * slowEase;
     head.rotation.z += (hp - head.rotation.z) * slowEase;
-    head.rotation.x += ((idle ? 0.06 * Math.sin(T * 0.9) : walking ? -stroke * 0.04 : 0) - head.rotation.x) * slowEase;
+    const swimHead = !swim ? 0 : this.moving ? -stroke * 0.16 : 0.08 * Math.sin(T * 0.8);   // 游的時候頭跟著划手往兩邊偏（換氣）
+    head.rotation.x += ((idle ? 0.06 * Math.sin(T * 0.9) : walking ? -stroke * 0.04 : swimHead) - head.rotation.x) * slowEase;
 
     const slow = 1 - Math.exp(-dt * 6);
     this.tilt += ((swim ? (this.moving ? 1.15 : 0.3) : 0) - this.tilt) * slow;

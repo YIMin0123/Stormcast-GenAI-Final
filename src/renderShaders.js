@@ -512,10 +512,33 @@ vec2 vortexY(vec2 xz) {
 }
 `;
 
+// 量水面（PROBE）：用海面的頂點程式本身，算某一點畫出來的水面高度（風浪、岸邊捲上來的浪、長浪、巨浪、漩渦、潮汐都算到），
+// 給游泳的人用。畫成 1×1 的一個點：(水面高度, 這一點被浪往旁邊推了多少 x, z, 1)
+const probeDecl = /* glsl */ `
+#ifdef PROBE
+varying vec4 vProbe;
+#endif
+`;
+const probeOut = /* glsl */ `
+#ifdef PROBE
+  {
+    vec2 xz0 = vec2(position.x * uMeshRot.x - position.z * uMeshRot.y, position.x * uMeshRot.y + position.z * uMeshRot.x) + uCenter;
+    vProbe = vec4(pos.y, pos.x - xz0.x, pos.z - xz0.y, 1.0);
+    gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+    gl_PointSize = 1.0;
+  }
+#endif
+`;
+export const probeFrag = /* glsl */ `
+varying vec4 vProbe;
+void main() { gl_FragColor = vProbe; }
+`;
+
 export const waterVert = /* glsl */ `
 #ifdef DIAG
 varying vec4 vDiagOut;
 #endif
+${probeDecl}
 ${bed}
 ${waveDecl}
 ${shore}
@@ -643,6 +666,7 @@ void main() {
 #endif
   vWorld = pos;
   gl_Position = projectionMatrix * viewMatrix * vec4(pos, 1.0);
+${probeOut}
 #ifdef DIAG
   // 診斷（?diag）：用這段頂點程式本身算幾個點，畫進一排 6 格的貼圖（position.y 是第幾格）：
   // 偶數格 (海面高度, FFT 浪, 岸邊浪, 漩渦)，奇數格 (巨浪, 颱風長浪, 取第幾層縮小版, 網格間距)
@@ -1696,6 +1720,7 @@ uniform float uLOff;        // 背景執行緒的格子跟畫面貼圖差的那�
 float bedLite(vec2 xz) { return textureLod(uBed16, clamp(xz / uL + 0.5, 0.0, 1.0), 0.0).r; }
 `;
 export const liteWaterVert = /* glsl */ `
+${probeDecl}
 ${bed}
 ${waveDecl}
 ${shore}
@@ -1758,6 +1783,7 @@ void main() {
   vWorld = pos;
   vTsu = vec3(0.0); vCurlN = vec3(0.0, 1.0, 0.0); vCurl = vec2(0.0);
   gl_Position = projectionMatrix * viewMatrix * vec4(pos, 1.0);
+${probeOut}
 }
 `;
 

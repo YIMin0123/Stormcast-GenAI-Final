@@ -7,6 +7,7 @@ import { BOAT_ORDER, CAN, newKit, shopItem } from './boatdata.js';
 import { Player } from './player.js';
 import { ShallowWater, SWE } from './shallow.js';
 import { makeSwimFx } from './swimfx.js';
+import { makeSurfaceProbe } from './swimProbe.js';
 import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SELL, setBoard, BOLLARDS, MoorLine, SHELF, setTag, LAMPS, UNLIT, WET, ROOM_LIGHTS, ROOM_LAMPS, setRoomLights, GLOW_KEEP, lightBulbs, updateFlags, updateScale, PORCHES, HOME_LAND } from './harbor.js';
 import { WORLD, THROW, DEVMODE, SHORE_WIND } from './config.js';
 import { HOME_U, placeInHome } from './homeGl.js';
@@ -1105,7 +1106,11 @@ let room = { id: 0, name: '', max: 30 };
 const player = new Player(SPAWN_W.x, SPAWN_W.z, SPAWN_W.yaw);
 // 人所在位置的水面高度。浪高每幀只向 GPU 讀一次（讀人腳下那一點），周圍幾步之內共用
 let swimWave = 0;
+// 人在水裡時，直接量人腳下那一點畫出來的水面（岸邊捲上來的浪、長浪、巨浪都算到），人才會跟著畫面上的浪起伏；量不到才用下面的估算
+const surfProbe = makeSurfaceProbe(renderer, { uniforms: shared, defines: () => water.material.defines, lite: LITE_SEA, floatRT: ocean.floatRT, camera: ocean.cam });
 function playerWater(x, z) {
+  const ph = surfProbe.at(x, z);
+  if (ph !== null) return ph;
   const d = -bedAt(x, z);
   const near = clamp(1 - d / 2.5, 0, 1);   // 岸邊沖上來的水（取平均高度）
   return swimWave * clamp((d - 0.3) / 7.7, 0, 1) * waveK(x, z) + tsuAt(x, z)
@@ -3558,6 +3563,7 @@ function advance(dt) {
     const cy = Math.cos(v.yaw), sy = Math.sin(v.yaw);
     // 人在水邊或水裡才需要知道浪高
     swimWave = !player.boat && bedAt(player.x, player.z) < -0.4 ? ocean.sampleHeight(player.x, player.z) : 0;
+    if (!player.boat && !player.fly && bedAt(player.x, player.z) < 0.5) surfProbe.request(player.x, player.z);
     player.look(v.yaw, v.pitch);
     walker.feet = player.boat ? null : player.y; walker.air = player.h > 0 || player.fly; walker.fly = player.fly;
     const rise = player.fly ? (keys.shift ? 1 : 0) - (keys.q ? 1 : 0) : 0;   // 飛行：Shift 上升、Q 下降、按住 R 衝刺
@@ -3912,7 +3918,7 @@ window.__sim = {
   get kit() { return kit; }, get myBoat() { return myBoat; }, get berth() { return berth; }, get room() { return room; }, get inGame() { return inGame; }, get time() { return time; },
   dev: (cmd, o = {}) => net.send({ t: 'dev', cmd, ...o }),   // 測試指令（伺服器開了開發模式才收）：event / calm / skip / money / fish / refresh（立刻刷新）
   sea, dangerAt, tsuAt, stormK, waterY, nearTank, nearCrack, get wrench() { return wrench; },
-  get wreck() { return wreck; }, climate, lightning, updateWeather, boatEnv, rain, bolt, spouts,
+  get wreck() { return wreck; }, surfProbe, climate, lightning, updateWeather, boatEnv, rain, bolt, spouts,
   get rainNow() { return rainNow; }, get gloom() { return gloom; }, lampLights, boatLight,
   updatePrompt, N, DX, L, ISLANDS, camera, scene, water, terrain, scenery, harbor, shared, spray, renderer,
   get mode() { return mode; }, NF, sun, placeSun, WIND, rays, bloom, aoPass, camBlockers, SIGHT, grass, SOLIDS, rockAt, composer, shallow, shallowNear, target, playerWater, updateSwim, toggleMap, drawMap,
