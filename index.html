@@ -12,16 +12,18 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Huninn&display=swap" />
   <style>
-    /* ---- 介面風格：日系清爽海洋。奶油白的卡片、海藍色是「選中／開著」、珊瑚橘是最重要的那顆按鈕 ---- */
+    /* ---- 介面風格：日系清爽海洋。水藍色的卡片與按鈕（不用白底）、深一點的海藍是「選中／開著」、珊瑚橘是最重要的那顆按鈕 ---- */
     :root {
-      --paper: rgba(255, 251, 242, 0.94);      /* 卡片底色 */
-      --paper-soft: rgba(255, 251, 242, 0.80); /* 浮在畫面上的小東西（聊天、按鍵提示） */
-      --ink: #23394d;                          /* 主要文字 */
-      --ink-2: #5d7387;                        /* 次要文字、說明 */
-      --line: rgba(35, 57, 77, 0.14);          /* 分隔線、按鈕外框 */
+      --paper: rgba(191, 232, 248, 0.94);      /* 卡片底色：水藍 */
+      --paper-soft: rgba(191, 232, 248, 0.84); /* 浮在畫面上的小東西（聊天、按鍵提示） */
+      --btn: #d6f1fb;                          /* 卡片上的按鈕、輸入框：淺一點的水藍 */
+      --edge: #8fd0ea;                         /* 卡片、按鈕的外框 */
+      --ink: #1f3a50;                          /* 主要文字 */
+      --ink-2: #3f6178;                        /* 次要文字、說明 */
+      --line: rgba(29, 111, 159, 0.22);        /* 分隔線、按鈕外框 */
       --sea: #2c8fc9;                          /* 海藍：開著、選中、進度 */
       --sea-d: #1d6f9f;
-      --sea-l: #e3f2fb;
+      --sea-l: #b3e2f5;                        /* 按鈕滑過去 */
       --coral: #ff7f5c;                        /* 珊瑚橘：主要按鈕、警告 */
       --coral-d: #e2603d;
       --sun: #ffc23c;                          /* 陽光黃：對準了、蓄力 */
@@ -32,9 +34,9 @@
     }
     html, body { margin: 0; height: 100%; overflow: hidden; background: #0e3550; color: var(--ink); font-family: var(--font); }
     canvas { display: block; }
-    .card { position: fixed; background: var(--paper); border: 2px solid #fff; border-radius: 16px; box-shadow: var(--shadow);
+    .card { position: fixed; background: var(--paper); border: 2px solid var(--edge); border-radius: 16px; box-shadow: var(--shadow);
       font-size: 14px; user-select: none; }
-    button { padding: 6px 14px; border-radius: 999px; border: 2px solid var(--line); background: #fff; color: var(--ink);
+    button { padding: 6px 14px; border-radius: 999px; border: 2px solid var(--line); background: var(--btn); color: var(--ink);
       font: inherit; cursor: pointer; white-space: nowrap; transition: background 0.12s, border-color 0.12s; }
     button:hover { background: var(--sea-l); border-color: rgba(44, 143, 201, 0.35); }
     /* 設定：平常收成左上角一顆小按鈕；打開後分成幾區，一區一件事 */
@@ -63,7 +65,7 @@
     .note { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--ink-2); }
     input[type=range] { width: 100%; margin: 0; accent-color: var(--sea); }
     .two { display: flex; gap: 6px; }
-    select { padding: 5px 8px; border-radius: 999px; border: 2px solid var(--line); background: #fff; color: var(--ink); font: inherit; }
+    select { padding: 5px 8px; border-radius: 999px; border: 2px solid var(--line); background: var(--btn); color: var(--ink); font: inherit; }
     /* 開關：亮起來（海藍）是開 */
     #sound, .sw { min-width: 54px; padding: 4px 12px; }
     #sound.on, .sw.on { background: var(--sea); border-color: var(--sea); color: #fff; }
@@ -93,7 +95,7 @@
     #keys dt { white-space: nowrap; }
     #keys dd { margin: 0; color: var(--ink-2); line-height: 1.5; font-size: 13px; }
     kbd { display: inline-block; min-width: 14px; padding: 0 5px; margin-right: 2px; border-radius: 6px; text-align: center;
-      font: inherit; font-size: 12px; line-height: 1.5; color: var(--ink); background: #fff; border: 1.5px solid var(--line); border-bottom-width: 3px; }
+      font: inherit; font-size: 12px; line-height: 1.5; color: var(--ink); background: var(--btn); border: 1.5px solid var(--line); border-bottom-width: 3px; }
     /* 準心：畫面正中央一個小白點，外面一圈淡淡的環。對準了可以互動的東西時，環變大、變成陽光黃 */
     #aim { position: fixed; left: 50%; top: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; display: none;
       pointer-events: none; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.7); box-shadow: 0 0 0 1px rgba(20, 50, 80, 0.3);
@@ -102,7 +104,7 @@
     #aim::after { content: ''; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px;
       border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(20, 50, 80, 0.5); }
     #throwBar { position: fixed; left: 50%; top: 50%; width: 96px; height: 8px; margin: 22px 0 0 -48px; display: none; pointer-events: none;
-      background: rgba(255, 251, 242, 0.55); border: 2px solid #fff; border-radius: 999px; overflow: hidden; box-shadow: 0 2px 6px rgba(10, 30, 50, 0.25); }
+      background: rgba(191, 232, 248, 0.6); border: 2px solid var(--edge); border-radius: 999px; overflow: hidden; box-shadow: 0 2px 6px rgba(10, 30, 50, 0.25); }
     #throwBar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--sun), var(--coral)); }
     /* 右上角的狀態列：房間、時間、風向、錢、餌。一格一格用圖示分開 */
     .hudRow { display: flex; align-items: center; gap: 14px; padding: 5px 14px; font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -131,7 +133,7 @@
     #bar { position: relative; height: 16px; margin: 8px 0 6px; border-radius: 999px; overflow: hidden; background: rgba(35, 57, 77, 0.14); }
     #barSafe { position: absolute; left: 0; width: 30%; top: 0; bottom: 0; background: rgba(61, 187, 122, 0.6); border-radius: 999px; }
     #barMark { position: absolute; top: -1px; bottom: -1px; width: 6px; margin-left: -3px; background: var(--ink); border-radius: 3px;
-      box-shadow: 0 0 0 1.5px #fff; }
+      box-shadow: 0 0 0 1.5px var(--btn); }
     #prog { height: 6px; margin: 0 0 6px; border-radius: 999px; overflow: hidden; background: rgba(35, 57, 77, 0.14); }
     #progFill { height: 100%; width: 0; background: var(--sea); }
     #barFill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--good); border-radius: 999px; }
@@ -157,21 +159,21 @@
     #mapCv { display: block; width: min(560px, 74vh); height: min(560px, 74vh); border-radius: 10px; }
     #mapNote { margin-top: 8px; text-align: center; font-size: 13px; color: var(--ink-2); }
     #mapX { position: absolute; top: -12px; right: -12px; width: 40px; height: 40px; padding: 0; font-size: 18px; line-height: 1;
-      background: var(--coral); border-color: #fff; color: #fff; box-shadow: var(--shadow); }
+      background: var(--coral); border-color: var(--btn); color: #fff; box-shadow: var(--shadow); }
     #mapX:hover { background: var(--coral-d); }
     /* 進遊戲前：填名字、挑房間。背景是半透明的，看得到後面的港口。卡片比畫面高時可以捲，不會被切掉 */
     #menu, #net { position: fixed; inset: 0; display: none; padding: 12px; box-sizing: border-box; overflow-y: auto;
       background: rgba(14, 53, 80, 0.38); z-index: 40; }
     #menu .card, #net .card { position: static; margin: auto; padding: 24px 30px 22px; width: min(380px, calc(100vw - 32px)); box-sizing: border-box; text-align: center; user-select: auto; }
-    #menu h1 { margin: 0 0 4px; font-size: 34px; font-weight: 400; letter-spacing: 3px; color: var(--sea); text-shadow: 0 2px 0 #fff, 0 4px 0 rgba(44, 143, 201, 0.18); }
+    #menu h1 { margin: 0 0 4px; font-size: 34px; font-weight: 400; letter-spacing: 3px; color: var(--sea); text-shadow: 0 2px 0 var(--btn), 0 4px 0 rgba(29, 111, 159, 0.2); }
     #menu h2 { margin: 0 0 4px; font-size: 22px; font-weight: 400; letter-spacing: 2px; color: var(--sea-d); }
     #menu p { margin: 0 0 16px; color: var(--ink-2); font-size: 14px; }
     /* 選角色：會轉的 3D 預覽＋兩顆切換鈕 */
-    #lookView { display: block; width: 100%; height: 210px; margin: -4px 0 6px; border-radius: 12px; background: radial-gradient(ellipse 46% 40% at 50% 78%, #d4eaf7 0 40%, rgba(212, 234, 247, 0) 100%); }
+    #lookView { display: block; width: 100%; height: 210px; margin: -4px 0 6px; border-radius: 12px; background: radial-gradient(ellipse 46% 40% at 50% 78%, #d6f1fb 0 40%, rgba(214, 241, 251, 0) 100%); }
     #lookPick { justify-content: center; margin-bottom: 14px; }
     #lookPick button { padding: 6px 18px; font-size: 15px; }
     #nameInput { width: 100%; box-sizing: border-box; padding: 9px 12px; border-radius: 999px; font: inherit; font-size: 16px;
-      border: 2px solid var(--line); background: #fff; color: var(--ink); text-align: center; outline: none; }
+      border: 2px solid var(--line); background: var(--btn); color: var(--ink); text-align: center; outline: none; }
     #nameInput:focus { border-color: var(--sea); }
     #nameGo { width: 100%; margin-top: 12px; padding: 10px; font-size: 17px; letter-spacing: 2px;
       background: var(--coral); border-color: var(--coral); color: #fff; box-shadow: 0 4px 0 var(--coral-d); }
@@ -184,7 +186,7 @@
     button.room b { font-size: 18px; font-weight: 400; color: var(--sea-d); }
     button.room .w { color: var(--ink-2); font-size: 13px; }
     button.room .n { margin-left: auto; font-variant-numeric: tabular-nums; }
-    button.room:disabled { opacity: 0.45; cursor: default; background: #fff; }
+    button.room:disabled { opacity: 0.45; cursor: default; background: var(--btn); }
     #lobbyBack { margin-top: 12px; padding: 4px 10px; font-size: 13px; color: var(--ink-2); background: none; border-color: transparent; text-decoration: underline; }
     #net { z-index: 50; }
     #netMsg { margin: 0; color: var(--ink); font-size: 15px; line-height: 1.7; }
@@ -193,7 +195,7 @@
     #chat { position: fixed; left: 12px; bottom: 12px; width: min(380px, calc(100vw - 24px)); font-size: 13px; z-index: 20; pointer-events: none; }
     #chatLog { max-height: 170px; overflow: hidden; display: flex; flex-direction: column; gap: 4px; }
     #chat.open #chatLog { max-height: 260px; overflow-y: auto; scrollbar-width: thin; pointer-events: auto;
-      background: rgba(255, 251, 242, 0.55); border-radius: 12px; padding: 6px; }
+      background: rgba(191, 232, 248, 0.55); border-radius: 12px; padding: 6px; }
     #chat .msg { align-self: flex-start; max-width: 100%; box-sizing: border-box; padding: 3px 11px; border-radius: 12px; background: var(--paper-soft);
       color: var(--ink); line-height: 1.5; word-break: break-word; transition: opacity 0.6s; box-shadow: 0 1px 4px rgba(10, 30, 50, 0.15); }
     #chat .msg b { color: var(--sea-d); font-weight: 400; }
@@ -210,15 +212,15 @@
     #chatPresets { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
     #chatPresets button { padding: 3px 10px; font-size: 13px; }
     #chatInput { width: 100%; box-sizing: border-box; padding: 7px 14px; border-radius: 999px; font: inherit;
-      border: 2px solid var(--sea); background: #fff; color: var(--ink); outline: none; }
+      border: 2px solid var(--sea); background: var(--btn); color: var(--ink); outline: none; }
     #chatHint { display: none; }
     /* ---- 手機觸控（body 上有 touch 這個 class 才生效；只支援橫放） ---- */
     #touch { display: none; position: fixed; inset: 0; z-index: 15; pointer-events: none; }
     #touch button { pointer-events: auto; touch-action: none; }
     .tBtn { position: absolute; width: 66px; height: 66px; padding: 0; border-radius: 50%; color: var(--ink);
       display: flex; align-items: center; justify-content: center;
-      background: rgba(255, 251, 242, 0.86); border: 2.5px solid #fff; box-shadow: 0 3px 0 rgba(20, 60, 90, 0.2), 0 6px 14px rgba(10, 30, 50, 0.22); }
-    .tBtn:hover { background: rgba(255, 251, 242, 0.86); }
+      background: rgba(191, 232, 248, 0.88); border: 2.5px solid var(--edge); box-shadow: 0 3px 0 rgba(20, 60, 90, 0.2), 0 6px 14px rgba(10, 30, 50, 0.22); }
+    .tBtn:hover { background: rgba(191, 232, 248, 0.88); }
     .tBtn.on { background: var(--sea); color: #fff; transform: translateY(2px); box-shadow: 0 1px 0 rgba(20, 60, 90, 0.2); }
     #tAct { right: calc(18px + env(safe-area-inset-right)); bottom: 100px; }
     #tAct.hit { border-color: var(--sun); box-shadow: 0 0 0 4px rgba(255, 194, 60, 0.45), 0 6px 14px rgba(10, 30, 50, 0.22); }
@@ -227,12 +229,12 @@
     #tThrow { right: calc(98px + env(safe-area-inset-right)); bottom: 118px; }
     #tBar { position: absolute; top: 54px; right: calc(12px + env(safe-area-inset-right)); display: flex; gap: 8px; }
     #tBar button { width: 44px; height: 44px; padding: 0; line-height: 0; display: flex; align-items: center; justify-content: center;
-      background: var(--paper); border: 2px solid #fff; color: var(--ink); box-shadow: 0 2px 0 rgba(20, 60, 90, 0.16), 0 4px 10px rgba(10, 30, 50, 0.2); }
+      background: var(--paper); border: 2px solid var(--edge); color: var(--ink); box-shadow: 0 2px 0 rgba(20, 60, 90, 0.16), 0 4px 10px rgba(10, 30, 50, 0.2); }
     #tBar .ic { width: 24px; height: 24px; }
     .tBtn .ic { width: 32px; height: 32px; }
     #tFish .ic { width: 40px; height: 40px; }
     #tBase { display: none; position: absolute; width: 124px; height: 124px; margin: -62px 0 0 -62px; border-radius: 50%;
-      background: rgba(255, 255, 255, 0.22); border: 2.5px solid rgba(255, 255, 255, 0.7); }
+      background: rgba(191, 232, 248, 0.25); border: 2.5px solid rgba(143, 208, 234, 0.85); }
     #tKnob { position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%;
       background: var(--paper); box-shadow: 0 3px 8px rgba(10, 30, 50, 0.3); }
     #tRotate { display: none; position: fixed; inset: 0; z-index: 100; align-items: center; justify-content: center;

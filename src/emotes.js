@@ -107,12 +107,12 @@ export class EmoteWheel {
     ring(ACTIONS.map((a) => [a.id, a.name]), R_OUT0, R_OUT1, 'action', 18);
     const hub = document.createElementNS(SVGNS, 'circle');
     hub.setAttribute('cx', C); hub.setAttribute('cy', C); hub.setAttribute('r', R_IN0 - 8);
-    hub.setAttribute('fill', 'rgba(255,251,242,0.96)'); hub.setAttribute('stroke', '#fff'); hub.setAttribute('stroke-width', 3);
+    hub.setAttribute('fill', 'rgba(191,232,248,0.96)'); hub.setAttribute('stroke', '#8fd0ea'); hub.setAttribute('stroke-width', 3);
     this.label = document.createElementNS(SVGNS, 'text');
     this.label.setAttribute('x', C); this.label.setAttribute('y', C + 6);
-    this.label.setAttribute('text-anchor', 'middle'); this.label.setAttribute('font-size', 16); this.label.setAttribute('fill', '#5d7387');
+    this.label.setAttribute('text-anchor', 'middle'); this.label.setAttribute('font-size', 16); this.label.setAttribute('fill', '#3f6178');
     this.dot = document.createElementNS(SVGNS, 'circle');
-    this.dot.setAttribute('r', 7); this.dot.setAttribute('fill', '#ff7f5c'); this.dot.setAttribute('stroke', '#fff'); this.dot.setAttribute('stroke-width', 2.5);
+    this.dot.setAttribute('r', 7); this.dot.setAttribute('fill', '#ff7f5c'); this.dot.setAttribute('stroke', '#d6f1fb'); this.dot.setAttribute('stroke-width', 2.5);
     svg.append(hub, this.label, this.dot);
     document.body.appendChild(root);
     this.isOpen = false;
@@ -167,10 +167,10 @@ export class EmoteWheel {
   _paint() {
     for (const it of this.items) {
       const on = it === this.hover;
-      it.path.setAttribute('fill', on ? '#2c8fc9' : it.kind === 'face' ? 'rgba(232,244,251,0.92)' : 'rgba(255,251,242,0.90)');
-      it.path.setAttribute('stroke', '#fff');
+      it.path.setAttribute('fill', on ? '#2c8fc9' : it.kind === 'face' ? 'rgba(168,220,242,0.92)' : 'rgba(191,232,248,0.90)');
+      it.path.setAttribute('stroke', '#8fd0ea');
       it.path.setAttribute('stroke-width', on ? 3 : 2);
-      it.text.setAttribute('fill', on ? '#fff' : '#23394d');
+      it.text.setAttribute('fill', on ? '#fff' : '#1f3a50');
     }
     this.label.textContent = this.hover ? this.hover.name : this.hint ?? '移動滑鼠選擇';
     // 選的那個點：還沒移開中心時不畫（不然會壓在中間的字上）

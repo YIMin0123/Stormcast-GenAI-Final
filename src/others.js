@@ -15,7 +15,7 @@ function nameTag(name) {
   const w = Math.ceil(ctx.measureText(name).width) + 28, h = 44;
   cv.width = w; cv.height = h;
   ctx.font = font;
-  ctx.fillStyle = 'rgba(255, 251, 242, 0.88)';   // 跟介面的卡片同一種奶油白
+  ctx.fillStyle = 'rgba(191, 232, 248, 0.9)';   // 跟介面的卡片同一種水藍
   ctx.beginPath(); ctx.roundRect(0, 0, w, h, h / 2); ctx.fill();
   ctx.fillStyle = '#1d6f9f'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText(name, w / 2, h / 2 + 1);
