@@ -3,6 +3,7 @@ import { SEA_FLOOR, ISLANDS } from './terrain.js';
 import { homeGlsl } from './homeGl.js';
 import { TSU, CURL, EBB, VORTEX, SWELL_K, SEA_LV, TSU_H } from './weather.js';
 import { RIVER } from './lowpoly/havenPlan.js';
+import { SHORE_WIND } from './config.js';
 
 // 遠景的薄霧：越遠越淡，約 800 公尺外就融進天色裡（更遠的樹和石頭乾脆不畫）
 export const HAZE = 1 / 480;
@@ -323,6 +324,23 @@ const shore = /* glsl */ `
 uniform sampler2D uShore;   // 離岸距離（公尺，最多 96）
 float shoreDist(vec2 xz) { return textureLod(uShore, clamp(xz / uL + 0.5, 0.0, 1.0), 0.0).r; }
 ${shoreWaves}
+uniform vec4 uShoreW;    // (風往哪邊走 x, z, 岸浪斜推的參考點 x, z)
+uniform float uShoreP;   // 參考點跟著鏡頭換位置時累積的相位（浪才不會跳）
+// 這段岸面迎不迎風，回傳岸浪大小的倍數：正迎風 1、側面約三成、背風面只剩一點點。
+// 「往海那一面」＝離岸距離變大的方向；它跟風吹來的方向越一致，浪越大
+// n：往海那一面的方向（不必是單位長度）；k：這個方向有多可靠（0 = 看不出來，當側面）
+float shoreFaceDir(vec2 n, float k) {
+  float f = -dot(n, uShoreW.xy) / max(length(n), 1e-4) * k;
+  return mix(${SHORE_WIND.lee.toFixed(3)}, 1.0, smoothstep(${SHORE_WIND.from.toFixed(3)}, ${SHORE_WIND.to.toFixed(3)}, f));
+}
+float shoreFace(vec2 xz, float sd) {
+  if (sd > 70.0) return 1.0;
+  const float D = ${SHORE_WIND.probe.toFixed(1)};
+  vec2 n = vec2(shoreDist(xz + vec2(D, 0.0)) - shoreDist(xz - vec2(D, 0.0)), shoreDist(xz + vec2(0.0, D)) - shoreDist(xz - vec2(0.0, D)));
+  return shoreFaceDir(n, smoothstep(0.2, 1.0, length(n)));
+}
+// 浪順著風斜推：加在 shorePhase 上，側面的浪頭就沿著岸往下風處走，不是正正地往岸上壓
+float shoreTilt(vec2 xz) { return uShoreP - ${SHORE_WIND.tilt.toFixed(3)} * dot(xz - uShoreW.zw, uShoreW.xy); }
 `;
 
 // 淺水模擬的結果：鏡頭附近一塊方形範圍。範圍邊緣漸漸交還給上面那組公式
@@ -587,9 +605,9 @@ void main() {
   float swY = uSwell > 0.01 ? swellK(danger, shel) * longSwell(xz).x * smoothstep(70.0, 25.0, spacing) : 0.0;
 
   // 岸邊：一道道朝著岸捲過來的浪；水面隨著每一拍漲上沙灘、再退回去
-  float ph = shorePhase(xz, uTime), expo = shoreExpo(shel, SHORE_SEA);
-  float lift = runup(ph, expo) * (1.0 - smoothstep(0.0, 2.5, -bedH));
   float sd = shoreDist(xz), pre;
+  float ph = shorePhase(xz, uTime) + shoreTilt(xz), expo = shoreExpo(shel, SHORE_SEA) * shoreFace(xz, sd);
+  float lift = runup(ph, expo) * (1.0 - smoothstep(0.0, 2.5, -bedH));
   // 網格比浪還粗的遠處不抬（那裡只畫浪花的線條）
 #ifdef W_SWL
   float swl = sd < 66.0 ? swell(sd, ph, xz, expo, pre).x * smoothstep(6.0, 2.2, spacing) : 0.0;
@@ -854,7 +872,7 @@ vec3 underSurface(vec3 N, vec3 V, float foam) {
 void main() {
   float bedH = bedAt(vWorld.xz);
   float shel = shelterAt(vWorld.xz);
-  float ph = shorePhase(vWorld.xz, uTime), expo = shoreExpo(shel, SHORE_SEA);
+  float ph = shorePhase(vWorld.xz, uTime) + shoreTilt(vWorld.xz), expo = shoreExpo(shel, SHORE_SEA) * shoreFace(vWorld.xz, shoreDist(vWorld.xz));
   // 淺水模擬範圍內用模擬出來的水深
   vec2 suv;
   float win = sweWin(vWorld.xz, suv);
@@ -1184,12 +1202,12 @@ void main() {
     // 沖上沙灘的那層薄水：浪剛到的時候整片是白的，退下去的時候散成一絲一絲
     float age = swashAge(ph);
     float fresh = 1.0 - 0.75 * smoothstep(0.12, 0.85, age);
-    cov += (1.0 - win) * (0.5 + 0.5 * calm) * (0.25 + 0.75 * fresh)
+    cov += (1.0 - win) * (0.15 + 0.85 * calm) * (0.25 + 0.75 * fresh)
          * (0.95 * smoothstep(0.07, 0.01, depth) * (0.6 + 0.4 * rag) + 0.46 * smoothstep(0.8, 0.05, depth) * (0.35 + 0.65 * rag) * (0.25 + 0.75 * holes))
          * (0.3 + 0.7 * smoothstep(0.28, 0.62, shNoise(vWorld.xz * 0.13 + vec2(uTime * 0.05, 1.7))));   // 沖上岸的白邊一段一段的（斷口沿著岸慢慢移動）
   }
   cov += win * (0.72 * sw.a + 0.4 * smoothstep(0.85, 1.3, sw.a));
-  cov += smoothstep(0.07, 0.0, depth) * (0.15 + 0.6 * ft) * (1.0 - 0.6 * smoothstep(0.3, 0.9, swashAge(ph)));   // 最前緣一圈碎泡沫（退潮時淡掉）
+  cov += smoothstep(0.07, 0.0, depth) * (0.15 + 0.6 * ft) * (1.0 - 0.6 * smoothstep(0.3, 0.9, swashAge(ph))) * (0.3 + 0.7 * smoothstep(0.05, 0.4, expo));   // 最前緣一圈碎泡沫（退潮時淡掉；背風面只剩一點）
   cov += vcov;
   float tBoil = 0.0;
   if (uTsu.w > 0.0 && tDng > 0.01) {
@@ -1488,8 +1506,10 @@ void main() {
     N = normalize(N - vec3(bg.x, 0.0, bg.y) * near);
   }
   // 濕沙：浪打得到的範圍顏色比較深；這一拍剛被水漫過的地方最深、還會反光
-  float expo = shoreExpo(shelterAt(q), SHORE_SEA);
-  float lift = runup(shorePhase(q, uTime), expo);
+  // 只有水邊才要分迎風、背風；地形不讀離岸距離圖（手機貼圖單元只有 16 個），改看這一面坡往哪邊低下去
+  float expo = shoreExpo(shelterAt(q), SHORE_SEA) * (h < 2.0 ? shoreFaceDir(vN.xz, smoothstep(0.02, 0.12, length(normalize(vN).xz))) : 1.0);
+  float tiltQ = shoreTilt(q);
+  float lift = runup(shorePhase(q, uTime) + tiltQ, expo);
   float reach = 0.60 * expo;
   // 乾沙和濕沙的交界是一條看得出來、彎彎曲曲的線（浪上一次漲到最高的地方），從那裡往水邊越來越深
   float hh = h + 0.12 * (vnoise(q * 0.45 + 4.0) - 0.5);
@@ -1499,7 +1519,7 @@ void main() {
   float lace = 0.0;   // 水退下去之後留在濕沙上的泡沫
   {
     // 這一拍的浪沖到最高之後往下退：退過的地方沙還是亮的（反光），上面留著一層網狀的泡沫，幾秒內一絲一絲消掉
-    float sc = (shorePhase(q, uTime) + SH_K0) / 6.2832 - 0.25, sa = fract(sc);
+    float sc = (shorePhase(q, uTime) + tiltQ + SH_K0) / 6.2832 - 0.25, sa = fract(sc);
     float peak = (0.05 + 0.45 * (0.75 + 0.5 * shHash(floor(sc)))) * expo;
     float left = (1.0 - smoothstep(peak - 0.05, peak, hl)) * smoothstep(0.16, 0.24, sa);
     wetNow = max(wetNow, left * (1.0 - smoothstep(0.35, 0.95, sa)));
@@ -1648,7 +1668,7 @@ uniform vec2 uDiagP;
 void main() {
   vec2 xz = uDiagP;
   float bedH = bedAt(xz), shel = shelterAt(xz), dg = dangerAt(xz), sd = shoreDist(xz);
-  float ph = shorePhase(xz, uTime), expo = shoreExpo(shel, SHORE_SEA);
+  float ph = shorePhase(xz, uTime) + shoreTilt(xz), expo = shoreExpo(shel, SHORE_SEA) * shoreFace(xz, sd);
   float lift = runup(ph, expo) * (1.0 - smoothstep(0.0, 2.5, -bedH));
   float pre;
   float sw = sd < 66.0 ? swell(sd, ph, xz, expo, pre).x : 0.0;
@@ -1728,7 +1748,7 @@ void main() {
     crest = strong * (smoothstep(0.55, 0.95, ti.y) * (0.35 + 0.65 * tsuBreak(dot(xz, vec2(uTsu.y, -uTsu.x)), ti.z, tK, uTime))
                     + 0.8 * step(ti.x, 0.0) * exp(0.85 * ti.x) * smoothstep(0.85, 0.45, tK));
   }
-  float ph = shorePhase(xz, uTime), expo = shoreExpo(shel, SHORE_SEA);
+  float ph = shorePhase(xz, uTime) + shoreTilt(xz), expo = shoreExpo(shel, SHORE_SEA) * (bedH > -2.5 ? shoreFace(xz, shoreDist(xz)) : 1.0);   // 只有會漲上岸的淺水才要分迎風、背風
   float lift = runup(ph, expo) * (1.0 - smoothstep(0.0, 2.5, -bedH));
   vec3 pos = vec3(xz.x + d.x, d.y + big.x + vY.x + swY + lift, xz.y + d.z);
   vP0 = xz;
@@ -1779,7 +1799,7 @@ void main() {
   float bedH = bedLite(vWorld.xz);
   float sd = shoreDist(vWorld.xz);
   float shel = vInfo.w, amp = vInfo.x, ws = vInfo.y;
-  float ph = shorePhase(vWorld.xz, uTime), expo = shoreExpo(shel, SHORE_SEA);
+  float ph = shorePhase(vWorld.xz, uTime) + shoreTilt(vWorld.xz), expo = shoreExpo(shel, SHORE_SEA) * shoreFace(vWorld.xz, sd);
   float depth = runup(ph, expo) * (1.0 - smoothstep(0.0, 2.5, -bedH)) - bedH + vBig.x;
   if (depth < 0.004) discard;
   vec3 toCam = cameraPosition - vWorld;
@@ -1849,7 +1869,7 @@ void main() {
     float line = smoothstep(0.38, 0.5, f) * smoothstep(0.66, 0.5, f) * smoothstep(46.0, 26.0, sd) * smoothstep(13.0, 7.0, sd) * (0.35 + 0.65 * shHash(floor(th)));
     float trail = smoothstep(0.5, 0.62, f) * (1.0 - smoothstep(0.62, 1.0, f)) * smoothstep(12.0, 5.0, sd) * 0.6;
     cov += calm * (0.9 * line + trail) * (0.6 + 0.4 * ft);
-    cov += smoothstep(0.30, 0.02, depth) * (0.35 + 0.6 * ft) * (0.5 + 0.5 * calm) * (1.0 - 0.6 * smoothstep(0.3, 0.9, swashAge(ph)));
+    cov += smoothstep(0.30, 0.02, depth) * (0.35 + 0.6 * ft) * (0.15 + 0.85 * calm) * (1.0 - 0.6 * smoothstep(0.3, 0.9, swashAge(ph)));
   }
   cov += vFx.x * (0.75 + 0.5 * ft);                                                    // 巨浪的浪頭、背面的白水
   if (uVortexOn > 0.5) {

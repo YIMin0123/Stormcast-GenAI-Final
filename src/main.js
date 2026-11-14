@@ -8,7 +8,7 @@ import { Player } from './player.js';
 import { ShallowWater, SWE } from './shallow.js';
 import { makeSwimFx } from './swimfx.js';
 import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SELL, setBoard, BOLLARDS, MoorLine, SHELF, setTag, LAMPS, UNLIT, WET, ROOM_LIGHTS, ROOM_LAMPS, setRoomLights, GLOW_KEEP, lightBulbs, updateFlags, updateScale, PORCHES, HOME_LAND } from './harbor.js';
-import { WORLD, THROW, DEVMODE } from './config.js';
+import { WORLD, THROW, DEVMODE, SHORE_WIND } from './config.js';
 import { HOME_U, placeInHome } from './homeGl.js';
 import { HOME_YAW, toWorld, toLocal, headingToWorld, havenToLocal, HAVEN } from './frame.js';
 import { makeSeascape, HAVEN_LAND, HAVEN_GROUND } from './haven.js';
@@ -566,6 +566,7 @@ const shared = {
   uBed16: { value: LITE_SEA ? makeBed16() : null }, uRipTex: { value: LITE_SEA ? makeRippleTexture() : null },
   uDetail: { value: groundDetail.detail }, uDetailN: { value: groundDetail.normal },
   uWindT: WIND.t, uWindAmp: WIND.amp, uWindDir: WIND.dir,
+  uShoreW: { value: new THREE.Vector4(Math.cos(WAVE_ANGLE), Math.sin(WAVE_ANGLE), 0, 0) }, uShoreP: { value: 0 },   // 岸邊的浪跟著風向（見 renderShaders.js 的 shoreFace、shoreTilt）
   uUnder: { value: 0 }, uCamDepth: { value: 0 },
   uReflTex: { value: null }, uReflMat: { value: new THREE.Matrix4() }, uReflOn: { value: 0 },
   uReflPass: REFL, uReflY: { value: 0 },
@@ -2195,6 +2196,8 @@ function throwTick(dt) {
 
 // 畫面下方的提示：能做什麼就顯示什麼
 let promptText = null, aimHit = false;
+const _windF = new THREE.Vector3(), windArrowEl = document.querySelector('#hWind svg');
+let windArrowDeg = null;
 function updatePrompt() {
   let text = '';
   const a = aimTarget(), kind = a ? a.kind : '';
@@ -2242,6 +2245,13 @@ function updatePrompt() {
     $('hBoat').textContent = boat.aground ? '擱淺' : `${(Math.abs(boat.speed) * 1.944).toFixed(1)} 節`;
   }
   $('hClock').textContent = climate.label;
+  {
+    // 風向箭頭：指向風吹過去的方向，以玩家現在看的方向為「上」
+    camera.getWorldDirection(_windF);
+    const fl = Math.hypot(_windF.x, _windF.z) || 1, fx = _windF.x / fl, fz = _windF.z / fl;
+    const a = Math.round(Math.atan2(WDX * -fz + WDZ * fx, WDX * fx + WDZ * fz) * 180 / Math.PI);
+    if (a !== windArrowDeg) { windArrowDeg = a; windArrowEl.style.transform = `rotate(${a}deg)`; }
+  }
   $('hRoom').textContent = inGame ? `${room.name}　${others.count + 1} 人` : '';
   // 準備合併：倒數到最後半秒畫面先暗下來（換過去之後再亮起來）
   if (mergeAt && !wreck && !drown) {
@@ -2698,6 +2708,12 @@ function updateWeather(dt) {
   WDX = Math.cos(WAVE_ANGLE + turn); WDZ = Math.sin(WAVE_ANGLE + turn);
   WIND.dir.value.set(WDX, WDZ);
   shared.uWaveRot.value.set(Math.cos(turn), Math.sin(turn));
+  {
+    // 岸浪斜推的參考點跟著鏡頭走；換位置時把相位補回來，浪才不會跳
+    const sw = shared.uShoreW.value, cx = camera.position.x, cz = camera.position.z;
+    shared.uShoreP.value -= SHORE_WIND.tilt * ((cx - sw.z) * WDX + (cz - sw.w) * WDZ);
+    sw.set(WDX, WDZ, cx, cz);
+  }
   ocean.setTurn(turn);
   turnShelter(turn);
   tideNow = tideAt(climate.day, climate.hour);

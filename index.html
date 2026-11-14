@@ -87,6 +87,8 @@
     #hSpeed, #hShip { display: none; margin-left: 18px; }
     #hud b.low { color: #ff8a70; }
     #hClock { margin-right: 18px; color: #dccba6; }
+    #hWind { margin-right: 18px; color: #cfe4f2; white-space: nowrap; }
+    #hWind svg { width: 15px; height: 15px; margin-left: 4px; vertical-align: -2px; }
     #fade { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; }
     #toast { left: 50%; bottom: 176px; transform: translateX(-50%); padding: 7px 16px; font-size: 14px;
       color: #ffe9a8; display: none; white-space: nowrap; }
@@ -203,7 +205,7 @@
     body.touch #panel { left: calc(12px + env(safe-area-inset-left)); }
     body.touch #panel[open] { z-index: 25; }   /* 打開時蓋在聊天訊息和按鈕上面 */
     body.touch #hud { right: calc(12px + env(safe-area-inset-right)); font-size: 12px; padding: 6px 10px; }
-    body.touch #hRoom, body.touch #hClock { margin-right: 10px; }
+    body.touch #hRoom, body.touch #hClock, body.touch #hWind { margin-right: 10px; }
     body.touch #prompt { bottom: 10px; font-size: 13px; padding: 6px 14px; max-width: 42vw; }
     body.touch #stam { bottom: 50px; }
     body.touch #toast { top: 92px; bottom: auto; font-size: 13px; max-width: 44vw; }
@@ -303,7 +305,7 @@
     </div>
     <div class="sec main"><button id="reset">離開房間（回到大廳）</button><p class="note">錢、船、裝備和還沒賣的魚會留著，下次進房從港口出發（每兩天早上 8 點全部刷新）</p></div>
   </details>
-  <div id="hud" class="card"><span id="hRoom"></span><span id="hClock"></span><b id="hMoney" title="金錢">$0</b><span id="hShip"><i data-ic="boat" title="船的耐久"></i><b id="hHp">100%</b>　<i data-ic="fuel" title="燃油"></i><b id="hFuel">0</b></span><span id="hSpeed"><i data-ic="speed" title="船速"></i><b id="hBoat">0.0 節</b></span></div>
+  <div id="hud" class="card"><span id="hRoom"></span><span id="hClock"></span><span id="hWind" title="風向：箭頭指向風吹過去的方向（跟著你的視角轉）">風<svg viewBox="0 0 24 24"><path d="M12 2.5l6 8.5h-4v10.5h-4V11H6z" fill="currentColor"/></svg></span><b id="hMoney" title="金錢">$0</b><span id="hShip"><i data-ic="boat" title="船的耐久"></i><b id="hHp">100%</b>　<i data-ic="fuel" title="燃油"></i><b id="hFuel">0</b></span><span id="hSpeed"><i data-ic="speed" title="船速"></i><b id="hBoat">0.0 節</b></span></div>
   <div id="fishui" class="card"><div id="fishLabel"></div><div id="bar"><div id="barSafe"></div><div id="barFill"></div><div id="barMark"></div></div><div id="prog"><div id="progFill"></div></div><div id="strain">釣竿負荷<div id="strainBar"><div id="strainFill"></div></div></div><div id="fishHint"></div></div>
   <div id="toast" class="card"></div>
   <div id="aim"></div>

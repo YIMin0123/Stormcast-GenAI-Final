@@ -117,6 +117,7 @@ export function makeRealSea(renderer, { heightAt, quays = [], waveAngle = Math.P
     uLK: { value: new THREE.Vector2() }, uLOff: { value: 0.5 / 128 - 0.5 / ocean.N }, uVortexOn: { value: 0 },
     uBed16: { value: bed16 }, uRipTex: { value: lite ? makeRippleTexture() : null },
     uWindT: { value: 0 }, uWindAmp: { value: 0.5 }, uWindDir: { value: new THREE.Vector2(Math.cos(waveAngle), Math.sin(waveAngle)) },
+    uShoreW: { value: new THREE.Vector4(Math.cos(waveAngle), Math.sin(waveAngle), 0, 0) }, uShoreP: { value: 0 },
     uUnder: { value: 0 }, uCamDepth: { value: 0 },
     uReflTex: { value: null }, uReflMat: { value: new THREE.Matrix4() }, uReflOn: { value: 0 },
     uReflPass: { value: 0 }, uReflY: { value: 0 },
