@@ -247,6 +247,17 @@ export function riverBed(x, z, pad = 0) {
   return RIV.falls.some((f) => Math.hypot(x - f.bx, z - f.bz) < RV.basin.r + pad);
 }
 
+// 山上的水面：這一點是小河、湧泉池或瀑布底的水潭的話，回傳水面的高度；不是就 null（釣魚用）
+export function riverSurface(x, z) {
+  const q = riverAt(x, z);
+  if (!q) return null;
+  const P0 = RIV.pts[0];
+  if (Math.hypot(x - P0.x, z - P0.z) < RV.spring.r - 0.3) return P0.y + RV.water.depth;
+  if (q.d < RV.water.half && skyEdge(x, z) > 0) return q.y + RV.water.depth;
+  for (const f of RIV.falls) if (Math.hypot(x - f.bx, z - f.bz) < RV.basin.r) return f.bottom + RV.water.depth;
+  return null;
+}
+
 // ==== 天窗跳水台 ====
 // 平台的位置（第一次問的時候才算，要用到地面的高度）：{ x, z 根的那一頭的中點, ux / uz 往洞中心伸出去的方向, len 全長, half 半寬, y 台面的高度, rim 從根算起幾公尺以後懸在洞口上面 }
 let DECK = null;

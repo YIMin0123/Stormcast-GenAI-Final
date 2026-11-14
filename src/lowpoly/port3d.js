@@ -7,6 +7,7 @@ import { jitter } from './palette.js';
 import { beam } from './river3d.js';
 import { portBollards } from './havenShape.js';
 import { PORT, BAY } from './havenPlan.js';
+import { SUMMIT } from '../extrasPlan.js';
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -139,4 +140,33 @@ export function buildPort({ P, r, mat, group, groundAt, bedAt }) {
   mesh.castShadow = mesh.receiveShadow = true;
   group.add(mesh);
   return out;
+}
+
+// ---- 山頂：烽火台（石砌的圓台、鐵火盆、柴）和古鐘（木架吊著一口銅鐘）。火焰和煙是遊戲那邊另外畫的（見 havenFx.js）----
+// 回傳擋路的東西 [{ x, z, r, top }]
+export function buildSummit({ P, r, mat, group, groundAt }) {
+  const fb = new FaceBuilder(), F = SUMMIT.fire, B = SUMMIT.bell, rocks = [];
+  const cyl = (x, z, rt, rb, ya, yb, col, seg = 8) => {
+    const g = new THREE.CylinderGeometry(rt, rb, yb - ya, seg);
+    g.translate(x, (ya + yb) / 2, z);
+    const c = jitter(col, r, 0.05), cap = c.clone().multiplyScalar(0.88);
+    fb.addGeometry(g, (m, n) => (Math.abs(n.y) > 0.5 ? cap : c));
+  };
+  const gf = groundAt(F.x, F.z);
+  cyl(F.x, F.z, 1.5, 1.8, gf - 0.8, gf + 1.6, P.stone, 9);          // 石砌的圓台
+  cyl(F.x, F.z, 1.65, 1.65, gf + 1.6, gf + 1.8, P.concrete, 9);     // 台面的石板
+  cyl(F.x, F.z, 1.05, 0.7, gf + 1.8, gf + 2.4, P.lampPole, 8);      // 鐵火盆
+  for (let i = 0; i < 5; i++) { const a = i * 1.257; beam(fb, V3(F.x + Math.cos(a) * 0.7, gf + 2.35, F.z + Math.sin(a) * 0.7), V3(F.x - Math.cos(a) * 0.5, gf + 2.75, F.z - Math.sin(a) * 0.5), 0.16, 0.16, jitter(P.woodDark, r, 0.08)); }   // 柴
+  rocks.push({ x: F.x, z: F.z, r: 1.7, top: 99 });
+  const gb = groundAt(B.x, B.z), bronze = new THREE.Color('#b08d3c');
+  for (const a of [-1.1, 1.1]) beam(fb, V3(B.x + a, gb - 0.3, B.z), V3(B.x + a, gb + 3.0, B.z), 0.24, 0.24, jitter(P.woodDark, r, 0.05));
+  beam(fb, V3(B.x - 1.5, gb + 3.0, B.z), V3(B.x + 1.5, gb + 3.0, B.z), 0.26, 0.3, jitter(P.woodDark, r, 0.05));
+  beam(fb, V3(B.x, gb + 2.85, B.z), V3(B.x, gb + 2.5, B.z), 0.06, 0.06, P.rope);
+  cyl(B.x, B.z, 0.2, 0.3, gb + 2.3, gb + 2.52, bronze, 8);           // 鐘頂
+  cyl(B.x, B.z, 0.3, 0.52, gb + 1.55, gb + 2.3, bronze, 8);          // 鐘身
+  cyl(B.x, B.z, 0.56, 0.56, gb + 1.48, gb + 1.56, bronze, 8);        // 鐘口
+  const mesh = new THREE.Mesh(fb.build(), mat);
+  mesh.castShadow = mesh.receiveShadow = true;
+  group.add(mesh);
+  return rocks;
 }

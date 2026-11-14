@@ -7,6 +7,8 @@
 import { Sea, Climate, HOUR } from '../src/weather.js';
 import { BERTHS, berthPose, berthKinds, inHarbor, SELL_W, SELL_REACH, SHELF_W, BOARD_STAND_W, SPAWN_W, SWITCHES_W, LIGHT_ZONES, HAVEN_SELL_W, HAVEN_PUMP_W } from '../src/layout.js';
 import { PORT } from '../src/lowpoly/havenPlan.js';
+import { HOTSPOT, CHESTS, SUMMIT, SUMMIT_W } from '../src/extrasPlan.js';
+import { Extras } from './extras.js';
 import { BOAT_TYPES, BOAT_ORDER, newKit, shopItem } from '../src/boatdata.js';
 import { SPECIES, rollCatch, minFightTime, biteDelay, castRange, money } from '../src/fishdata.js';
 import { dangerAt, isWater, fishingSpot } from './world.js';
@@ -84,6 +86,7 @@ export class Room {
     this.hold = false;           // 準備合併中：不再發生新的海上事件
     this.focus = 0;
     this.env = { near: { x: 0, z: 0 }, dangerAt };
+    this.extras = new Extras();   // 魚群熱點、漂流寶箱、山頂的烽火
     this.lights = Object.fromEntries(LIGHT_ZONES.map((z) => [z, true]));   // 室內燈（店裡、魚市場）：一開始是開著的，之後誰按開關都算數
     // 遊戲內時間跟著現實時間走，每間房差 SERVER.hourStep 小時（沒人的房也照走，大廳看到的早晚才對）
     this.offset = ((num - 1) * SERVER.hourStep) % 24;
@@ -116,7 +119,7 @@ export class Room {
   worldState() {
     const sea = this.sea;
     return {
-      t: 'world', time: this.t, lights: { ...this.lights },
+      t: 'world', time: this.t, lights: { ...this.lights }, extras: this.extras.state(),
       climate: Object.fromEntries(CLIMATE_KEYS.map((k) => [k, this.climate[k]])),
       sea: { ...sea, remote: undefined, goal: { ...sea.goal }, tsu: { ...sea.tsu }, vortices: sea.vortices.map((v) => ({ ...v })) },
     };
@@ -247,6 +250,8 @@ export class Room {
     if (fp) { this.env.near.x = fp[0]; this.env.near.z = fp[2]; }
     this.sea.remote = this.hold;
     this.sea.update(dt, this.env);
+
+    if (this.extras.step(this.t, dt, this.sea.phase)) this.all(this.worldState());   // 熱點冒出來、寶箱漂來、烽火燒完：馬上告訴大家
 
     // 魚咬了
     for (const p of this.players.values()) {
@@ -395,6 +400,27 @@ export class Room {
         kit.money -= price;
         return this.send(p, { t: 'pumped', liters, price, kit });
       }
+      case 'chest': {   // 撿漂流寶箱：先到先得
+        const spot = this.extras.spotOf(m.id);
+        if (!spot || !this.near(p, spot.x, spot.z, CHESTS.reach + 3)) return;
+        const prize = this.extras.open(m.id);
+        if (!prize) return;
+        kit.money += prize.cash;
+        this.send(p, { t: 'chestGot', cash: prize.cash, fuel: prize.fuel, kit });
+        this.all(this.worldState());
+        return this.sys(`${p.name} 撿到一個漂流寶箱`);
+      }
+      case 'fire': {    // 點燃山頂的烽火：整間房都看得到
+        if (this.extras.fire || !this.near(p, SUMMIT_W.fire.x, SUMMIT_W.fire.z, SUMMIT.reach + 3)) return;
+        this.extras.fire = this.t + SUMMIT.fireTime;
+        this.all(this.worldState());
+        return this.sys(`${p.name} 點燃了山頂的烽火`);
+      }
+      case 'bell': {    // 敲山頂的古鐘：整間房都聽得到
+        if (this.t - this.extras.bellAt < SUMMIT.bellGap || !this.near(p, SUMMIT_W.bell.x, SUMMIT_W.bell.z, SUMMIT.reach + 3)) return;
+        this.extras.bellAt = this.t;
+        return this.all({ t: 'bell', name: p.name });
+      }
       case 'buy': {
         const it = SHELF_W.find((s) => s.id === m.id);
         if (!it) return;
@@ -452,8 +478,10 @@ export class Room {
   // 掛上餌：先決定這次會是哪條魚、幾秒後咬
   bait(p, now) {
     const f = p.fishing, c = this.climate;
-    f.fish = rollCatch(fishingSpot(f.x, f.z, c, this.sea));
-    f.biteAt = now + 1000 * biteDelay(p.kit.rodLv, Math.max(this.sea.rain, c.rain));
+    // 魚群熱點裡：咬得快、個頭大；洞穴的深潭下雨時咬得特別快
+    const spot = fishingSpot(f.x, f.z, c, this.sea), hot = this.extras.inHot(f.x, f.z);
+    f.fish = rollCatch({ ...spot, hot });
+    f.biteAt = now + 1000 * biteDelay(p.kit.rodLv, Math.max(this.sea.rain, c.rain)) * (hot ? HOTSPOT.biteK : 1) * (spot.zone === 'cave' && spot.rain > 0.2 ? 0.5 : 1);
   }
 
   // 定時刷新：家當回到新玩家的樣子（錢、船、裝備、魚都清掉），人送回港口

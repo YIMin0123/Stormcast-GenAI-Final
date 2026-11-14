@@ -15,6 +15,9 @@ import { makeSeascape, HAVEN_LAND, HAVEN_GROUND } from './haven.js';
 import { caveUnder, caveCeil, caveFloor, caveRock, havenLow, nearCave, caveGate, CAVE_AXIS, skyEdge, havenDeck, riverAt, portWall, portPier } from './lowpoly/havenShape.js';
 import { CAVE, RIVER, PORT } from './lowpoly/havenPlan.js';
 import { HAVEN_SELL_W, HAVEN_PUMP_W } from './layout.js';
+import { riverLevel } from './fishzone.js';
+import { makeHavenFx } from './havenFx.js';
+import { SUMMIT, SUMMIT_W } from './extrasPlan.js';
 import { HOME_GROUND, ZONE_LABEL } from './lowpoly/harborPlan.js';
 import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SWITCHES_W, ROOFS_W, underRoof, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
 import { fishLabel, FishWorld } from './fish.js';
@@ -1170,6 +1173,7 @@ function splash(x, y, z, n = 14) {
 }
 // 某處是不是可以拋竿的水面（不是岸、不是棧板、不是船上）
 function isWater(x, z) {
+  if (riverLevel(x, z) !== null) return true;   // 山上的小河、湧泉池也可以釣
   if (bedAt(x, z) > -0.6 || onDeck(x, z, 0.2)) return false;
   return !boats.some((b) => { const l = b.toLocal(x, z); return b.deckContains(l.x, l.z); });
 }
@@ -1188,7 +1192,7 @@ const fish = new FishWorld({
 });
 // 釣魚：這裡只管手感和畫面。魚什麼時候咬、是哪條、多大、值多少、算不算釣起來，都由伺服器決定
 const fishing = new Fishing({
-  player, scene, isWater, surfaceY: waterY, splash, toast,
+  player, scene, isWater, surfaceY: (x, z) => riverLevel(x, z) ?? waterY(x, z), splash, toast,
   net: {
     cast: (x, z) => net.send({ t: 'cast', x: r2(x), z: r2(z) }),
     hook: () => net.send({ t: 'hook' }),
@@ -2035,6 +2039,15 @@ function aimTarget() {
     // 停船位置牌
     if (Math.hypot(px - BOARD_STAND_W.x, pz - BOARD_STAND_W.z) < 2.4) add('berth', new THREE.Vector3(BERTH_BOARD_W.x, DECK_Y + 1.7, BERTH_BOARD_W.z), 0.65);
   }
+  // 漂流寶箱（在船上也撿得到）、山頂的烽火台和古鐘
+  {
+    const c = havenFx.chestNear(player.pos.x, player.pos.y, player.pos.z);
+    if (c) add('chest', c.pos, 0.6, { chest: c });
+    if (!b) {
+      if (Math.hypot(px - SUMMIT_W.fire.x, pz - SUMMIT_W.fire.z) < SUMMIT.reach) add('beacon', new THREE.Vector3(SUMMIT_W.fire.x, player.pos.y + 1.7, SUMMIT_W.fire.z), 0.9);
+      if (Math.hypot(px - SUMMIT_W.bell.x, pz - SUMMIT_W.bell.z) < SUMMIT.reach) add('bell', new THREE.Vector3(SUMMIT_W.bell.x, player.pos.y + 1.7, SUMMIT_W.bell.z), 0.6);
+    }
+  }
   // 放在甲板或地上的魚、油桶
   for (const it of fish.items) {
     if (it.fly || (it.boat && it.boat.stored)) continue;   // 還在飛／在收進倉庫的船上
@@ -2068,6 +2081,12 @@ function interact() {
   const a = aimTarget(), kind = a ? a.kind : '';
   if (kind === 'hook') return havenSell();
   if (kind === 'pump') return havenPump();
+  if (kind === 'chest' || kind === 'beacon' || kind === 'bell') {
+    if (!net.online) return toast('連線中斷，等接回去再試');
+    if (kind === 'chest') return net.send({ t: 'chest', id: a.chest.id });
+    if (kind === 'beacon') return havenFx.burning() ? toast('烽火正燒著') : net.send({ t: 'fire' });
+    return net.send({ t: 'bell' });
+  }
   if (fish.held && fish.held.can) {
     // 提著油桶：對準油箱的加油口就倒進去，倒不完的留在桶裡；沒對準就放下
     const can = fish.held, b = kind === 'tank' ? a.boat : null, room = b ? b.spec.tank - b.fuel : 0;
@@ -2188,6 +2207,8 @@ function updatePrompt() {
         : fish.held ? `捧著${fish.held.sp.name}游：比較慢，也比較累` : '';
     } else if (kind === 'hook' || kind === 'pump') {
       text = kind === 'hook' ? hookText() : pumpText();
+    } else if (kind === 'chest' || kind === 'beacon' || kind === 'bell') {
+      text = kind === 'chest' ? '按 E 打開漂流寶箱' : kind === 'bell' ? '按 E 敲鐘（整片海都聽得到）' : havenFx.burning() ? '烽火正燒著' : '按 E 點燃烽火（整片海都看得到）';
     } else if (fish.held && fish.held.can) {
       const b = kind === 'tank' ? ab : null;
       text = b && b.spec.tank - b.fuel >= 0.1 ? `按 E 把油倒進油箱（${litres(b.fuel)} / ${b.spec.tank} 公升）`
@@ -2254,6 +2275,20 @@ function updatePrompt() {
 
 // ---- 介面 -----------------------------------------------------------------
 const audio = new OceanAudio();
+// 魚群熱點、漂流寶箱、山頂烽火的畫面（什麼時候有、在哪裡，照伺服器說的）
+const havenFx = makeHavenFx({
+  scene, shade, splash, waterY, audio,
+  // 地面多高：大港灣島照畫出來的那張地面，其他地方照海床
+  groundAt: (x, z) => { const [vx, vz] = havenToLocal(x, z), VG = HAVEN_GROUND, vh = VG.size / 2 - 2; return HAVEN_LAND.at && Math.abs(vx - VG.cx) < vh && Math.abs(vz - VG.cz) < vh ? HAVEN_LAND.at(vx, vz) : bedAt(x, z); },
+  onHot: (h) => toast(`海上出現魚群（海鳥在上空盤旋），離你約 ${Math.round(Math.hypot(h.x - player.x, h.z - player.z) / 10) * 10} 公尺。按 M 看地圖`),
+});
+// 在水裡游的人騰不出手按 E：游到漂流寶箱旁邊就直接撿
+let chestAsked = 0;
+function chestSwim() {
+  if (!player.swim || !net.online) return;
+  const c = havenFx.chestNear(player.pos.x, player.pos.y, player.pos.z);
+  if (c && c.id !== chestAsked) { chestAsked = c.id; net.send({ t: 'chest', id: c.id }); }
+}
 
 function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -3007,6 +3042,15 @@ function drawMap() {
   g.fillStyle = 'rgba(20, 30, 40, 0.55)';
   g.beginPath(); g.moveTo(MAP_PX - 26, 14); g.lineTo(MAP_PX - 19, 30); g.lineTo(MAP_PX - 33, 30); g.closePath(); g.fill();
   g.textAlign = 'center'; g.fillText('北', MAP_PX - 26, 42); g.textAlign = 'left';
+  // 魚群熱點
+  const hs = havenFx.hot();
+  if (hs) {
+    const [hx, hy] = P(hs.x, hs.z);
+    g.beginPath(); g.arc(hx, hy, 7, 0, Math.PI * 2);
+    g.lineWidth = 3; g.strokeStyle = 'rgba(20, 30, 40, 0.9)'; g.stroke();
+    g.fillStyle = '#ffd250'; g.fill();
+    label('魚群', hx, hy, '#ffe9a0');
+  }
 
   // 母港
   const [hx, hy] = P(QUAY_CENTER_W.x, QUAY_CENTER_W.z);
@@ -3094,6 +3138,7 @@ function syncTime(roomT, snap) {
 // 伺服器每半秒送一次時間、天氣、海上事件：照著蓋過去（兩次之間這邊自己往前推）
 function applyWorld(w, snap = false) {
   if (w.lights) applyRoomLights(w.lights);
+  if (w.extras) havenFx.sync(w.extras);
   Object.assign(climate, w.climate);
   const oldV = sea.vortices, oldFront = sea.tsu.on ? sea.tsu.front : null;
   for (const k in w.sea) sea[k] = w.sea[k];
@@ -3208,6 +3253,17 @@ net.on('sold', (m) => {
   applyKit(m.kit);
   refreshBoard();
   if (m.total > 0) { audio.play('coin'); toast(`賣出，得到 ${cash(m.total)}`); }
+});
+net.on('chestGot', (m) => {
+  applyKit(m.kit);
+  audio.play('coin');
+  if (m.fuel) { if (fish.held) fish.drop(); fish.spawnCan(CAN); toast(`寶箱裡是一桶油（${CAN} 公升）`); }
+  else toast(`寶箱裡有 ${cash(m.cash)}`);
+});
+net.on('bell', (m) => {
+  const d = Math.hypot(player.x - SUMMIT_W.bell.x, player.z - SUMMIT_W.bell.z);
+  havenFx.bell(clamp(1.15 - d / 1400, 0.12, 1));
+  if (d > 60) toast(`${m.name} 敲響了山頂的古鐘`);
 });
 net.on('pumped', (m) => {
   applyKit(m.kit);
@@ -3460,6 +3516,7 @@ function advance(dt) {
     if (v.fp) { player.yaw = v.yaw; player.mesh.rotation.y = -v.yaw; } // 第一人稱時身體跟著視線
     if (player.onWater && !drown) waveRide(dt);
     riverRide(dt);
+    chestSwim();
     // 腳步聲：腳每落地一次（走路動作每半圈）播一聲，木板和草地沙地各一組
     const stepN = Math.floor(player.phase / Math.PI);
     if (stepN !== lastStep) {
@@ -3521,6 +3578,7 @@ function drawFrame(dt) {
   updateCamera(dt);
   lpUniforms.uTime.value = time;   // 低面模型（樹、草）隨風搖
   seascape.update(time, camera.position);   // 燈標閃光；太遠、被霧蓋掉的島不畫
+  havenFx.update(dt, time, camera.position);
   updateCave(dt);
   const cp = camera.position;
 

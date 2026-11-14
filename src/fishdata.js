@@ -19,10 +19,17 @@ export const SPECIES = {
   squid: { name: '小卷', kg: [0.1, 0.4], mult: 0.75, strength: 0.3, color: 0xd99a94, h: 0.26, w: 0.2 },
   hairtail: { name: '白帶魚', kg: [0.5, 1.8], mult: 0.62, strength: 0.7, color: 0xc4ccd6, h: 0.07, w: 0.03, lenK: 0.95 },
   swordfish: { name: '旗魚', kg: [15, 40], mult: 0.22, strength: 1.12, color: 0x27386e, h: 0.22, w: 0.15, lenK: 0.5 },
+  // 秘境的魚：透天洞穴深潭的月光魚（下雨天特別容易上鉤）、高山小河的黃金鱒（個頭小，但一公斤的價錢是別的魚好幾倍）
+  moonfish: { name: '藍洞月光魚', kg: [0.8, 2.2], mult: 1.6, strength: 0.75, color: 0x7fdcff, h: 0.36, w: 0.1 },
+  trout: { name: '黃金鱒', kg: [0.2, 0.7], mult: 3.2, strength: 0.55, color: 0xe6b422, h: 0.26, w: 0.12 },
 };
 
-// 每座島附近的特產
-export const SPECIALTY = { home: 'bream', west: 'flounder', twin: 'grouper', rocks: 'eel', sand: 'mullet', east: 'snapper' };
+// 每個地方的特產（有好幾種的每次隨機挑一種）：兩座大島的岸邊，還有海上的三處礁石
+export const SPECIALTY = {
+  home: ['bream'], haven: ['bream', 'mullet'],
+  arch: ['grouper', 'snapper'], atoll: ['eel', 'flounder', 'mullet'], beacon: ['snapper', 'eel'],
+};
+const REEFS = { arch: 1, atoll: 1, beacon: 1 };
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
@@ -30,10 +37,15 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 // off：離最近的陸地幾公尺。四個海域——淺灘、近海（一百多公尺內）、離岸（兩百多公尺）、外海、遠洋（四百公尺以上）；
 // 海域的交界不是一刀切，前後幾十公尺兩邊的魚都釣得到
 // 晚上多了夜裡才出來的魚：岸邊的小卷、島周圍的白帶魚、外海的旗魚
-export function pickSpecies(depth, islandId, off, night = false) {
-  const local = SPECIALTY[islandId] ?? 'mackerel';
+// zone：特別的釣場——'river' 高山小河（只有黃金鱒）、'cave' 透天洞穴的深潭（月光魚，下雨時更多）、
+// 'arch' / 'atoll' / 'beacon' 海上的礁石（離大島很遠，照距離算會是鮪魚的海域，這裡改成以礁石的特產為主）
+export function pickSpecies(depth, islandId, off, night = false, zone = null, rain = 0) {
+  if (zone === 'river') return 'trout';
+  const list = SPECIALTY[REEFS[zone] ? zone : islandId], local = list ? list[Math.floor(Math.random() * list.length)] : 'mackerel';
   const d = off + (Math.random() - 0.5) * 70;
-  const table = night
+  const table = zone === 'cave' ? [['moonfish', rain > 0.2 ? 80 : 35], ['squid', 25], ['sardine', 40]]
+    : REEFS[zone] ? (night ? [[local, 45], ['hairtail', 30], ['squid', 25]] : [[local, 60], ['mackerel', 25], ['bonito', 15]])
+    : night
     ? (depth < 7 ? [['squid', 55], ['sardine', 30], [local, 15]]
       : d < 120 ? [['hairtail', 40], [local, 30], ['mackerel', 20], ['squid', 10]]
         : d < 250 ? [['hairtail', 35], ['mackerel', 30], ['bonito', 25], ['swordfish', 10]]
@@ -67,13 +79,14 @@ export function fishValue(id, kg) {
   return Math.max(1, Math.round(KG_PRICE * SPECIES[id].mult * kg));
 }
 
-// 這個位置會釣到什麼。where：{ depth 水深, island 最近的島, off 離岸幾公尺, night 是不是晚上, rough 浪有多大（0–1） }
+// 這個位置會釣到什麼。where：{ depth 水深, island 最近的島, off 離岸幾公尺, night 是不是晚上, rough 浪有多大（0–1）, zone 特別的釣場, rain 雨勢, hot 是不是在魚群熱點裡 }
 // 離岸越遠：魚種越好（鰹魚、鮪魚、旗魚）、個頭越大；浪大的日子，外海的魚個頭更大。
 // 越值錢的魚越難釣：同一種魚個頭越大掙扎越兇，身價越高（二十塊以下不算、八百塊以上到頂）再往上加
-export function rollCatch({ depth, island, off, night, rough }) {
-  const far = clamp((off - 60) / 380, 0, 1);
-  const id = pickSpecies(depth, island, off, night);
-  const f = rollFish(id, clamp(0.7 * far + 0.5 * (off >= 120 ? rough : 0), 0, 1), clamp((off - 250) / 300, 0, 1)), [a, b] = SPECIES[id].kg;
+export function rollCatch({ depth, island, off, night, rough, zone = null, rain = 0, hot = false }) {
+  const far = clamp((off - 60) / 380, 0, 1), special = zone === 'river' || zone === 'cave';
+  const id = pickSpecies(depth, island, off, night, zone, rain);
+  // 魚群熱點裡的魚個頭大一截；小河和洞穴的魚不照離岸距離變大
+  const f = rollFish(id, special ? 0 : clamp(0.7 * far + 0.5 * (off >= 120 ? rough : 0) + (hot ? 0.45 : 0), 0, 1), special ? 0 : clamp((off - 250) / 300, 0, 1)), [a, b] = SPECIES[id].kg;
   const value = fishValue(id, f.kg);
   const tough = clamp(Math.log(value / 20) / Math.log(40), 0, 1);
   return { id, ...f, value, strength: SPECIES[id].strength * (0.85 + 0.3 * clamp((f.kg - a) / (b - a), 0, 1.6)) * (0.8 + 0.55 * tough) };
