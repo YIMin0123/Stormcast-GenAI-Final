@@ -3,10 +3,20 @@
 #   bash deploy/push.sh              上線目前 main 最新一次提交（HEAD）：網頁＋伺服器（伺服器會重開，房裡的人會斷線重連）
 #   bash deploy/push.sh web          只換網頁（不動伺服器、不踢人）
 #   bash deploy/push.sh all origin/main   指定要上線哪個版本（任何 git 版本都可以）
+#   bash deploy/push.sh --notice "新版本更新" --count 60   先打包上傳、把新程式換好，再發跑馬燈倒數；倒數歸零那一刻伺服器重開（只重開一次、不會提早）
 # 只會上線「已經提交」的內容（用 git archive 取出來、在暫存資料夾打包），沒提交的改動不會被帶上去。
 # 打包在自己電腦上做（伺服器那台還跑著瓦爾海姆，不拿它的記憶體來編譯）。需要 gcloud 已登入。
 set -euo pipefail
-MODE="${1:-all}"; REF="${2:-HEAD}"
+POS=(); NOTICE=""; COUNT=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --notice) NOTICE="${2:?--notice 後面要接公告文字}"; shift 2 ;;
+    --count) COUNT="${2:?--count 後面要接秒數}"; shift 2 ;;
+    *) POS+=("$1"); shift ;;
+  esac
+done
+MODE="${POS[0]:-all}"; REF="${POS[1]:-HEAD}"
+if [ "$COUNT" -gt 0 ] && [ "$MODE" = web ]; then echo "--count 只能搭配完整上線（all）：只換網頁不需要重開伺服器"; exit 1; fi
 VM=valheim-tw; ZONE=asia-east1-b
 cd "$(dirname "$0")/.."
 
@@ -23,6 +33,15 @@ if [ "$MODE" != "web" ]; then
 fi
 echo "==> 傳到 $VM"
 gcloud compute scp "${FILES[@]}" "$VM:/tmp/" --zone "$ZONE" --quiet
-echo "==> 在伺服器上更新（$MODE）"
-gcloud compute ssh "$VM" --zone "$ZONE" --quiet --command "sudo bash /tmp/remote-update.sh $MODE"
+WHEN=now; [ "$COUNT" -gt 0 ] && WHEN=later
+echo "==> 在伺服器上更新（$MODE$([ "$COUNT" -gt 0 ] && echo "，倒數 $COUNT 秒" || true)）"
+gcloud compute ssh "$VM" --zone "$ZONE" --quiet --command "sudo bash /tmp/remote-update.sh $MODE $WHEN"
+if [ "$COUNT" -gt 0 ]; then
+  echo "==> 發公告、倒數 $COUNT 秒（新程式已經換好，歸零時伺服器重開）"
+  bash deploy/announce.sh "$NOTICE" "$COUNT"
+  sleep $((COUNT + 12))
+  echo "==> 重開後狀態：$(curl -s -m 8 https://35-229-248-193.sslip.io/status || echo '還連不上，稍後再看')"
+elif [ -n "$NOTICE" ]; then
+  bash deploy/announce.sh "$NOTICE"
+fi
 echo "==> 完成：https://35-229-248-193.sslip.io/"

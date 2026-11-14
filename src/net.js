@@ -33,6 +33,7 @@ export class Net {
     this.token = getItem('stormcast.token') || '';
     this.handlers = {};
     this.inRoom = false;      // 已經進到房間裡
+    this.roomId = 0;          // 進的是哪一間（伺服器重開之後要回同一間）
     this.online = false;      // 現在連線正常
     this.lostAt = 0;          // 從什麼時候開始斷線
     this._want = null;        // 正在等伺服器回話的那件事：{ resolve, reject }
@@ -83,12 +84,20 @@ export class Net {
       switch (m.t) {
         case 'lobby':
           if (m.name) { this.name = m.name; setItem('stormcast.name', m.name); }
-          if (this.inRoom) { this.inRoom = false; this.emit('status', 'expired'); return; }   // 斷線太久，位置已經被收走了
+          if (this.inRoom) {
+            // 在房間裡卻收到大廳：伺服器重開過（房間位置清空了，進度存在檔案裡），或斷線太久位置被收走了。
+            // 直接重新進同一間房（進度跟著代碼回來），進不去（房關了、滿了）才當成離開房間
+            this.inRoom = false;
+            if (!this.roomId) { this.emit('status', 'expired'); return; }
+            this._want = { kind: 'join', resolve: (r) => this.emit('restarted', r.joined), reject: () => this.emit('status', 'expired') };
+            this._raw({ t: 'join', room: this.roomId });
+            return;
+          }
           if (want && want.kind === 'hello') { this._want = null; want.resolve({ lobby: m }); } else this.emit('lobby', m);
           return;
         case 'joined': {
           const back = this.inRoom;
-          this.id = m.id; this.token = m.token; this.name = m.name;
+          this.id = m.id; this.token = m.token; this.name = m.name; this.roomId = m.room?.id ?? this.roomId;
           setItem('stormcast.token', m.token); setItem('stormcast.name', m.name);
           this.inRoom = true; this.online = true; this.lostAt = 0;
           if (want) { this._want = null; want.resolve({ joined: m }); } else if (back) this.emit('rejoin', m);

@@ -4135,6 +4135,14 @@ net.on('rejoin', (j) => {
   lastHold = lastLine = '?';
 });
 
+// 伺服器重開（更新）之後自動重新進同一間房：房間位置清空了，進度存在檔案裡，照「回來的人」的流程放回港口
+net.on('restarted', (j) => {
+  if (!inGame) return;
+  fishing.cancel();
+  enterRoom(j);
+  chat.sys('伺服器剛更新完，已經幫你重新進入；錢、船和還沒賣的魚都還在', 'info');
+});
+
 // 進到房間裡（從大廳點進來，或是關掉分頁後 30 秒內回來）
 function enterRoom(j) {
   room = j.room;
