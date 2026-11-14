@@ -17,10 +17,10 @@ export const KG_PRICE = 100;
 // 沒有餌（或用完了）就是基本餌：不加成，也不花錢
 export const BAIT_MAX = 40;   // 每種餌最多囤幾個
 export const BAITS = {
-  shrimp: { name: '蝦餌', pack: 10, price: 40, luck: { uncommon: 1.5, rare: 2 }, desc: '少見魚 ×1.5　稀有魚 ×2' },
-  minnow: { name: '小魚餌', pack: 10, price: 60, luck: { uncommon: 2, rare: 3.5 }, desc: '少見魚 ×2　稀有魚 ×3.5' },
-  squid: { name: '花枝餌', pack: 8, price: 90, luck: { uncommon: 2.5, rare: 5 }, desc: '少見魚 ×2.5　稀有魚 ×5' },
-  lure: { name: '特級亮片餌', pack: 6, price: 120, luck: { uncommon: 3, rare: 8 }, desc: '少見魚 ×3　稀有魚 ×8' },
+  shrimp: { name: '蝦餌', pack: 10, price: 40, luck: { uncommon: 1.5, rare: 2 }, desc: '稍微容易釣到稀有魚' },
+  minnow: { name: '小魚餌', pack: 10, price: 60, luck: { uncommon: 2, rare: 3.5 }, desc: '比較容易釣到稀有魚' },
+  squid: { name: '花枝餌', pack: 8, price: 90, luck: { uncommon: 2.5, rare: 5 }, desc: '很容易釣到稀有魚' },
+  lure: { name: '特級亮片餌', pack: 6, price: 120, luck: { uncommon: 3, rare: 8 }, desc: '最容易釣到稀有魚' },
 };
 
 export const RARITY = {
