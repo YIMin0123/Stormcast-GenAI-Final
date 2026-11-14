@@ -423,6 +423,17 @@ export class FishWorld {
     this._gone([it]);
   }
 
+  // 被海鷗叼走：魚從外面（地上、甲板）拿掉、算「魚沒了」（伺服器那邊也會刪掉）。回傳牠的模型給海鷗叼著
+  steal(it) {
+    this._unlist(it);
+    it.pub = false;
+    it.mesh.removeFromParent();
+    it.mesh.position.set(0, 0, 0); it.mesh.rotation.set(0, 0, 0); it.mesh.scale.set(1, 1, 1);
+    this.env.toast(`${it.sp.name}被海鷗叼走了！`);
+    this._gone([it]);
+    return it.mesh;
+  }
+
   // ---- 丟出去 ----
   // 手上的東西從 o（世界座標，手的位置）以速度 v 丟出去：之後照拋物線飛，落地的處理見 _fly
   throwHeld(o, v) {

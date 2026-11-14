@@ -20,6 +20,7 @@ import { CAVE, RIVER, PORT } from './lowpoly/havenPlan.js';
 import { HAVEN_SELL_W, HAVEN_PUMP_W } from './layout.js';
 import { riverLevel } from './fishzone.js';
 import { makeHavenFx } from './havenFx.js';
+import { makeWildlife } from './wildlife.js';
 import { HOME_GROUND, ZONE_LABEL } from './lowpoly/harborPlan.js';
 import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SWITCHES_W, ROOFS_W, underRoof, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
 import { fishLabel, FishWorld } from './fish.js';
@@ -2519,6 +2520,40 @@ const havenFx = makeHavenFx({
   groundAt: (x, z) => { const [vx, vz] = havenToLocal(x, z), VG = HAVEN_GROUND, vh = VG.size / 2 - 2; return HAVEN_LAND.at && Math.abs(vx - VG.cx) < vh && Math.abs(vz - VG.cz) < vh ? HAVEN_LAND.at(vx, vz) : bedAt(x, z); },
   onHot: (h) => toast(`海上出現魚群（海鳥在上空盤旋），離你約 ${Math.round(Math.hypot(h.x - player.x, h.z - player.z) / 10) * 10} 公尺。按 M 看地圖`),
 });
+// 海鷗、海豚、海龜、魚群、螃蟹、鯨魚、鯊魚背鰭（純畫面，各人各的；只有海鷗偷魚會真的拿走一條小魚）。數字見 wildPlan.js、行為見 wildlife.js
+const _wildPerches = [], _gullV = new THREE.Vector3();
+const wildlife = makeWildlife({
+  scene, camera, shade, splash, waterY, bedAt, offAt,
+  mist: (x, y, z, vx, vy, vz, life, size) => spray.emit(x, y, z, vx, vy, vz, life, size),
+  tier: () => { const p = Math.max(0, presetOf()); return TOUCH ? (p <= 0 ? 0 : 1) : (p >= 2 ? 3 : 2); },   // 畫質檔：0 手機低、1 手機中／高、2 電腦低／中、3 電腦高
+  world: () => ({
+    day: 1 - night,
+    weatherK: clamp(1 - rainNow * 3, 0, 1) * clamp(1 - sea.storm * 0.8, 0, 1),
+    omen: sea.fishStorm === 'before' || sea.phase === 'whirl',   // 風暴、水龍捲快來了
+    storm: sea.storm > 0.6 || ['storm', 'thunder', 'typhoon', 'waves'].includes(sea.phase),
+  }),
+  player: () => player.pos,
+  boats: () => boats,
+  myBoat: () => myBoat,
+  harbor: { x: QUAY_CENTER_W.x, z: QUAY_CENTER_W.z },
+  haven: { x: HAVEN_SELL_W.x, z: HAVEN_SELL_W.z },
+  perches: () => {   // 岸上海鷗能停的點：繫纜樁、燈柱頂（大港那邊的繫纜樁在 seascape 之後才接進 BOLLARDS，所以第一次要用才組）
+    if (!_wildPerches.length) {
+      for (const p of BOLLARDS) _wildPerches.push({ x: p.x, y: (p.y ?? DECK_Y + 0.5) + 0.12, z: p.z });
+      for (const p of LAMPS) _wildPerches.push({ x: p.x, y: p.y + 0.38, z: p.z });
+    }
+    return _wildPerches;
+  },
+  toWorld: (x, z) => toWorld(x, z),
+  crabGround: (x, z) => {   // 螃蟹能不能待在這：要是乾的沙地（不是牆、棧板、屋頂底下、水邊）
+    const y = walkGround(x, z);
+    if (y >= 50 || y < 0.12 || bedAt(x, z) < -0.3) return null;
+    return underRoof(x, y + 0.5, z) ? null : y;
+  },
+  stealables: () => fish.items.filter((it) => !it.remote && it.uid && !it.can && (it.state === 'ground' || (it.state === 'boat' && it.boat && !it.boat.sinking))),
+  itemPos: (it, out) => fish.worldPos(it, out),
+  steal: (it) => fish.steal(it),
+});
 // 在水裡游的人騰不出手按 E：游到漂流寶箱旁邊就直接撿
 let chestAsked = 0;
 function chestSwim() {
@@ -3993,6 +4028,7 @@ function drawFrame(dt) {
   lpUniforms.uTime.value = time;   // 低面模型（樹、草）隨風搖
   seascape.update(time, camera.position);   // 燈標閃光；太遠、被霧蓋掉的島不畫
   havenFx.update(dt, time, camera.position);
+  wildlife.update(dt, time);
   updateCave(dt);
   const cp = camera.position;
 
@@ -4071,7 +4107,10 @@ function drawFrame(dt) {
     _sp.set(tk ? tk.x : -2, 0.5, tk ? tk.z : 0).applyMatrix4(boat.mesh.matrixWorld);
     spots.engine = [_sp.x, _sp.y, _sp.z, 0.3];
     // 海鷗：在港口上空盤旋；人就在港口裡的時候是頭頂一大片
-    spots.gulls = [QUAY_CENTER_W.x, 22, QUAY_CENTER_W.z, clamp(1 - Math.hypot(cp.x - QUAY_CENTER_W.x, cp.z - QUAY_CENTER_W.z) / 70, 0, 0.75)];
+    // （畫面上有看得到的海鷗時，叫聲就從最近的那隻發出來）
+    const gv = wildlife.nearestGull(cp.x, cp.z, _gullV);
+    spots.gulls = gv ? [gv.x, gv.y, gv.z, clamp(1 - Math.hypot(cp.x - gv.x, cp.z - gv.z) / 90, 0, 0.8)]
+      : [QUAY_CENTER_W.x, 22, QUAY_CENTER_W.z, clamp(1 - Math.hypot(cp.x - QUAY_CENTER_W.x, cp.z - QUAY_CENTER_W.z) / 70, 0, 0.75)];
     // 岸邊的浪：從最近的岸那個方向來（看離岸距離往哪邊變小）；人在岸上、或緊貼著岸，就是四周都有
     const gx = offAt(cp.x + 6, cp.z) - offAt(cp.x - 6, cp.z), gz = offAt(cp.x, cp.z + 6) - offAt(cp.x, cp.z - 6), gl = Math.hypot(gx, gz);
     spots.shore = gl > 1 && off > 2 ? [cp.x - gx / gl * Math.max(off, 5), 0, cp.z - gz / gl * Math.max(off, 5), clamp(1 - (off - 3) / 30, 0.3, 1)] : [cp.x, cp.y, cp.z, 1];
@@ -4277,7 +4316,7 @@ window.__sim = {
   dev: (cmd, o = {}) => net.send({ t: 'dev', cmd, ...o }),   // 測試指令（伺服器開了開發模式才收）：event / calm / skip / money / fish / refresh（立刻刷新）
   sea, dangerAt, tsuAt, stormK, waterY, nearTank, nearCrack, get wrench() { return wrench; },
   get wreck() { return wreck; }, surfProbe, climate, lightning, updateWeather, boatEnv, rain, bolt, spouts,
-  get rainNow() { return rainNow; }, get gloom() { return gloom; }, lampLights, boatLight,
+  get rainNow() { return rainNow; }, get gloom() { return gloom; }, lampLights, boatLight, wildlife,
   updatePrompt, N, DX, L, ISLANDS, camera, scene, water, terrain, scenery, harbor, shared, spray, renderer,
   get mode() { return mode; }, NF, sun, placeSun, WIND, rays, bloom, aoPass, camBlockers, SIGHT, grass, SOLIDS, rockAt, composer, shallow, shallowNear, target, playerWater, updateSwim, toggleMap, drawMap,
   get stamina() { return stamina; }, set stamina(v) { stamina = v; }, get drown() { return drown; }, get mapOpen() { return mapOpen; },
