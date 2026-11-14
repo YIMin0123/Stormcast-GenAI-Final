@@ -478,7 +478,7 @@ export class Room {
     // 魚群熱點裡：咬得快、個頭大；洞穴的深潭下雨時咬得特別快
     const spot = fishingSpot(f.x, f.z, c, this.sea), hot = this.extras.inHot(f.x, f.z);
     f.fish = rollCatch({ ...spot, hot, bait: f.baitUsed });
-    f.biteAt = now + 1000 * biteDelay(p.kit.rodLv, Math.max(this.sea.rain, c.rain), f.baitUsed) * (hot ? HOTSPOT.biteK : 1) * (spot.zone === 'cave' && spot.rain > 0.2 ? 0.5 : 1);
+    f.biteAt = now + 1000 * biteDelay(p.kit.rodLv, Math.max(this.sea.rain, c.rain)) * (hot ? HOTSPOT.biteK : 1) * (spot.zone === 'cave' && spot.rain > 0.2 ? 0.5 : 1);
   }
 
   // 定時刷新：家當回到新玩家的樣子（錢、船、裝備、魚都清掉），人送回港口

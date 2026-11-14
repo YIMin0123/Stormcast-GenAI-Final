@@ -13,19 +13,14 @@
 //   twilight：清晨與黃昏的加成倍數；nightK：夜裡的加成倍數
 //   rain / before / after：下雨、風暴來之前、風暴過後的加成倍數；need：'after' 只有風暴過後才出現
 export const KG_PRICE = 100;
-// 餌：商店買、一份有 pack 個，每拋一次竿用掉一個。likes：對哪幾種魚的權重乘上幾倍；biteK：等魚咬的時間倍率；twilight：清晨黃昏再乘上幾倍
+// 餌：商店買、一份有 pack 個，每拋一次竿用掉一個。越貴的餌，釣到少見、稀有魚的機率越高（luck：該稀有度的權重乘上幾倍；普通魚與雜物不變）
 // 沒有餌（或用完了）就是基本餌：不加成，也不花錢
 export const BAIT_MAX = 40;   // 每種餌最多囤幾個
-const likes = (k, ids) => Object.fromEntries(ids.map((id) => [id, k]));
 export const BAITS = {
-  shrimp: { name: '蝦餌', pack: 10, price: 40, biteK: 0.9, desc: '近岸、底棲的魚愛吃',
-    likes: likes(3, ['bream', 'stonebream', 'flounder', 'grouper', 'grouperGiant', 'snapper', 'seabass', 'pomfret', 'puffer', 'clown', 'mullet']) },
-  minnow: { name: '小魚餌', pack: 10, price: 60, biteK: 0.9, desc: '肉食的洄游魚愛吃',
-    likes: likes(3, ['mackerel', 'bonito', 'amberjack', 'spanish', 'mahi', 'seabass', 'eel', 'wreckEel', 'hairtail']) },
-  squid: { name: '花枝餌', pack: 8, price: 90, biteK: 1, desc: '大型外洋魚愛吃',
-    likes: likes(3.5, ['tuna', 'yellowfin', 'swordfish', 'shark', 'amberjack', 'grouperGiant', 'oarfish', 'octopus']) },
-  lure: { name: '亮片假餌', pack: 6, price: 120, biteK: 0.7, twilight: 1.6, desc: '魚咬得快，快魚更愛',
-    likes: likes(2.5, ['flyingfish', 'saury', 'mackerel', 'bonito', 'mahi', 'spanish', 'hairtail', 'lanternfish']) },
+  shrimp: { name: '蝦餌', pack: 10, price: 40, luck: { uncommon: 1.5, rare: 2 }, desc: '少見魚 ×1.5　稀有魚 ×2' },
+  minnow: { name: '小魚餌', pack: 10, price: 60, luck: { uncommon: 2, rare: 3.5 }, desc: '少見魚 ×2　稀有魚 ×3.5' },
+  squid: { name: '花枝餌', pack: 8, price: 90, luck: { uncommon: 2.5, rare: 5 }, desc: '少見魚 ×2.5　稀有魚 ×5' },
+  lure: { name: '特級亮片餌', pack: 6, price: 120, luck: { uncommon: 3, rare: 8 }, desc: '少見魚 ×3　稀有魚 ×8' },
 };
 
 export const RARITY = {
@@ -148,7 +143,7 @@ function spotWeight(id, sp, spot, c, d) {
   if (c.storm === 'before' && sp.before) w *= sp.before;
   if (c.storm === 'after' && sp.after) w *= sp.after;
   const bait = BAITS[c.bait];
-  if (bait) { w *= bait.likes[id] ?? 1; if (bait.twilight && isTwilight(c.hour)) w *= bait.twilight; }
+  if (bait && sp.kind !== 'junk') w *= bait.luck[sp.rarity] ?? 1;   // 越貴的餌，越容易釣到少見、稀有的魚
   return w;
 }
 
@@ -217,8 +212,8 @@ export function rollCatch({ depth, island, off, night, rough, zone = null, rain 
 
 // 這條魚最快幾秒拉得上來（收線小遊戲的進度從三成開始，一直對在區間裡的速度）；伺服器用來擋「太快釣起來」
 export const minFightTime = (strength) => 0.7 / (0.2 / (0.7 + 0.5 * strength));
-// 等魚咬的時間（秒）：釣竿越好越快，下雨時也比較快，掛了餌也比較快
-export const biteDelay = (rodLv, rain, bait = '') => (2.5 + Math.random() * 6.5) * Math.pow(0.82, rodLv) * (1 - 0.35 * clamp(rain / 0.5, 0, 1)) * (BAITS[bait]?.biteK ?? 1);
+// 等魚咬的時間（秒）：釣竿越好越快，下雨時也比較快
+export const biteDelay = (rodLv, rain) => (2.5 + Math.random() * 6.5) * Math.pow(0.82, rodLv) * (1 - 0.35 * clamp(rain / 0.5, 0, 1));
 // 拋竿最遠拋多遠（公尺）
 export const castRange = (rodLv) => 22 * (1 + 0.25 * rodLv);
 
