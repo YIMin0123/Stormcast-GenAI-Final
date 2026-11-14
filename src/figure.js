@@ -171,6 +171,9 @@ export function buildFigure(look = myLook()) {
   const key = (n) => n.replace(/[^A-Za-z0-9]/g, '');
 
   const bodyMat = pixelMat(0xffffff, { map: SRC.body.material.map, amp: 0.1 });
+  // 畫影子時正反面都算：three.js 預設只用背面畫影子，但這個模型是 Tripo 零件拼起來的，裙子、頭髮、零件接縫都是單層的面，
+  // 從太陽那邊看過去只有正面的地方影子就整塊不見（裙子出不來、肚子破洞、腳底透光）
+  bodyMat.shadowSide = THREE.DoubleSide;
   const face = new THREE.MeshLambertMaterial({ map: faceTexture(), alphaTest: 0.5, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });   // 鏤空靠 alphaTest，不用半透明混色（alpha 要拿來當記號）
   face.onBeforeCompile = (sh) => { figFlag(sh); softFace(sh, '1.0'); };   // 表情薄片貼在臉上，打光要跟臉一樣，不然腮紅裡會切出一塊暗三角
   face.customProgramCacheKey = () => 'figface2';

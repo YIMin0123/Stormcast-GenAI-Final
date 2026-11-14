@@ -1586,7 +1586,10 @@ function clearArm(yaw, pitch, dist, dt) {
   _cr.crossVectors(UP, _cd).normalize();
   _cu.crossVectors(_cd, _cr);
   const MIN = Math.min(dist, 1.2);
+  // 擋不住的保險：鏡頭距離只要壞成 NaN 一次，下一幀的注視點也跟著壞、永遠回不來（整個畫面黑掉，只能重新整理）
+  if (!Number.isFinite(camArm)) camArm = null;
   let clear = Math.max(sightArm(dist), MIN);
+  if (!Number.isFinite(clear)) { if (!clearArm.warned) { clearArm.warned = true; console.warn('[cam] sightArm 算出 NaN', { yaw, pitch, dist, target: target.toArray(), cd: _cd.toArray(), cr: _cr.toArray() }); } clear = dist; }
   if (clear > MIN && !camSpotOk(clear)) {
     // 一步一步往人這邊找到第一個可以停的位置，再在最後那一步裡對半找，鏡頭才不會一格一格地跳
     let bad = clear, ok = clear;
