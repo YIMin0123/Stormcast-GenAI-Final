@@ -1159,7 +1159,7 @@ const others = new Others({
 });
 const chat = new Chat({
   send: (text) => net.send({ t: 'chat', text }),
-  onOpen() { for (const k in keys) keys[k] = false; closeWheel(false); },
+  onOpen() { for (const k in keys) keys[k] = false; closeWheel(false); syncAim(); },
   onClose() {},
 });
 let room = { id: 0, name: '', max: 30 };
@@ -1553,7 +1553,6 @@ const view = {
   sink: { fp: false, yaw: 0.7, pitch: -0.28, dist: 24 },   // 船沉的時候從旁邊看著它
 };
 const DIST = { walk: [3, 45], helm: [10, 120], sink: [10, 60] };
-const TP_PITCH = { walk: -0.25, helm: -0.3 };
 const target = new THREE.Vector3();   // 鏡頭注視點（海面網格也以它為中心）
 let camHeading = boat.heading;        // 第三人稱跟船時，鏡頭慢半拍跟上船首
 const _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion();
@@ -1577,7 +1576,8 @@ function applyViewSettings() {
 // 走路時不管第一、第三人稱畫面中央都有準心：要對準東西才能互動（第三人稱的滑鼠照舊按住拖曳，不鎖）
 let tablet = null;   // 平板（下面「平板」那一段建出來）：拿出來的時候遊戲的按鍵不動、滑鼠放開
 const tabOpen = () => !!tablet && tablet.open;
-const aiming = () => mode !== 'sink' && view[mode].fp && !tabOpen() && !$('panel').open;
+const lookAllowed = () => inGame && !tabOpen() && !chat.isOpen && !$('panel').open;
+const aiming = () => lookAllowed() && mode !== 'sink' && view[mode].fp;
 const crosshair = () => !tabOpen() && (mode === 'walk' || (mode === 'helm' && view.helm.fp));
 const locked = () => document.pointerLockElement === canvas;
 function grabMouse() {
@@ -1585,6 +1585,7 @@ function grabMouse() {
   try { const p = canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch { /* 瀏覽器不給鎖就算了，照舊按住拖曳 */ }
 }
 function syncAim() {
+  clearMouseDrag();
   $('aim').style.display = crosshair() ? 'block' : 'none';
   if (aiming()) grabMouse();
   else if (locked()) document.exitPointerLock();
@@ -1594,8 +1595,13 @@ function toggleFp() {
   if (mode === 'sink') return;
   const v = view[mode];
   v.fp = !v.fp;
-  v.pitch = v.fp ? -0.04 : TP_PITCH[mode];
-  if (mode === 'helm') v.yaw = 0;
+  clampLookPitch(v);
+  if (mode === 'helm') {
+    // 兩個視角用的船首方向不同：切換時先換算成同一個世界朝向。
+    v.yaw += v.fp ? camHeading - boat.heading : boat.heading - camHeading;
+    const yaw = Math.atan2(Math.sin(v.yaw), Math.cos(v.yaw));
+    v.yaw = v.fp ? clamp(yaw, -2.7, 2.7) : yaw;
+  }
   applyViewSettings();
 }
 
@@ -1817,11 +1823,15 @@ function updateCamera(dt) {
       target.copy(camera.position);
       setNear(0.25);
     } else {
-      // 鏡頭被擠到貼在人背後時（背靠著牆、攤位），注視點抬高一點，從頭頂上方看出去，不然整個畫面都是後腦勺
-      const cramped = camArm === null ? 0 : clamp(1 - (camArm - 1.2) / 2.3, 0, 1);
-      target.set(player.pos.x, player.pos.y + 1.5 + 0.6 * cramped, player.pos.z);
+      target.set(player.pos.x, player.pos.y + 1.5, player.pos.z);
       const arm = clearArm(v.yaw, v.pitch, v.dist, dt);
       orbit(v.yaw, v.pitch, arm);
+      // 鏡頭靠近時看向頭頂，但探測從固定高度起算，避免抬高探測起點又改變下一幀的碰撞結果。
+      const cramped = clamp(1 - (arm - 1.2) / 2.3, 0, 1);
+      if (cramped > 0) {
+        target.y += 0.6 * cramped;
+        camera.lookAt(target);
+      }
       // 鏡頭被拉到牆或屋簷前面時離它很近：近的那一面裁切要跟著縮，不然牆會被切出一個洞
       setNear(arm < v.dist - 0.05 ? 0.3 : 1);
     }
@@ -2832,6 +2842,7 @@ for (const b of document.querySelectorAll('[data-dev]')) {
 // 動作與表情的輪盤：走路時按住 G 叫出來，移動滑鼠選，放開 G 播放
 const wheel = new EmoteWheel();
 function closeWheel(play) {
+  wheelPointer = null;
   const pick = wheel.close();
   if (!play || !pick) return;
   if (pick.kind === 'face') player.setMood(pick.id);
@@ -2841,12 +2852,9 @@ function closeWheel(play) {
 const touch = new TouchUI({
   canvas,
   look(dx, dy) {
-    const v = view[mode], k = 0.0052;
-    v.yaw += dx * k;
-    if (mode === 'helm' && v.fp) v.yaw = clamp(v.yaw, -2.7, 2.7);
-    v.pitch = clamp(v.pitch - dy * k, v.fp ? -1.1 : -1.4, v.fp ? 1.1 : 0.5);
+    if (lookAllowed() && !wheel.isOpen) turnView(dx, dy, 0.0052);
   },
-  zoom(k) { const v = view[mode]; v.dist = clamp(v.dist * k, ...DIST[mode]); },
+  zoom(k) { if (lookAllowed() && !wheel.isOpen) { const v = view[mode]; v.dist = clamp(v.dist * k, ...DIST[mode]); } },
   interact: () => { if (inGame) interact(); },
   fishDown() { if (!inGame) return; keys.f = true; fishing.press(); },
   fishUp() { keys.f = false; fishing.release(); },
@@ -2899,21 +2907,49 @@ window.addEventListener('keyup', (e) => {
   if (e.code === 'KeyG') closeWheel(mode === 'walk');
   if (e.code === 'Space' && !(e.target instanceof HTMLInputElement)) e.preventDefault();
 });
-window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; closeWheel(false); throwCancel(); });
+window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; clearMouseDrag(); closeWheel(false); throwCancel(); });
 
 // 按住滑鼠拖曳轉視角；滾輪調整第三人稱的距離
+let dragPointer = null, dragX = 0, dragY = 0, wheelPointer = null;
+function clearMouseDrag() {
+  dragPointer = null;
+  wheelPointer = null;
+  keys.mouse = false;
+}
+function clampLookPitch(v) {
+  v.pitch = clamp(v.pitch, v.fp ? -1.1 : -1.4, v.fp ? 1.1 : 0.5);
+}
+function turnView(dx, dy, k) {
+  const v = view[mode];
+  v.yaw += dx * k;
+  if (mode === 'helm' && v.fp) v.yaw = clamp(v.yaw, -2.7, 2.7);
+  v.pitch -= dy * k;
+  clampLookPitch(v);
+}
 canvas.addEventListener('pointerdown', (e) => {
   if (TOUCH) { if (chat.isOpen) chat.close(); return; }   // 手機：畫面上的手指由觸控操作那邊接手（見 touch.js）；點一下畫面順便把聊天收起來
+  if (!lookAllowed() || e.button !== 0) return;
   if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); // 免得空白鍵按到面板上的按鈕
-  if (aiming() && !locked()) { grabMouse(); return; }   // 第一人稱：點一下畫面就把滑鼠收回去
-  if (e.button === 0) { if (!locked()) canvas.setPointerCapture(e.pointerId); keys.mouse = true; }
+  if (!locked()) {
+    dragPointer = e.pointerId;
+    dragX = e.clientX;
+    dragY = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
+    if (aiming()) { grabMouse(); return; }   // 瀏覽器拒絕鎖定時仍可按住拖曳
+  }
+  keys.mouse = true;
 });
-canvas.addEventListener('pointerup', () => { keys.mouse = false; });
+for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+  canvas.addEventListener(type, clearMouseDrag);
+}
+canvas.addEventListener('pointerleave', () => { wheelPointer = null; });
 // 右鍵：拿著東西時按住蓄力、放開丟出去（用 mousedown／mouseup：左鍵按著拖曳視角時再按右鍵，pointerdown 不會再來一次）
 canvas.addEventListener('mousedown', (e) => { if (!TOUCH && e.button === 2) throwStart(); });
-window.addEventListener('mouseup', (e) => { if (e.button === 2) throwEnd(); });
+window.addEventListener('mouseup', (e) => {
+  if (e.button === 0) clearMouseDrag();
+  if (e.button === 2) throwEnd();
+});
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-canvas.addEventListener('pointercancel', () => { keys.mouse = false; });
 // 瀏覽器偶爾會回報一筆大得離譜的滑鼠位移（滑鼠鎖在畫面裡時，游標被拉回中央的那一下漏進來；
 // 剛鎖上、剛放開、視窗剛切回來的第一筆也常常是這樣），照單全收的話鏡頭會自己猛轉一大圈。
 // 鎖定狀態剛變、視窗剛切回來的那一小段時間不收；平常則跟「最近幾筆的平均」比（不是只跟前一筆）：
@@ -2921,14 +2957,21 @@ canvas.addEventListener('pointercancel', () => { keys.mouse = false; });
 // 以前門檻是 150 像素、只跟前一筆比，一兩百像素的怪值會漏過去，轉視角轉到一半畫面會突然甩到別的方向（使用者回報）。
 // 手真的甩得很快時位移是一筆一筆變大的：被擋下的那一筆也會把平均往上拉，接下來一兩筆就會收（頂多少掉開頭一兩筆）
 let lookSkip = 0, lookT = 0, lookAvg = 0, lookAx = 0, lookAy = 0;
-const lookPause = () => { lookSkip = performance.now() + 120; lookAvg = lookAx = lookAy = 0; };
-document.addEventListener('pointerlockchange', lookPause);
+const lookPause = () => {
+  clearMouseDrag();
+  lookSkip = performance.now() + 120;
+  lookAvg = lookAx = lookAy = 0;
+};
+document.addEventListener('pointerlockchange', () => {
+  lookPause();
+  if (locked() && !aiming()) document.exitPointerLock();
+});
 window.addEventListener('focus', lookPause);
 function lookJump(e, now = performance.now()) {
   const dx = e.movementX, dy = e.movementY, mag = Math.hypot(dx, dy);
   if (now - lookT > 120) lookAvg = lookAx = lookAy = 0;   // 停了一下再動：從零算起
   lookT = now;
-  if (now < lookSkip) return true;
+  if (now < lookSkip || !Number.isFinite(mag) || mag > 96) return true;
   const back = dx * lookAx + dy * lookAy < 0 && mag > 2 * lookAvg + 20;   // 正在往一邊轉，突然冒出一大步往反方向
   if (mag > Math.max(70, 2.5 * lookAvg + 30) || back) {
     lookAvg = Math.min(mag, lookAvg * 1.6 + 25);
@@ -2939,17 +2982,28 @@ function lookJump(e, now = performance.now()) {
   return false;
 }
 canvas.addEventListener('pointermove', (e) => {
-  if (TOUCH) return;
-  if (wheel.isOpen) { if (!lookJump(e)) wheel.move(e.movementX, e.movementY); return; }   // 輪盤開著：滑鼠拿來選，不轉視角
-  const free = locked();   // 滑鼠鎖在畫面裡：不用按著也能轉
-  if (!free && !(e.buttons & 1)) return;
-  if (lookJump(e)) return;
-  const v = view[mode], k = free ? 0.0028 : 0.0045;
-  v.yaw += e.movementX * k;
-  if (mode === 'helm' && v.fp) v.yaw = clamp(v.yaw, -2.7, 2.7);
-  v.pitch = clamp(v.pitch - e.movementY * k, v.fp ? -1.1 : -1.4, v.fp ? 1.1 : 0.5);
+  if (TOUCH || locked() || !lookAllowed()) return;
+  // 沒鎖定時直接使用同一次拖曳的畫面座標差，第一筆由按下的位置起算。
+  if (wheel.isOpen) {
+    const prev = wheelPointer;
+    wheelPointer = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    if (prev?.id === e.pointerId) wheel.move(e.clientX - prev.x, e.clientY - prev.y);
+    if (dragPointer === e.pointerId) { dragX = e.clientX; dragY = e.clientY; }
+    return;
+  }
+  wheelPointer = null;
+  if (dragPointer !== e.pointerId || !(e.buttons & 1)) return;
+  turnView(e.clientX - dragX, e.clientY - dragY, 0.0045);
+  dragX = e.clientX;
+  dragY = e.clientY;
+});
+canvas.addEventListener('mousemove', (e) => {
+  if (TOUCH || !locked() || !aiming() || lookJump(e)) return;
+  if (wheel.isOpen) wheel.move(e.movementX, e.movementY);
+  else turnView(e.movementX, e.movementY, 0.0028);
 });
 canvas.addEventListener('wheel', (e) => {
+  if (!lookAllowed() || wheel.isOpen) return;
   e.preventDefault();
   const v = view[mode];
   v.dist = clamp(v.dist * Math.exp(e.deltaY * 0.001), ...DIST[mode]);
