@@ -535,8 +535,8 @@ export class Sea {
 // ---- 時間與平常的天氣 -------------------------------------------------------
 // 白天（6 點到 18 點）15 分鐘、夜晚 15 分鐘。每天清晨決定當天的風浪強弱、晴陰雨、有沒有晨霧
 export const HOUR = 75;   // 遊戲裡的一小時是幾秒
-// 每天的風向偏離盛行風向的範圍（弧度，正負都有，0.9 ≈ 52 度）、多少秒轉到今天的風向
-export const VEER = { range: 0.9, ease: 150 };
+// 每天的風向偏離盛行風向的範圍（弧度，正負都有：0.9 ≈ 52 度；π = 全角度隨機，什麼方向都可能）、多少秒轉到今天的風向
+export const VEER = { range: Math.PI, ease: 150 };
 
 export class Climate {
   constructor() {
@@ -573,7 +573,10 @@ export class Climate {
     const foggy = h >= 4.5 && h < 9.5;
     const ease = (tau) => 1 - Math.exp(-dt / tau);
     this.wind += (this.windGoal - this.wind) * ease(90);
-    this.veer = (this.veer || 0) + ((this.veerGoal || 0) - (this.veer || 0)) * ease(VEER.ease);
+    {   // 風向是角度：走最短的那一邊轉過去（範圍開到全角度時，+170 度到 -170 度只轉 20 度，不繞一大圈）
+      const v = this.veer || 0, d = Math.atan2(Math.sin((this.veerGoal || 0) - v), Math.cos((this.veerGoal || 0) - v));
+      this.veer = Math.atan2(Math.sin(v + d * ease(VEER.ease)), Math.cos(v + d * ease(VEER.ease)));
+    }
     this.cloud += (this.cloudGoal - this.cloud) * ease(45);
     this.rain += ((raining ? this.rainAmt : 0) - this.rain) * ease(25);
     this.fog += ((foggy ? this.fogAmt : 0) - this.fog) * ease(45);
