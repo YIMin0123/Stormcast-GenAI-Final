@@ -233,7 +233,7 @@ export class Player {
     }
 
     if (fly) {
-      // 飛行：Shift 上升、Ctrl 下降，放開就停在半空；往上碰到頭頂的東西（棧板底、洞頂）不管，往下碰到地面就站著
+      // 飛行：Shift 上升、Q 下降，放開就停在半空；往上碰到頭頂的東西（棧板底、洞頂）不管，往下碰到地面就站著
       this.vy = 0;
       this.h = Math.min(Math.max(this.h + rise * this.flyVert * dt, 0), Math.max(0, this.flyMaxH - this.base));
       this.y = this.base + this.h;

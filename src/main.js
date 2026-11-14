@@ -2496,8 +2496,8 @@ $('sound').addEventListener('click', () => {
 });
 
 // 用實體按鍵位置（e.code）判斷，開著注音輸入法也能操作
-const KEYMAP = { KeyW: 'w', KeyA: 'a', KeyS: 's', KeyD: 'd', ShiftLeft: 'shift', ShiftRight: 'shift', ControlLeft: 'ctrl', ControlRight: 'ctrl', Space: 'space', KeyF: 'f' };
-const keys = { w: false, a: false, s: false, d: false, shift: false, ctrl: false, space: false, f: false, mouse: false };
+const KEYMAP = { KeyW: 'w', KeyA: 'a', KeyS: 's', KeyD: 'd', ShiftLeft: 'shift', ShiftRight: 'shift', KeyQ: 'q', Space: 'space', KeyF: 'f' };
+const keys = { w: false, a: false, s: false, d: false, shift: false, q: false, space: false, f: false, mouse: false };
 
 // ---- 開發者模式（只有測試環境：伺服器開了開發模式，進房時 snapshot 帶 dev）----
 // 飛行（連按兩下空白鍵、或設定裡的開關）、不會累、不會溺水、設定裡的測試指令按鈕
@@ -2514,7 +2514,7 @@ function setDevMode(on) {
   $('devSec').hidden = !devMode;
   if (!devMode) setFly(false);
 }
-$('devFly').addEventListener('click', () => { setFly(!player.fly); toast(player.fly ? '飛行：Shift 上升、Ctrl 下降，連按兩下空白鍵關掉' : '關掉飛行'); });
+$('devFly').addEventListener('click', () => { setFly(!player.fly); toast(player.fly ? '飛行：Shift 上升、Q 下降，連按兩下空白鍵關掉' : '關掉飛行'); });
 for (const b of document.querySelectorAll('[data-dev]')) {
   b.addEventListener('click', () => {
     const d = b.dataset, cmd = d.dev;
@@ -2573,7 +2573,6 @@ window.addEventListener('keydown', (e) => {
   const k = KEYMAP[e.code];
   if (k) keys[k] = true;
   if (e.code === 'Space') e.preventDefault();
-  if (player.fly && keys.ctrl && e.code !== 'KeyW') e.preventDefault();   // 飛行時按著 Ctrl 下降：擋掉 Ctrl+S、Ctrl+D 這些瀏覽器快捷鍵（Ctrl+W 擋不住）
   if (e.repeat) return;
   // 開發者模式：連按兩下空白鍵切換飛行
   if (e.code === 'Space' && devMode && mode === 'walk') {
@@ -3549,7 +3548,7 @@ function advance(dt) {
     swimWave = !player.boat && bedAt(player.x, player.z) < -0.4 ? ocean.sampleHeight(player.x, player.z) : 0;
     player.look(v.yaw, v.pitch);
     walker.feet = player.boat ? null : player.y; walker.air = player.h > 0 || player.fly; walker.fly = player.fly;
-    const rise = player.fly ? (keys.shift ? 1 : 0) - (keys.ctrl ? 1 : 0) : 0;   // 飛行：Shift 上升、Ctrl 下降
+    const rise = player.fly ? (keys.shift ? 1 : 0) - (keys.q ? 1 : 0) : 0;   // 飛行：Shift 上升、Q 下降
     player.update(dt, cy * f - sy * r, sy * f + cy * r, (keys.shift || touch.run) && !player.fly, keys.space && !drown && !player.fly, walkWorld, rise);
     walker.feet = null; walker.fly = false;
     if (v.fp) { player.yaw = v.yaw; player.mesh.rotation.y = -v.yaw; } // 第一人稱時身體跟著視線
