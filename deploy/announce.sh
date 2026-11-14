@@ -10,10 +10,11 @@
 set -euo pipefail
 VM=valheim-tw; ZONE=asia-east1-b
 if [ "${1:-}" = "clear" ]; then
-  CMD="curl -s http://127.0.0.1:8787/admin/clear"
+  CMD="curl -fsS -X POST http://127.0.0.1:8787/admin/clear"
 else
   TEXT="${1:-}"; SEC="${2:-0}"
-  ENC="$(python -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1]))' "$TEXT")"
-  CMD="curl -s 'http://127.0.0.1:8787/admin/notice?text=${ENC}&restart=${SEC}'"
+  if [[ ! "$SEC" =~ ^[0-9]{1,4}$ ]] || (( 10#$SEC > 3600 )); then echo "倒數須為 0～3600 秒"; exit 1; fi
+  ENC="$(python -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1], safe=""))' "$TEXT")"
+  CMD="curl -fsS -X POST 'http://127.0.0.1:8787/admin/notice?text=${ENC}&restart=${SEC}'"
 fi
 gcloud compute ssh "$VM" --zone "$ZONE" --quiet --command "$CMD"

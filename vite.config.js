@@ -5,6 +5,7 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    fs: { deny: ['.env', '.env.*', '*.{crt,pem,key,p12,pfx,cer,der}', '.npmrc', '.yarnrc.yml', '**/.git/**', '**/server/data/**', '**/.planning/**'] },
     watch: { ignored: ['**/參考專案/**', '**/舊版備份_海嘯模擬器/**'] },
   },
   optimizeDeps: { entries: ['index.html'] },

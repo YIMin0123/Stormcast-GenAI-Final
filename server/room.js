@@ -13,9 +13,10 @@ import { BOAT_TYPES, BOAT_ORDER, newKit, shopItem, baitCount } from '../src/boat
 import { SPECIES, BAITS, isJunk, rollCatch, minFightTime, biteDelay, castRange, money } from '../src/fishdata.js';
 import { dangerAt, isWater, fishingSpot } from './world.js';
 import { mask } from './words.js';
-import { SERVER, SHARE } from '../src/config.js';
+import { SERVER, SHARE, WORLD } from '../src/config.js';
 import { callBoat, moveBlocked, reberthNear, storedInfo } from './boatCall.js';
 import { recordDex } from './dex.js';
+import { sendRaw } from './wire.js';
 import { placeOfSpot } from '../src/places.js';
 import { onBoxMsg, boxList, homeBoxes, savedBoxesOf, loadBoxes, dropBoxes, stowBoxes, resetBoxes, sellBox, buyBox, floatBoxes, inBoxes, expireOffers } from './fishBoxes.js';
 
@@ -24,10 +25,16 @@ export const TICK = 0.1;                 // 世界每 0.1 秒算一次
 export const GRACE = +(process.env.GRACE_SEC || 30) * 1000;   // 斷線後多久內回來可以接回原進度；離開的人的船也是這麼久之後消失
 const WORLD_EVERY = 5;                   // 每 5 次（0.5 秒）把天氣送一次
 const CLIMATE_KEYS = ['hour', 'day', 'wind', 'windGoal', 'cloud', 'cloudGoal', 'rain', 'rainAmt', 'rainFrom', 'rainTo', 'fog', 'fogAmt', 'veer', 'veerGoal'];
-const DEV = !!process.env.STORMCAST_DEV;  // 開發用：允許測試指令（引發海上事件、快轉、加錢）
+export const DEV = process.env.STORMCAST_DEV === '1';  // 開發用：允許測試指令（引發海上事件、快轉、加錢）
 const EVENT_NAME = { storm: '風暴', thunder: '雷暴雨', omen: '巨浪', waves: '巨浪', whirl: '漩渦', brew: '颱風', typhoon: '颱風' };
 const inf = (k, v) => (v === Infinity ? 1e9 : v);   // JSON 存不了 Infinity
-const nums = (a, n) => Array.isArray(a) && a.length <= n && a.every((v) => typeof v === 'number' && Number.isFinite(v));
+const nums = (a, n) => Array.isArray(a) && a.length === n && a.every(Number.isFinite);
+const inWorld = (x, z) => Math.abs(x) <= WORLD.size / 2 && Math.abs(z) <= WORLD.size / 2;
+// 人可游到地圖邊界外，但不能提交會破壞房間座標運算的離群值。
+const playerLimit = WORLD.size / 2 + 256;
+const validId = (id, table) => typeof id === 'string' && Object.hasOwn(table, id);
+const validCrack = (c, spec) => nums(c, 3) && Math.abs(c[0]) <= spec.len / 2 + 0.01
+  && Math.abs(c[1]) <= spec.beam / 2 + 0.01 && c[2] >= 0 && c[2] <= Math.ceil(spec.hp * 100 / 6) / 100;
 const dist = (ax, az, bx, bz) => Math.hypot(ax - bx, az - bz);
 
 let nextUid = 1;
@@ -73,7 +80,13 @@ export function profileOf(p) {
 // 把存著的進度放回一個剛建好的玩家（魚重新編號：伺服器重開過，舊的編號可能跟別人撞）
 export function applyProfile(p, prof) {
   if (prof.kit && prof.kit.boats && BOAT_TYPES[prof.kit.active] && prof.kit.boats[prof.kit.active]) p.kit = { ...newKit(), ...prof.kit };
-  p.stored = prof.stored && typeof prof.stored === 'object' ? prof.stored : {};
+  for (const type of BOAT_ORDER) {
+    const saved = prof.stored?.[type], spec = BOAT_TYPES[type];
+    if (!saved || typeof saved !== 'object' || !Object.hasOwn(p.kit.boats, type)) continue;
+    const fuel = Number.isFinite(saved.fuel) ? Math.max(0, Math.min(saved.fuel, spec.tank)) : spec.tank;
+    const cracks = Array.isArray(saved.cracks) ? saved.cracks.filter((c) => validCrack(c, spec)).slice(0, 8) : [];
+    p.stored[type] = { fuel, cracks };
+  }
   loadBoxes(p, prof.boxes, () => nextUid++);
   for (const f of Array.isArray(prof.fish) ? prof.fish.slice(0, 200) : []) {
     if (f && SPECIES[f.id]) p.fish.set(nextUid++, { id: f.id, kg: f.kg, len: f.len, value: f.value, by: f.by && typeof f.by.name === 'string' ? f.by : null });
@@ -123,10 +136,10 @@ export class Room {
   get active() { let n = 0; for (const p of this.players.values()) if (p.ws) n++; return n; }
   get calm() { return this.sea.phase === 'calm' && !this.sea.vortices.length; }
 
-  send(p, msg) { if (p.ws && p.ws.readyState === 1) p.ws.send(JSON.stringify(msg, inf)); }
+  send(p, msg) { if (p.ws?.readyState === 1) sendRaw(p.ws, JSON.stringify(msg, inf)); }
   all(msg, except) {
     const raw = JSON.stringify(msg, inf);
-    for (const p of this.players.values()) if (p !== except && p.ws && p.ws.readyState === 1) p.ws.send(raw);
+    for (const p of this.players.values()) if (p !== except) sendRaw(p.ws, raw);
   }
   sys(text, kind = 'info', except) { this.all({ t: 'sys', text, kind }, except); }
 
@@ -210,7 +223,10 @@ export class Room {
   }
   // 斷線重連時還給他的進度
   resumeData(p) {
-    return { pos: p.pos, boat: p.boat && { ...p.boat }, stored: p.stored, fish: [...p.fish].filter(([uid]) => !this.loose.has(uid) && !inBoxes(p).has(uid)).map(([uid, f]) => ({ uid, ...f })) };
+    const boxed = inBoxes(p);
+    const fish = [...p.fish].filter(([uid]) => !this.loose.has(uid) && !boxed.has(uid))
+      .map(([uid, { id, kg, len, value }]) => ({ uid, id, kg, len, value }));
+    return { pos: p.pos, boat: p.boat && { ...p.boat }, stored: p.stored, fish };
   }
 
   // 連線斷了：人先從畫面上消失，位置和家當留著等他回來
@@ -297,8 +313,18 @@ export class Room {
     switch (m.t) {
       case 'p': {
         const s = m.s;
-        if (!nums(s?.slice?.(0, 11), 11) || s.length !== 13) return;
-        if (typeof s[11] !== 'string' || typeof s[12] !== 'string' || s[11].length > 16 || s[12].length > 16) return;
+        if (!Array.isArray(s) || s.length !== 13 || !nums(s.slice(0, 11), 11)) return;
+        if (Math.max(Math.abs(s[0]), Math.abs(s[2])) > playerLimit || Math.abs(s[1]) > 300 || s[5] < 0 || s[5] > 300
+          || !Number.isInteger(s[4]) || s[4] < 0 || s[4] > 127) return;
+        if ((s[4] & 32) && s[8] !== p.id) return;
+        if (s[8]) {
+          const carrier = this.players.get(s[8]);
+          const spec = carrier?.boat && BOAT_TYPES[carrier.boat.type];
+          if (!spec || carrier.boat.sunk || Math.abs(s[9]) > spec.len / 2 + 1 || Math.abs(s[10]) > spec.beam / 2 + 1
+            || dist(s[0], s[2], carrier.boat.s[0], carrier.boat.s[1]) > spec.len / 2 + 10) return;
+        }
+        if (typeof s[11] !== 'string' || typeof s[12] !== 'string' || s[11].length > 16 || s[12].length > 16
+          || Object.hasOwn(Object.prototype, s[11]) || Object.hasOwn(Object.prototype, s[12])) return;
         // 一下子移動太遠（不是被救回港口）：之後一小段時間不讓他拋竿
         if (p.pos && p.posAt) {
           const d = dist(s[0], s[2], p.pos[0], p.pos[2]), dt = Math.max(0.05, (now - p.posAt) / 1000);
@@ -309,33 +335,39 @@ export class Room {
         return;
       }
       case 'b': {
-        if (!p.boat || p.boat.sunk || !nums(m.s, 12) || m.s.length !== 12) return;
-        p.boat.s = m.s; p.boatDirty = true;
+        if (!p.boat || p.boat.sunk || !nums(m.s, 12)) return;
+        const s = m.s, S = BOAT_TYPES[p.boat.type];
+        if (!inWorld(s[0], s[1]) || Math.abs(s[3]) > 300 || Math.hypot(s[4], s[5]) > 1
+          || Math.abs(s[6]) > 100 || Math.abs(s[7]) > 1 || Math.abs(s[8]) > 1
+          || !Number.isInteger(s[9]) || s[9] < 0 || s[9] > 7 || s[10] < 0 || s[10] > S.tank || s[11] < 0 || s[11] > 1) return;
+        p.boat.s = s; p.boatDirty = true;
         return;
       }
       case 'h': {   // 手上拿著什麼（魚、油桶；空手是 ''）：只是轉給別人看
-        const ok = typeof m.id === 'string' && (m.id === '' || m.id === 'can' || m.id === 'tablet' || SPECIES[m.id]) && typeof m.len === 'number' && m.len >= 0 && m.len < 30;
+        const ok = (m.id === '' || m.id === 'can' || m.id === 'tablet' || validId(m.id, SPECIES)) && Number.isFinite(m.len) && m.len >= 0 && m.len < 30;
         if (!ok) return;
         p.hold = m.id ? [m.id, m.len] : null;
         return this.all({ t: 'h', id: p.id, s: p.hold }, p);
       }
       case 'fl': {   // 釣線另一頭的浮標（沒在釣是 null）：只是轉給別人看
-        if (m.s !== null && !(nums(m.s, 4) && m.s.length === 4)) return;
+        if (m.s !== null && (!nums(m.s, 4) || !inWorld(m.s[0], m.s[2]) || Math.abs(m.s[1]) > 300 || ![1, 2, 3].includes(m.s[3]))) return;
         if (m.s === null && !p.line) return;
         p.line = m.s;
         return this.all({ t: 'fl', id: p.id, s: p.line }, p);
       }
       case 'bd': {   // 船上的破洞、纜繩（只為了斷線重連時還給他）
-        if (!p.boat || !Array.isArray(m.cracks) || m.cracks.length > 8 || !m.cracks.every((c) => nums(c, 3))) return;
+        if (!p.boat || !Array.isArray(m.cracks) || m.cracks.length > 8) return;
+        const S = BOAT_TYPES[p.boat.type];
+        if (!m.cracks.every((c) => validCrack(c, S))) return;
         p.boat.cracks = m.cracks;
         p.boat.moor = Number.isInteger(m.moor) ? m.moor : -1;
         return;
       }
       case 'sink': {
-        if (!p.boat || p.boat.sunk) return;
+        if (!p.boat || p.boat.sunk || !['capsize', 'flood', 'spout', 'whirl', 'curl'].includes(m.why) || !Number.isFinite(m.side)) return;
         p.boat.sunk = true;
         floatBoxes(this, p);   // 甲板上的魚箱浮起來
-        this.all({ t: 'sunk', id: p.id, why: String(m.why).slice(0, 12), side: m.side > 0 ? 1 : -1 }, p);
+        this.all({ t: 'sunk', id: p.id, why: m.why, side: m.side > 0 ? 1 : -1 }, p);
         return;
       }
       case 'boatLost': {   // 沉完了：這艘船沒了。一艘都不剩的話送一艘小舢舨
@@ -348,7 +380,7 @@ export class Room {
       }
       case 'swap': {   // 平板的船 app：倉庫裡的換一艘出來，停到離人最近的空船位（人要在港口、船上沒人；見 boatCall.js）
         const type = m.type;
-        if (!kit.boats[type] || type === kit.active || !p.boat || p.boat.sunk) return;
+        if (!validId(type, BOAT_TYPES) || !Object.hasOwn(kit.boats, type) || type === kit.active || !p.boat || p.boat.sunk) return;
         const why = moveBlocked(this, p);
         if (why) return this.send(p, { t: 'no', msg: why });
         p.stored[kit.active] = { fuel: p.boat.s[10], cracks: p.boat.cracks };   // 收進倉庫的那艘：油量、破洞記著，下次換出來照舊
@@ -360,7 +392,7 @@ export class Room {
       // ---- 釣魚 ----
       case 'cast': {
         p.fishing = null;
-        if (!nums([m.x, m.z], 2) || !p.pos || kit.rodBroken || now < p.suspect) return this.send(p, { t: 'fishNo' });
+        if (!nums([m.x, m.z], 2) || !inWorld(m.x, m.z) || !p.pos || kit.rodBroken || now < p.suspect) return this.send(p, { t: 'fishNo' });
         if (dist(m.x, m.z, p.pos[0], p.pos[2]) > castRange(kit.rodLv) + 8 || !isWater(m.x, m.z)) return this.send(p, { t: 'fishNo' });
         // 掛了餌就用掉一個（餌用完了就是基本餌，不加成）
         const used = kit.bait && baitCount(kit, kit.bait) > 0 ? kit.bait : '';
@@ -369,7 +401,7 @@ export class Room {
         return this.bait(p, now);
       }
       case 'baitSel': {   // 換餌（只能換成自己有的，或基本餌 ''）
-        if (m.id !== '' && !(BAITS[m.id] && baitCount(kit, m.id) > 0)) return;
+        if (m.id !== '' && !(validId(m.id, BAITS) && baitCount(kit, m.id) > 0)) return;
         kit.bait = m.id;
         return this.send(p, { t: 'kit', kit });
       }
@@ -434,14 +466,18 @@ export class Room {
       // ---- 放在外面的魚 ----
       case 'put': {   // 自己的魚放下了（地上、甲板上、籃子裡）：大家都看得到
         const f = p.fish.get(m.uid);
-        if (!f || inBoxes(p).has(m.uid) || !['g', 'd', 'b'].includes(m.k) || !nums([m.x, m.y, m.z, m.yaw], 4)) return;
+        if (!p.pos || !f || inBoxes(p).has(m.uid) || !['g', 'd', 'b'].includes(m.k)
+          || !nums([m.x, m.y, m.z, m.yaw], 4) || !inWorld(m.x, m.z) || Math.abs(m.y) > 300) return;
         let bx = m.x, bz = m.z, b = 0;
         if (m.k === 'd') {
           const o = this.players.get(m.b);
           if (!o || !o.boat || o.boat.sunk || Math.hypot(m.x, m.z) > 20) return;
           b = o.id; bx = o.boat.s[0]; bz = o.boat.s[1];
-        } else if (m.k === 'b') { bx = SELL_W.basket.x; bz = SELL_W.basket.z; }
-        if (p.pos && dist(p.pos[0], p.pos[2], bx, bz) > SHARE.place + (m.k === 'd' ? 20 : 0)) return;
+        } else if (m.k === 'b') {
+          bx = SELL_W.basket.x; bz = SELL_W.basket.z;
+          if (dist(m.x, m.z, bx, bz) > 2 || Math.abs(m.y - SELL_W.basket.y) > 3) return;
+        }
+        if (dist(p.pos[0], p.pos[2], bx, bz) > SHARE.place + (m.k === 'd' ? 20 : 0)) return;
         const was = this.loose.get(m.uid);
         const e = { uid: m.uid, owner: p.id, f, k: m.k, x: m.x, y: m.y, z: m.z, yaw: m.yaw, b, at: was && was.k === m.k ? was.at : now };
         this.loose.set(m.uid, e);
@@ -470,7 +506,8 @@ export class Room {
       }
       case 'pump': {   // 大港碼頭的加油柱：照公升數收錢，油加進停在旁邊的船（油量是瀏覽器那邊記的）
         if (!p.boat || !this.near(p, HAVEN_PUMP_W.x, HAVEN_PUMP_W.z, PORT.pump.reach + 2.5)) return this.send(p, { t: 'no', msg: '要站在加油柱旁邊才能加油' });
-        const liters = Math.floor(Math.min(Number(m.liters) || 0, BOAT_TYPES[p.boat.type].tank)), price = Math.ceil(liters * PORT.pump.price);
+        if (!Number.isFinite(m.liters)) return;
+        const liters = Math.floor(Math.min(m.liters, BOAT_TYPES[p.boat.type].tank)), price = Math.ceil(liters * PORT.pump.price);
         if (liters < 1 || kit.money < price) return this.send(p, { t: 'no', msg: '錢不夠' });
         kit.money -= price;
         return this.send(p, { t: 'pumped', liters, price, kit });
@@ -508,7 +545,8 @@ export class Room {
         return this.all({ t: 'lights', lights: this.lights });
       }
       case 'chat': {
-        const text = String(m.text ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 80);
+        if (typeof m.text !== 'string') return;
+        const text = m.text.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 80);
         if (!text) return;
         p.chatAt = p.chatAt.filter((t) => now - t < 8000);
         if (p.chatAt.length >= 5) return this.send(p, { t: 'sys', text: '說話太快了，休息一下再說', kind: 'warn' });
@@ -523,10 +561,10 @@ export class Room {
           if (p.pos) { this.env.near.x = p.pos[0]; this.env.near.z = p.pos[2]; }
           const ok = this.sea.trigger(m.kind, this.env);
           this.send(p, { t: 'sys', text: ok ? `（測試）引發了 ${m.kind}` : '（測試）現在引發不了', kind: 'warn' });
-        } else if (m.cmd === 'calm') { this.sea._calm(); this.sea.vortices.length = 0; this.sea.tsu.on = false; } else if (m.cmd === 'skip') { const h = Math.min(Math.max(+m.hours || 3, 0), 24); this.skew += h; for (let k = h; k > 0; k--) this.climate.update(Math.min(k, 1) * HOUR); } else if (m.cmd === 'refresh') return this.hub.refresh(true);
-        else if (m.cmd === 'money') { kit.money += Math.round(+m.n || 0); this.send(p, { t: 'kit', kit }); } else if (m.cmd === 'fish') {
+        } else if (m.cmd === 'calm') { this.sea._calm(); this.sea.vortices.length = 0; this.sea.tsu.on = false; } else if (m.cmd === 'skip') { const h = Number.isFinite(m.hours) ? Math.min(Math.max(m.hours, 0), 24) : 3; this.skew += h; for (let k = h; k > 0; k--) this.climate.update(Math.min(k, 1) * HOUR); } else if (m.cmd === 'refresh') return this.hub.refresh(true);
+        else if (m.cmd === 'money' && Number.isFinite(m.n)) { kit.money = Math.max(0, kit.money + Math.round(Math.max(-1e9, Math.min(1e9, m.n)))); this.send(p, { t: 'kit', kit }); } else if (m.cmd === 'fish' && p.fish.size < 200) {
           // 直接塞一條魚（測排行榜用）
-          const id = SPECIES[m.id] ? m.id : 'tuna', kg = +m.kg || 12, len = +(0.42 * Math.cbrt(kg)).toFixed(2), value = Math.round(100 * SPECIES[id].mult * kg), uid = nextUid++;
+          const id = validId(m.id, SPECIES) ? m.id : 'tuna', kg = Number.isFinite(m.kg) && m.kg > 0 ? Math.min(1e4, m.kg) : 12, len = +(0.42 * Math.cbrt(kg)).toFixed(2), value = Math.round(100 * SPECIES[id].mult * kg), uid = nextUid++;
           p.fish.set(uid, { id, kg, len, value, by: { pid: p.id, key: p.token, name: p.name } });   // by：釣到的人（值錢的魚，紀錄算他的）
           this.send(p, { t: 'caught', fish: { uid, id, kg, len, value }, dex: recordDex(p, { id, kg, len }, '（測試）') });   // 賣掉才上榜
         }

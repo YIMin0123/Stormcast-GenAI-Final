@@ -199,7 +199,11 @@ export class Others {
       // 掌舵的人由船上的舵手模型代表，人偶不畫
       f.mesh.visible = !helm;
       // 動作輪盤：他那邊換了動作就跟著播（播一次的動作這裡自己播完）
-      if (s[11] !== o.lastAct) { o.lastAct = s[11]; f.act = ACTION_BY_ID[s[11]] ?? null; f.actT = 0; }
+      if (s[11] !== o.lastAct) {
+        o.lastAct = s[11];
+        f.act = Object.hasOwn(ACTION_BY_ID, s[11]) ? ACTION_BY_ID[s[11]] : null;
+        f.actT = 0;
+      }
       f.mood = s[12] || null; f.moodLeft = f.mood ? 5 : 0;
       f.look(s[6], s[7]);
       f.off.set(0, 0, 0);

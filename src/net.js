@@ -1,6 +1,6 @@
 // 跟多人伺服器的連線：填名字進大廳、挑房間、收發訊息、斷線時在 30 秒內自動接回去。
 import { myLook } from './look.js';
-// 伺服器位址：網址加 ?server=ws://… 可以指定；開發時（npm run dev）連本機的 8787；正式版連雲端那台
+// 正式版只連官方伺服器；開發版可用 ?server=、VITE_SERVER_URL 或預設的本機伺服器。
 const PROD_SERVER = 'wss://35-229-248-193.sslip.io';
 const params = new URLSearchParams(window.location.search);
 export const TEST = params.has('test');
@@ -10,10 +10,15 @@ const PING_EVERY = 2000;   // 多久量一次延遲（毫秒）
 const PING_STALE = 7000;   // 超過這麼久沒收到回覆，就不顯示延遲
 
 function serverUrl() {
-  if (params.get('server')) return params.get('server');
-  if (import.meta.env.VITE_SERVER_URL) return import.meta.env.VITE_SERVER_URL;
-  if (import.meta.env.DEV) return `ws://${window.location.hostname || 'localhost'}:8787`;
-  return PROD_SERVER;
+  if (!import.meta.env.DEV) return PROD_SERVER;
+  const custom = params.get('server') || import.meta.env.VITE_SERVER_URL;
+  if (custom) {
+    try {
+      const url = new URL(custom);
+      if (['ws:', 'wss:'].includes(url.protocol) && !url.hash && !url.username && !url.password) return url.href;
+    } catch { /* 格式錯誤，使用開發伺服器 */ }
+  }
+  return `ws://${window.location.hostname || 'localhost'}:8787`;
 }
 
 // 名字和認人用的代碼記在瀏覽器裡：關掉分頁再打開，30 秒內接得回原本的位置；錢、船、裝備、魚跟著代碼存在伺服器，到定時刷新才清。
@@ -26,11 +31,13 @@ const setItem = (k, v) => { try { store?.setItem(k, v); } catch { /* 存不了�
 
 export class Net {
   constructor() {
-    this.url = serverUrl();
+    this.url = new URL(serverUrl()).href;
+    // 舊的未分區憑證屬於正式伺服器，自訂端點只使用自己的儲存欄位。
+    this.tokenKey = this.url === new URL(PROD_SERVER).href ? 'stormcast.token' : `stormcast.token:${this.url}`;
     this.ws = null;
     this.id = 0;
     this.name = getItem('stormcast.name') || '';
-    this.token = getItem('stormcast.token') || '';
+    this.token = getItem(this.tokenKey) || '';
     this.handlers = {};
     this.inRoom = false;      // 已經進到房間裡
     this.roomId = 0;          // 進的是哪一間（伺服器重開之後要回同一間）
@@ -98,7 +105,7 @@ export class Net {
         case 'joined': {
           const back = this.inRoom;
           this.id = m.id; this.token = m.token; this.name = m.name; this.roomId = m.room?.id ?? this.roomId;
-          setItem('stormcast.token', m.token); setItem('stormcast.name', m.name);
+          setItem(this.tokenKey, m.token); setItem('stormcast.name', m.name);
           this.inRoom = true; this.online = true; this.lostAt = 0;
           if (want) { this._want = null; want.resolve({ joined: m }); } else if (back) this.emit('rejoin', m);
           this.emit('status', 'online');

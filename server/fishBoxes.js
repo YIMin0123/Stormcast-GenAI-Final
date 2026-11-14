@@ -1,7 +1,7 @@
 // 魚箱與送東西（伺服器這邊）：魚箱買了拿在手上，可以放在地上、甲板上，掉進海裡會浮著；只有主人搬得動。
 // 箱子裡的魚受保護：別人拿不走；別人把魚放進你的箱子 = 送給你。送魚、送箱子都要對方按接受。
 // 箱子：{ bid, owner 主人, fish: [uid…]（都在主人的 p.fish 裡）, k: hand 手上／g 地上／d 甲板上／w 浮在海上, x, y, z, yaw, b 誰的船 }
-import { FISHBOX, SHARE } from '../src/config.js';
+import { FISHBOX, SHARE, WORLD } from '../src/config.js';
 import { boxFit } from '../src/boxdata.js';
 import { BOAT_TYPES } from '../src/boatdata.js';
 import { SELL_W, SELL_REACH, HAVEN_SELL_W } from '../src/layout.js';
@@ -135,7 +135,7 @@ export function sellBox(room, p, m) {
 // ---- 買箱子：最多 FISHBOX.max 個；滿了要先答應清掉最舊的那個（m.replace） ----
 export function buyBox(room, p, m) {
   const kit = p.kit;
-  if (p.boxes.length >= FISHBOX.max && !m.replace) {
+  if (p.boxes.length >= FISHBOX.max && m.replace !== true) {
     const old = p.boxes[0];
     return room.send(p, { t: 'boxFull', n: old.fish.length });
   }
@@ -160,6 +160,7 @@ function offerCheck(room, g, off) {
     const bx = g.boxes.find((o) => o.bid === off.bid);
     if (!bx || bx.k !== 'hand') return '箱子已經不在手上了';
     if (t.boxes.length >= FISHBOX.max) return `對方已經有 ${FISHBOX.max} 個魚箱了`;
+    if (t.fish.size + bx.fish.length > 200) return '對方身上的魚太多了';
   }
   return '';
 }
@@ -178,14 +179,15 @@ export function onBoxMsg(room, p, m, now) {
   switch (m.t) {
     case 'boxPut': {   // 抱著的箱子放下：地上、甲板上（自己或別人的船）、海上（浮著）
       const bx = p.boxes.find((o) => o.bid === m.bid);
-      if (!bx || bx.k !== 'hand' || !['g', 'd', 'w'].includes(m.k) || !nums([m.x, m.y, m.z, m.yaw])) return true;
+      if (!p.pos || !bx || bx.k !== 'hand' || !['g', 'd', 'w'].includes(m.k) || !nums([m.x, m.y, m.z, m.yaw])
+        || Math.max(Math.abs(m.x), Math.abs(m.z)) > WORLD.size / 2 || Math.abs(m.y) > 300) return true;
       let bx0 = m.x, bz0 = m.z, b = 0;
       if (m.k === 'd') {
         const o = room.players.get(m.b);
         if (!o || !o.boat || o.boat.sunk || Math.hypot(m.x, m.z) > 20) return true;
         b = o.id; bx0 = o.boat.s[0]; bz0 = o.boat.s[1];
       }
-      if (p.pos && dist(p.pos[0], p.pos[2], bx0, bz0) > (m.k === 'd' ? 25 : 6)) return true;
+      if (dist(p.pos[0], p.pos[2], bx0, bz0) > (m.k === 'd' ? 25 : 6)) return true;
       Object.assign(bx, { k: m.k, x: m.x, y: m.y, z: m.z, yaw: m.yaw, b });
       show(room, bx);
       return true;
@@ -205,7 +207,8 @@ export function onBoxMsg(room, p, m, now) {
       if (!bx || !f || bx.k === 'hand' || room.loose.has(m.uid) || inBoxes(p).has(m.uid)) return no('放不進去');
       if (!nearBox(room, p, bx)) return no('太遠了，放不進去');
       const o = room.players.get(bx.owner);
-      if (!o) return no('放不進去');
+      if (!o || o.left) return no('放不進去');
+      if (o !== p && o.fish.size >= 200) return no('對方身上的魚太多了');
       const fit = boxFit(bx.fish.map((u) => o.fish.get(u)).filter(Boolean), f.id, f.len);
       if (fit) return no(fit === 'long' ? `這條${SPECIES[f.id].name}太大，放不進魚箱` : '魚箱滿了');
       if (o !== p) { p.fish.delete(m.uid); o.fish.set(m.uid, f); }
@@ -242,12 +245,13 @@ export function onBoxMsg(room, p, m, now) {
     }
     case 'giveAns': {
       const off = room.offers.get(m.oid);
-      if (!off || off.to !== p.id) return true;
+      if (!off || off.to !== p.id || typeof m.yes !== 'boolean') return true;
+      if (now - off.at >= FISHBOX.offerSec * 1000) { expireOffers(room, now); return true; }
       room.offers.delete(off.oid);
       const g = room.players.get(off.from);
       if (!g) return true;
       if (!m.yes) return room.send(g, { t: 'giveNo', msg: `${p.name} 不收` }), true;
-      const why = offerCheck(room, g, off);
+      const why = !p.pos || !room.near(g, p.pos[0], p.pos[2], FISHBOX.giveReach + 1) ? '離太遠了，無法交付' : offerCheck(room, g, off);
       if (why) { room.send(p, { t: 'no', msg: why }); room.send(g, { t: 'giveNo', msg: why }); return true; }
       if (off.uid) {
         const f = g.fish.get(off.uid);

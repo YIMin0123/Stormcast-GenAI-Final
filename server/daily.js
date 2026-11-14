@@ -51,10 +51,10 @@ export class Daily {
 
   save() {
     if (!this.dirty) return;
-    this.dirty = false;
     try {
       writeFileSync(this.file + '.tmp', JSON.stringify({ date: this.date, list: this.list }));
       renameSync(this.file + '.tmp', this.file);   // 先寫到暫存檔再換過去：寫到一半當機也不會弄壞原本的檔
+      this.dirty = false;
     } catch (err) { console.error('[daily] 存檔失敗', err.message); }
   }
 }

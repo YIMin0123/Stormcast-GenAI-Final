@@ -5,7 +5,12 @@
 # sslip.io 是把 IP 直接當網域用的免費服務；之後有自己的網域，把下面第一行換掉（再改 src/net.js 的 PROD_SERVER、stormcast.service 的 ORIGINS）。
 35-229-248-193.sslip.io {
 	encode zstd gzip
-	@ws header Connection *Upgrade*
+	@admin path /admin /admin/*
+	respond @admin 404
+	@ws {
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
 	handle @ws {
 		reverse_proxy 127.0.0.1:8787
 	}

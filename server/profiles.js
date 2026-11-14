@@ -49,11 +49,11 @@ export class Profiles {
 
   save() {
     if (!this.dirty) return;
-    this.dirty = false;
     try {
       const list = [...this.raw].map(([k, v]) => `${JSON.stringify(k)}:${v}`).join(',');
       writeFileSync(this.file + '.tmp', `{"epoch":${this.epoch},"list":{${list}}}`);
-      renameSync(this.file + '.tmp', this.file);   // 先寫到暫存檔再換過去：寫到一半當機也不會弄壞原本的檔
+      renameSync(this.file + '.tmp', this.file);
+      this.dirty = false;
     } catch (err) { console.error('[profiles] 存檔失敗', err.message); }
   }
 }

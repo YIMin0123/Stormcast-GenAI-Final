@@ -16,13 +16,25 @@ while [ $# -gt 0 ]; do
   esac
 done
 MODE="${POS[0]:-all}"; REF="${POS[1]:-HEAD}"
+case "$MODE" in all|web) ;; *) echo "更新模式只能用 all 或 web"; exit 1 ;; esac
+if [[ ! "$COUNT" =~ ^[0-9]{1,4}$ ]] || (( 10#$COUNT > 3600 )); then echo "倒數須為 0～3600 秒"; exit 1; fi
+COUNT=$((10#$COUNT))
 if [ "$COUNT" -gt 0 ] && [ "$MODE" = web ]; then echo "--count 只能搭配完整上線（all）：只換網頁不需要重開伺服器"; exit 1; fi
 VM=valheim-tw; ZONE=asia-east1-b
 cd "$(dirname "$0")/.."
 
-T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
-echo "==> 取出版本 $REF（$(git rev-parse --short "$REF")）"
-git archive "$REF" | tar -x -C "$T"
+T="$(mktemp -d)"
+REMOTE_STAGE=""
+cleanup() {
+  rm -rf -- "$T"
+  if [[ -n "$REMOTE_STAGE" ]]; then
+    gcloud compute ssh "$VM" --zone "$ZONE" --quiet --command "rm -rf -- '$REMOTE_STAGE'" || true
+  fi
+}
+trap cleanup EXIT
+REV="$(git rev-parse --verify --end-of-options "$REF^{commit}")"
+echo "==> 取出版本 $REF（${REV:0:7}）"
+git archive "$REV" | tar -x -C "$T"
 echo "==> 打包網頁"
 (cd "$T" && npm ci --silent && npm run build --silent)
 tar -czf "$T/dist.tgz" -C "$T/dist" .
@@ -32,10 +44,13 @@ if [ "$MODE" != "web" ]; then
   FILES+=("$T/server.tgz")
 fi
 echo "==> 傳到 $VM"
-gcloud compute scp "${FILES[@]}" "$VM:/tmp/" --zone "$ZONE" --quiet
+STAGE="$(gcloud compute ssh "$VM" --zone "$ZONE" --quiet --command 'mktemp -d /tmp/stormcast-deploy.XXXXXXXXXX')"
+if [[ ! "$STAGE" =~ ^/tmp/stormcast-deploy\.[A-Za-z0-9]{10}$ ]]; then echo "無法建立上傳目錄"; exit 1; fi
+REMOTE_STAGE="$STAGE"
+gcloud compute scp "${FILES[@]}" "$VM:$REMOTE_STAGE/" --zone "$ZONE" --quiet
 WHEN=now; [ "$COUNT" -gt 0 ] && WHEN=later
 echo "==> 在伺服器上更新（$MODE$([ "$COUNT" -gt 0 ] && echo "，倒數 $COUNT 秒" || true)）"
-gcloud compute ssh "$VM" --zone "$ZONE" --quiet --command "sudo bash /tmp/remote-update.sh $MODE $WHEN"
+gcloud compute ssh "$VM" --zone "$ZONE" --quiet --command "sudo bash '$REMOTE_STAGE/remote-update.sh' $MODE $WHEN"
 if [ "$COUNT" -gt 0 ]; then
   echo "==> 發公告、倒數 $COUNT 秒（新程式已經換好，歸零時伺服器重開）"
   bash deploy/announce.sh "$NOTICE" "$COUNT"

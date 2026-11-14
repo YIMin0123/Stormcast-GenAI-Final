@@ -38,11 +38,11 @@ export class Dexbooks {
   }
   save() {
     if (!this.dirty) return;
-    this.dirty = false;
     try {
       const list = [...this.raw].map(([k, v]) => `${JSON.stringify(k)}:${v}`).join(',');
       writeFileSync(this.file + '.tmp', `{"list":{${list}}}`);
       renameSync(this.file + '.tmp', this.file);
+      this.dirty = false;
     } catch (err) { console.error('[dexbook] 存檔失敗', err.message); }
   }
 }

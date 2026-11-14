@@ -32,7 +32,7 @@ bash deploy/announce.sh clear                  # 取消公告和倒數
 
 重開 = 伺服器把所有人的進度存好後結束，systemd 幾秒內再開起來（錢、船、裝備、魚都存在檔案裡）。要上線新版又要倒數，直接用 `push.sh --notice "文字" --count 秒數`：先在自己電腦打包、上傳、把新程式換到伺服器上（這時還不重開），**換好之後才發公告開始倒數**，歸零那一刻伺服器重開，只重開一次、不會提早。（不要先發 `announce.sh` 倒數再另外跑不帶 `--count` 的 `push.sh`：`push.sh` 會立刻重開，倒數就被打斷了。）
 伺服器重開後，客戶端會自動重新進同一間房（進度跟著代碼回來、人回港口、聊天欄提示「伺服器剛更新完」），不用玩家按任何東西；只有房間關了、滿了才會跳「斷線太久」。
-這些指令只能從伺服器本機發，外面的人打不進來。
+管理端點只接受伺服器本機 CLI 的 POST。瀏覽器和反向代理轉發的請求會被拒絕。
 
 ## 伺服器上有什麼（第一次設定時裝的，已經裝好）
 
@@ -47,8 +47,10 @@ bash deploy/announce.sh clear                  # 取消公告和倒數
 改 `Caddyfile` 或 `stormcast.service` 之後要手動放到伺服器：
 
 ```bash
-gcloud compute scp deploy/Caddyfile deploy/stormcast.service valheim-tw:/tmp/ --zone asia-east1-b
-gcloud compute ssh valheim-tw --zone asia-east1-b --command "sudo caddy validate --config /tmp/Caddyfile --adapter caddyfile && sudo cp /tmp/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy && sudo cp /tmp/stormcast.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart stormcast"
+STAGE="$(gcloud compute ssh valheim-tw --zone asia-east1-b --command 'mktemp -d /tmp/stormcast-config.XXXXXXXXXX')"
+[[ "$STAGE" =~ ^/tmp/stormcast-config\.[A-Za-z0-9]{10}$ ]] &&
+  gcloud compute scp deploy/Caddyfile deploy/stormcast.service "valheim-tw:$STAGE/" --zone asia-east1-b &&
+  gcloud compute ssh valheim-tw --zone asia-east1-b --command "sudo caddy validate --config '$STAGE/Caddyfile' --adapter caddyfile && sudo install -m 644 '$STAGE/Caddyfile' /etc/caddy/Caddyfile && sudo systemctl reload caddy && sudo install -m 644 '$STAGE/stormcast.service' /etc/systemd/system/stormcast.service && sudo systemctl daemon-reload && sudo systemctl restart stormcast && rm -rf -- '$STAGE'"
 ```
 
 ## 換網域
@@ -70,7 +72,7 @@ npm run dev
 ```
 
 `server/dev.js` 是開發用的伺服器：開著測試指令、合併等得比較短。網址加 `?test&name=小明&room=1` 會直接用這個名字進 1 號港，
-每個這樣的分頁都是不同的玩家。伺服器的自動測試：`node server/test/smoke.mjs`。
+每個這樣的分頁都是不同的玩家。伺服器的安全回歸測試可用 `node --test tools/security.test.js`。
 
 ## 投稿 4388.fun
 

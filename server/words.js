@@ -62,4 +62,4 @@ export function mask(text) {
 }
 
 // 名字：去掉控制字元與角括號，頭尾空白拿掉，最多 12 個字
-export const cleanName = (s) => [...String(s ?? '').replace(/[\u0000-\u001f\u007f<>]/g, '').trim()].slice(0, 12).join('');
+export const cleanName = (s) => typeof s === 'string' ? [...s.replace(/[\u0000-\u001f\u007f<>]/g, '').trim()].slice(0, 12).join('') : '';

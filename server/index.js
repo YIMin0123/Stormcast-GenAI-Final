@@ -12,8 +12,9 @@ import { WebSocketServer } from 'ws';
 import { randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Room, newPlayer, profileOf, applyProfile, MAX_PLAYERS, TICK } from './room.js';
-import { boxPub, inBoxes } from './fishBoxes.js';
+import { Room, newPlayer, profileOf, applyProfile, MAX_PLAYERS, TICK, DEV } from './room.js';
+import { boxPub } from './fishBoxes.js';
+import { sendRaw } from './wire.js';
 import { Daily } from './daily.js';
 import { Profiles, epochAt } from './profiles.js';
 import { Dexbooks, loadDex } from './dex.js';
@@ -29,6 +30,7 @@ const MERGE_AFTER = +(process.env.MERGE_AFTER_SEC || 600) * 1000;   // 兩間房
 const MERGE_COUNT = +(process.env.MERGE_COUNT_SEC || 30);           // 合併前倒數幾秒
 const MERGE_BELOW = 5;
 const SAVE_EVERY = 10;   // 進度幾秒存一次（有變才寫檔）
+const MAX_CONNECTIONS = 256;   // 包含大廳及尚未送 hello 的連線
 
 const hub = {
   rooms: new Map(),       // 房號 → Room
@@ -47,7 +49,7 @@ const hub = {
 // 伺服器關著的時候刷新過了：今日紀錄也一起清
 if (hub.profiles.stale) { hub.daily.clear(); hub.profiles.save(); console.log('[refresh] 關機期間刷新過了，進度和今日紀錄已清空'); }
 
-const send = (ws, msg) => { if (ws.readyState === 1) ws.send(JSON.stringify(msg)); };
+const send = (ws, msg) => sendRaw(ws, JSON.stringify(msg));
 const lobbyList = () => ({
   t: 'lobby',
   rooms: [...hub.rooms.values()].sort((a, b) => a.id - b.id).map((r) => ({ id: r.id, name: r.name, n: r.count, max: MAX_PLAYERS, weather: r.weather })),
@@ -161,7 +163,7 @@ function mergeStep(now) {
 
 // ---- 連線 -------------------------------------------------------------------
 // ---- 管理：全服跑馬燈公告、倒數強制重開（用 deploy/announce.sh 在伺服器本機呼叫）----
-// 只收本機：遊戲伺服器只聽 127.0.0.1，外面的人直接連不到；而 Caddy 轉進來的請求一定帶 x-forwarded-for，所以帶了這個標頭的一律拒絕。
+// 只收本機 CLI 的 POST。拒絕 Caddy 轉發、跨站表單及瀏覽器發出的請求。
 let notice = null, noticeTimer = null;   // notice：{ text, restartAt（毫秒時間戳，0 = 不重開） }
 const noticeMsg = () => JSON.stringify({ t: 'notice', text: notice ? notice.text : '', left: notice && notice.restartAt ? Math.max(0, Math.ceil((notice.restartAt - Date.now()) / 1000)) : -1 });
 function setNotice(text, restartSec) {
@@ -169,12 +171,15 @@ function setNotice(text, restartSec) {
   notice = text || restartSec > 0 ? { text, restartAt: restartSec > 0 ? Date.now() + restartSec * 1000 : 0 } : null;
   if (notice && notice.restartAt) noticeTimer = setTimeout(() => { console.log('[admin] 倒數結束，存檔後重開'); stop(); }, restartSec * 1000);   // 存檔後結束；systemd 會馬上重開，玩家斷線後自動接回
   const raw = noticeMsg();
-  for (const ws of wss.clients) if (ws.readyState === 1) ws.send(raw);
+  for (const ws of wss.clients) sendRaw(ws, raw);
 }
 function admin(req, res, url) {
   const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) && !req.headers['x-forwarded-for'];
   const reply = (code, text) => { res.writeHead(code, { 'content-type': 'text/plain; charset=utf-8' }); res.end(`${text}\n`); };
   if (!local) return reply(403, 'forbidden');
+  if (req.headers.origin || req.headers['sec-fetch-site']
+    || !['127.0.0.1', 'localhost', '[::1]'].includes(req.headers.host?.replace(/:\d+$/, ''))) return reply(403, 'forbidden');
+  if (req.method !== 'POST') { res.setHeader('allow', 'POST'); return reply(405, 'method not allowed'); }
   if (url.pathname === '/admin/notice') {
     const text = (url.searchParams.get('text') || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 120);
     const restart = Math.min(Math.max(Math.floor(+url.searchParams.get('restart') || 0), 0), 3600);
@@ -186,7 +191,8 @@ function admin(req, res, url) {
   return reply(404, 'not found');
 }
 const http = createServer((req, res) => {
-  const url = new URL(req.url, 'http://localhost');
+  let url;
+  try { url = new URL(req.url, 'http://localhost'); } catch { res.writeHead(400); res.end(); return; }
   if (url.pathname.startsWith('/admin/')) return admin(req, res, url);
   let n = 0;
   hub.eachRoom((r) => { n += r.active; });
@@ -199,7 +205,11 @@ const wss = new WebSocketServer({
 });
 
 wss.on('connection', (ws) => {
-  ws.send(noticeMsg());   // 新連線：現在有公告就帶上（重開之後沒有公告，等於把舊的跑馬燈清掉）
+  ws.on('error', () => {});
+  if (wss.clients.size > MAX_CONNECTIONS) { ws.terminate(); return; }
+  sendRaw(ws, noticeMsg());   // 新連線：現在有公告就帶上
+  ws.alive = true;
+  ws.on('pong', () => { ws.alive = true; });
   let me = null;        // 進房之後才有
   let name = '', token = '', look = 'girl';   // look：選的角色（只收得到 girl／boy）
   let burstAt = 0, burst = 0;
@@ -222,18 +232,28 @@ wss.on('connection', (ws) => {
   };
 
   ws.on('message', (raw) => {
-    // 一秒超過 80 則訊息：不正常，丟掉多的
+    // 一秒超過 80 則訊息就中止連線。
+    if (ws.readyState !== 1) return;
     const now = Date.now();
     if (now - burstAt > 1000) { burstAt = now; burst = 0; }
-    if (++burst > 80) return;
+    if (++burst > 80) { ws.terminate(); return; }
     let m;
     try { m = JSON.parse(raw); } catch { return; }
     if (!m || typeof m.t !== 'string') return;
-    if (m.t === 'ping') return send(ws, { t: 'pong', k: m.k });   // 量延遲用：原樣丟回去（大廳和房間裡都一樣）
+    if (me && me.ws !== ws) return;
+    if (m.t === 'ping') {
+      if (Number.isFinite(m.k)) send(ws, { t: 'pong', k: m.k });
+      return;
+    }
 
     if (me) {
       if (m.t === 'leave') { const r = me.room; r.quit(me); me = null; ws.close(); tidyRooms(); return; }
-      if (me.room) me.room.on(me, m);
+      if (me.room) {
+        try { me.room.on(me, m); } catch (err) {
+          console.error('[message] handler failed', err);
+          ws.close(1011, 'message handling failed');
+        }
+      }
       return;
     }
 
@@ -249,7 +269,7 @@ wss.on('connection', (ws) => {
       return send(ws, { ...lobbyList(), name });
     }
 
-    if (m.t === 'devRoom' && process.env.STORMCAST_DEV) {   // 測試用：多開一間房（平常要等房間滿了才會開）
+    if (m.t === 'devRoom' && DEV && hub.rooms.size < 16) {   // 測試用：多開一間房
       let k = 1;
       while (hub.rooms.has(k)) k++;
       const r = new Room(k, hub);
@@ -265,7 +285,12 @@ wss.on('connection', (ws) => {
       if (r.count >= MAX_PLAYERS) return send(ws, { t: 'full', msg: '這間房滿了，挑別間吧', ...lobbyList() });
       if (hub.merge && hub.merge.from === r) return send(ws, { t: 'full', msg: '這間房正要合併到別間，挑別間吧', ...lobbyList() });
       if (resume()) return;   // 同一台裝置在別的視窗已經在房裡了：接過來
-      if (!token) token = randomBytes(16).toString('hex');   // 第一次來：發一個認人的代碼，進度跟著它存
+      // 留船只為了讓離線畫面自然。在反覆進出填滿泊位時先回收離開的船。
+      if (r.players.size >= MAX_PLAYERS) {
+        const departed = [...r.players.values()].find((p) => p.left);
+        if (departed) r.remove(departed);
+      }
+      if (!hub.profiles.raw.has(token) && !hub.dexbook.raw.has(token)) token = randomBytes(16).toString('hex');
       me = newPlayer(hub.nextId++, ws, token, name, look);
       const prof = hub.profiles.get(token);
       if (prof) applyProfile(me, prof);
@@ -274,7 +299,7 @@ wss.on('connection', (ws) => {
       hub.lobby.delete(ws);
       r.enter(me);
       // 有存著的進度：家當、倉庫裡的船、還沒賣的魚還給他，人從港口出發、船停在分到的格子
-      const back = prof && { pos: null, boat: { ...me.boat, s: [...me.boat.s] }, stored: me.stored, fish: [...me.fish].filter(([uid]) => !inBoxes(me).has(uid)).map(([uid, f]) => ({ uid, ...f })) };   // 魚箱裡的跟著箱子回來
+      const back = prof && r.resumeData(me);
       r.send(me, { t: 'joined', resume: back || null, ...r.snapshot(me) });
       hub.keep(me);
       console.log(`[join] ${name} 進了 ${r.name}（${r.count}/${MAX_PLAYERS}）${prof ? '，帶著存著的進度' : ''}`);
@@ -288,7 +313,6 @@ wss.on('connection', (ws) => {
     console.log(`[drop] ${me.name} 斷線（${me.room.name}）`);
     me.room.drop(me);
   });
-  ws.on('error', () => {});
 });
 
 // ---- 時鐘 -------------------------------------------------------------------
@@ -298,7 +322,12 @@ setInterval(() => {
   n++;
   for (const r of hub.rooms.values()) r.step(now);
   if (n % 10 === 0) { mergeStep(now); tidyRooms(); }
-  if (n % 20 === 0 && hub.lobby.size) { const raw = JSON.stringify(lobbyList()); for (const ws of hub.lobby) if (ws.readyState === 1) ws.send(raw); }
+  if (n % 20 === 0 && hub.lobby.size) { const raw = JSON.stringify(lobbyList()); for (const ws of hub.lobby) sendRaw(ws, raw); }
+  if (n % 300 === 0) for (const ws of wss.clients) {
+    if (ws.readyState !== 1) continue;
+    if (!ws.alive) ws.terminate();
+    else { ws.alive = false; ws.ping(); }
+  }
   if (n % 10 === 0 && epochAt(now) > hub.profiles.epoch) refresh(false);
   if (n % (SAVE_EVERY * 10) === 0) {
     hub.eachRoom((r) => { for (const p of r.players.values()) hub.keep(p); });
