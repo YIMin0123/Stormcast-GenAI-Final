@@ -1,6 +1,20 @@
 # 放在伺服器的 /etc/caddy/Caddyfile。
-# Caddy 會自動申請 https 憑證（需要對外開 80、443），再把連線轉給只聽本機的遊戲伺服器。
-# sslip.io 是把 IP 直接當網域用的免費服務；之後有自己的網域，把這一行換掉就好。
+# Caddy 自動申請 https 憑證（需要對外開 80、443），同一個網址做兩件事：
+#   WebSocket 連線（遊戲）→ 轉給只聽本機的遊戲伺服器
+#   其他（網頁、模型、音效）→ 直接送 /var/www/stormcast 裡打包好的網頁
+# sslip.io 是把 IP 直接當網域用的免費服務；之後有自己的網域，把下面第一行換掉（再改 src/net.js 的 PROD_SERVER、stormcast.service 的 ORIGINS）。
 35-229-248-193.sslip.io {
-	reverse_proxy 127.0.0.1:8787
+	encode zstd gzip
+	@ws header Connection *Upgrade*
+	handle @ws {
+		reverse_proxy 127.0.0.1:8787
+	}
+	handle /status {
+		rewrite * /
+		reverse_proxy 127.0.0.1:8787
+	}
+	handle {
+		root * /var/www/stormcast
+		file_server
+	}
 }

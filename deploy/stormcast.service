@@ -12,8 +12,8 @@ Restart=always
 RestartSec=3
 Environment=PORT=8787
 Environment=HOST=127.0.0.1
-# 只收從這些網站連進來的玩家（用逗號隔開）
-Environment=ORIGINS=https://yimin0123.github.io
+# 只收從這些網站連進來的玩家（用逗號隔開）。第一個是自己這台提供的網頁；第二個是舊的 GitHub Pages（轉私有後就沒用了，可以拿掉）
+Environment=ORIGINS=https://35-229-248-193.sslip.io,https://yimin0123.github.io
 # 今日紀錄存在這裡
 Environment=DATA_DIR=/var/lib/stormcast
 # 跟瓦爾海姆共用一台：記憶體給個上限，出事也不會拖垮整台
