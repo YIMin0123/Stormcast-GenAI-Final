@@ -1997,7 +1997,7 @@ function showBait() {
 function cycleBait() {
   if (!inGame) return;
   const list = ['', ...Object.keys(BAITS).filter((t) => baitCount(kit, t) > 0)];
-  if (list.length === 1) return toast('身上沒有餌。商店東邊的工作台有賣');
+  if (list.length === 1) return toast('身上沒有餌。商店裡有賣');
   const next = list[(Math.max(0, list.indexOf(kit.bait)) + 1) % list.length];
   net.send({ t: 'baitSel', id: next });
   toast(next ? `換上${BAITS[next].name}（剩 ${baitCount(kit, next)} 個）：${BAITS[next].desc}` : '換回基本餌（不加成，也不花錢）');

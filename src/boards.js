@@ -98,7 +98,7 @@ export class Boards {
       m.traverse((o) => {
         if (!o.isMesh) return;
         const old = o.material;
-        o.material = new THREE.MeshBasicMaterial({ color: old.color, vertexColors: old.vertexColors, side: old.side });
+        o.material = new THREE.MeshBasicMaterial({ color: old.color, map: old.map, vertexColors: old.vertexColors, side: old.side });   // 魚身的顏色在貼圖上（貼圖是各魚種共用的快取，不跟著材質丟掉）
         o.material.userData.base = old.color.clone();
         old.dispose();
         this.unlit.push(o.material);
