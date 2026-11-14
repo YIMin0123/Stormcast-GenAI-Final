@@ -8,7 +8,7 @@ import { Player } from './player.js';
 import { ShallowWater, SWE } from './shallow.js';
 import { makeSwimFx } from './swimfx.js';
 import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SELL, setBoard, BOLLARDS, MoorLine, SHELF, setTag, LAMPS, UNLIT, WET, ROOM_LIGHTS, ROOM_LAMPS, setRoomLights, GLOW_KEEP, lightBulbs, updateFlags, updateScale, PORCHES, HOME_LAND } from './harbor.js';
-import { WORLD, THROW } from './config.js';
+import { WORLD, THROW, DEVMODE } from './config.js';
 import { HOME_U, placeInHome } from './homeGl.js';
 import { HOME_YAW, toWorld, toLocal, headingToWorld, havenToLocal, HAVEN } from './frame.js';
 import { makeSeascape, HAVEN_LAND, HAVEN_GROUND } from './haven.js';
@@ -289,14 +289,16 @@ function rockAt(x, z) {
 // 玩家腳下的高度：棧板、地面，或擋路的牆（回傳很高的值）
 function walkGround(x, z, under = false) {
   const [hx, hz] = toLocal(x, z);   // 商店、牆這些矩形是用港座標寫的
-  for (const r of BLOCKS) if (inWall(r, hx, hz)) return 99;
-  if (Math.hypot(x - LIGHTHOUSE_W.x, z - LIGHTHOUSE_W.z) < LIGHTHOUSE_W.r) return 99;
+  // 開發者模式飛得夠高（腳比底下的地面高 DEVMODE.wallTop）：房子、牆、燈塔、燈柱這些沒記高度的東西從上面飛過去
+  const over = walker.fly && walker.feet !== null && walker.feet > Math.max(landAt(x, z, hx, hz), 0) + DEVMODE.wallTop;
+  if (!over) for (const r of BLOCKS) if (inWall(r, hx, hz)) return 99;
+  if (!over && Math.hypot(x - LIGHTHOUSE_W.x, z - LIGHTHOUSE_W.z) < LIGHTHOUSE_W.r) return 99;
   // 棧板上的樁、燈柱、木桶…（在棧板底下游泳時不算）。有 top 的（木箱、木桶、魚箱）跳得上去：跟石頭一樣看玩家的腳（walker）——
   // 腳已經在箱頂的高度、或跳起來離箱頂不到 0.35 公尺就站得上去；矮的（不到半公尺）直接踏上去
   if (!under) {
     let top = null;
     for (const c of SOLIDS) {
-      if ((x - c.x) ** 2 + (z - c.z) ** 2 >= c.r * c.r) continue;
+      if (over || (x - c.x) ** 2 + (z - c.z) ** 2 >= c.r * c.r) continue;
       const f = walker.feet;
       if (c.top === undefined || f === null || c.top > f + (walker.air ? 0.35 : 0.5)) return 99;
       if (top === null || c.top > top) top = c.top;
@@ -340,7 +342,8 @@ function landAt(x, z, hx, hz) {
     const VG = HAVEN_GROUND, vh = VG.size / 2 - 2, [vx, vz] = havenToLocal(x, z);
     if (Math.abs(vx - VG.cx) < vh && Math.abs(vz - VG.cz) < vh) {
       // 透天洞穴是上下兩層：人比洞頂低（在洞裡游泳、從天窗掉下去）就照洞底，在洞頂上面走就照山坡
-      if (portWall(vx, vz)) return 99;   // 山城的小屋：牆擋著
+      const over = walker.fly && walker.feet !== null && walker.feet > HAVEN_LAND.at(vx, vz) + DEVMODE.wallTop;   // 開發者模式飛得夠高：從屋頂上飛過去
+      if (!over && portWall(vx, vz)) return 99;   // 山城的小屋：牆擋著
       // 天窗邊的跳水台、碼頭的棧板：踩在上面的人照板面
       const dk = havenDeck(vx, vz, walker.feet);
       if (dk !== null) return skyEdge(vx, vz) > 0 ? Math.max(dk, HAVEN_LAND.at(vx, vz)) : dk;
@@ -351,7 +354,7 @@ function landAt(x, z, hx, hz) {
   return bedAt(x, z);
 }
 // 正在走的那個人的腳在多高（只有玩家自己移動的那一下有值；其他地方問地面高度時是 null，石頭照「比地面高半公尺就擋」）
-const walker = { feet: null, air: false };
+const walker = { feet: null, air: false, fly: false };   // fly：開發者模式飛行中（見 walkGround）
 // 丟出去、還在飛的東西底下的地面（y：東西的底在多高）：木箱、木桶、石頭照東西的高度看落不落得上去（跟跳起來的人一樣）；
 // 繫船柱、燈桿、樁這類沒記高度的細東西只擋低低飛過去的（離棧板一公尺內），飛得比它高就過去
 function flyGround(x, z, y) {
@@ -2493,8 +2496,35 @@ $('sound').addEventListener('click', () => {
 });
 
 // 用實體按鍵位置（e.code）判斷，開著注音輸入法也能操作
-const KEYMAP = { KeyW: 'w', KeyA: 'a', KeyS: 's', KeyD: 'd', ShiftLeft: 'shift', ShiftRight: 'shift', Space: 'space', KeyF: 'f' };
-const keys = { w: false, a: false, s: false, d: false, shift: false, space: false, f: false, mouse: false };
+const KEYMAP = { KeyW: 'w', KeyA: 'a', KeyS: 's', KeyD: 'd', ShiftLeft: 'shift', ShiftRight: 'shift', ControlLeft: 'ctrl', ControlRight: 'ctrl', Space: 'space', KeyF: 'f' };
+const keys = { w: false, a: false, s: false, d: false, shift: false, ctrl: false, space: false, f: false, mouse: false };
+
+// ---- 開發者模式（只有測試環境：伺服器開了開發模式，進房時 snapshot 帶 dev）----
+// 飛行（連按兩下空白鍵、或設定裡的開關）、不會累、不會溺水、設定裡的測試指令按鈕
+let devMode = false, lastSpace = -1;
+player.flySpeed = DEVMODE.flySpeed; player.flyVert = DEVMODE.flyVert; player.flyMaxH = DEVMODE.flyMaxH;
+function setFly(on) {
+  player.fly = devMode && on && mode === 'walk' && !player.seat;
+  if (!player.fly && player.h > 0) player.vy = 0;   // 關掉飛行：從現在的高度掉下去
+  $('devFly').textContent = player.fly ? '開' : '關';
+  $('devFly').classList.toggle('on', player.fly);
+}
+function setDevMode(on) {
+  devMode = !!on;
+  $('devSec').hidden = !devMode;
+  if (!devMode) setFly(false);
+}
+$('devFly').addEventListener('click', () => { setFly(!player.fly); toast(player.fly ? '飛行：Shift 上升、Ctrl 下降，連按兩下空白鍵關掉' : '關掉飛行'); });
+for (const b of document.querySelectorAll('[data-dev]')) {
+  b.addEventListener('click', () => {
+    const d = b.dataset, cmd = d.dev;
+    if (cmd === 'refresh' && !confirm('立刻刷新：清掉測試伺服器上所有人的錢、船、魚和排行榜？')) return;
+    net.send({ t: 'dev', cmd, kind: d.kind, n: d.n && +d.n, kg: d.kg && +d.kg, hours: d.hours && +d.hours });
+    if (cmd === 'money') toast(`（測試）加了 ${(+d.n).toLocaleString()} 元`);
+    else if (cmd === 'calm') toast('（測試）海況恢復平靜');
+    else if (cmd === 'skip') toast(`（測試）快轉 ${d.hours} 小時`);
+  });
+}
 // 動作與表情的輪盤：走路時按住 G 叫出來，移動滑鼠選，放開 G 播放
 const wheel = new EmoteWheel();
 function closeWheel(play) {
@@ -2543,7 +2573,13 @@ window.addEventListener('keydown', (e) => {
   const k = KEYMAP[e.code];
   if (k) keys[k] = true;
   if (e.code === 'Space') e.preventDefault();
+  if (player.fly && keys.ctrl && e.code !== 'KeyW') e.preventDefault();   // 飛行時按著 Ctrl 下降：擋掉 Ctrl+S、Ctrl+D 這些瀏覽器快捷鍵（Ctrl+W 擋不住）
   if (e.repeat) return;
+  // 開發者模式：連按兩下空白鍵切換飛行
+  if (e.code === 'Space' && devMode && mode === 'walk') {
+    const now = performance.now() / 1000;
+    if (now - lastSpace < DEVMODE.doubleTap) { setFly(!player.fly); lastSpace = -1; } else lastSpace = now;
+  }
   if (e.code === 'KeyC') toggleFp();
   if (e.code === 'KeyM') toggleMap();
   if (e.code === 'Escape' && mapOpen) toggleMap();
@@ -2913,6 +2949,7 @@ let fuelWarned = false;
 const SWIM_SECONDS = 50;   // 不拿東西、慢慢游，可以游多久
 let stamina = 1, drown = null, wasSwim = false, stamShown = false, surgeToast = false, whirlToast = false;
 function beginDrown(text) {
+  if (devMode) return;   // 開發者模式不會溺水
   drown = { t: 0, text };
   fishing.cancel();
 }
@@ -2951,7 +2988,7 @@ function updateSwim(dt) {
     // 用力游、捧著東西、浪大都比較累；停著踩水比較省力
     const rough = clamp((levelAt(player.x, player.z) - 0.45) * 1.5, 0, 2);
     const k = (player.moving ? (keys.shift || touch.run ? 1.45 : 1) : 0.6) * (player.carry ? 1.35 : 1) * (1 + 0.4 * rough);
-    stamina -= dt * k / SWIM_SECONDS;
+    if (!devMode) stamina -= dt * k / SWIM_SECONDS;   // 開發者模式不會累
     // 巨浪沖上岸：人浮在湧進來的水裡，被水帶著往浪前進的方向沖
     const sg = surgeAt(player.x, player.z);
     if (sg > 0.4) {
@@ -2968,7 +3005,7 @@ function updateSwim(dt) {
     }
     if (stamina <= 0 && !drown) { stamina = 0; beginDrown('你游到沒力，被救回港口'); }
   } else if (!player.onWater) stamina = Math.min(1, stamina + dt / 12);   // 從水裡跳起來、還在半空中時不回體力
-  if (wasSwim && !player.swim && player.onWater && player.h > 0) stamina = Math.max(0, stamina - 0.04);   // 在水裡跳一下要花一點力氣
+  if (!devMode && wasSwim && !player.swim && player.onWater && player.h > 0) stamina = Math.max(0, stamina - 0.04);   // 在水裡跳一下要花一點力氣
 
   if (player.swim && !wasSwim) { splash(player.x, playerWater(player.x, player.z) + 0.1, player.z, 18); audio.play('dive'); }
   wasSwim = player.swim;
@@ -3424,6 +3461,7 @@ function enterRoom(j) {
     yaw = pos[3];
   }
   player.seat = null;
+  setDevMode(j.dev);
   player.place(walkWorld, px, pz, deck);
   player.yaw = view.walk.yaw = yaw;
   applyViewSettings();
@@ -3510,9 +3548,10 @@ function advance(dt) {
     // 人在水邊或水裡才需要知道浪高
     swimWave = !player.boat && bedAt(player.x, player.z) < -0.4 ? ocean.sampleHeight(player.x, player.z) : 0;
     player.look(v.yaw, v.pitch);
-    walker.feet = player.boat ? null : player.y; walker.air = player.h > 0;
-    player.update(dt, cy * f - sy * r, sy * f + cy * r, keys.shift || touch.run, keys.space && !drown, walkWorld);
-    walker.feet = null;
+    walker.feet = player.boat ? null : player.y; walker.air = player.h > 0 || player.fly; walker.fly = player.fly;
+    const rise = player.fly ? (keys.shift ? 1 : 0) - (keys.ctrl ? 1 : 0) : 0;   // 飛行：Shift 上升、Ctrl 下降
+    player.update(dt, cy * f - sy * r, sy * f + cy * r, (keys.shift || touch.run) && !player.fly, keys.space && !drown && !player.fly, walkWorld, rise);
+    walker.feet = null; walker.fly = false;
     if (v.fp) { player.yaw = v.yaw; player.mesh.rotation.y = -v.yaw; } // 第一人稱時身體跟著視線
     if (player.onWater && !drown) waveRide(dt);
     riverRide(dt);

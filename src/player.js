@@ -32,6 +32,8 @@ export class Player {
     this.moving = false;
     this.run = false;
     this.carry = false;                    // 雙手捧著東西
+    this.fly = false;                      // 開發者模式：飛行中（速度、上下速度、最高高度由 main.js 照 DEVMODE 設）
+    this.flySpeed = 12; this.flyVert = 8; this.flyMaxH = 150;
     this.rod = false;                      // 右手拿著釣竿
     this.onWater = false;                  // 腳下是水（踩不到底）
     this.swim = false;                     // 正在游泳（在水裡、不是掉下去的途中）
@@ -185,7 +187,9 @@ export class Player {
   // dirX/dirZ：想走的方向（世界座標，可為 0）
   // world.ground(x,z,under)：地面或棧板高度（很大的值 = 牆）；under = true 時不算棧板，只看底下的地面
   // world.water(x,z)：水面高度；world.boats：可以走上去的船
-  update(dt, dirX, dirZ, run, jump, world) {
+  // fly：開發者模式的飛行（rise：+1 上升、-1 下降）。沒有重力，空中會撞到比腳高的東西；落到地上還是飛行狀態
+  update(dt, dirX, dirZ, run, jump, world, rise = 0) {
+    const fly = this.fly && !this.seat;
     // 坐著：釘在位子上，不能走、不能跳；屁股在坐墊的高度（整個人放低），面向位子的方向
     if (this.seat && (this.seat.boat !== this.boat || this.boat.sinking)) this.seat = null;
     const seat = this.seat;
@@ -205,13 +209,13 @@ export class Player {
       this.base = s ? s.y : world.ground(this.x, this.z);
       this.onWater = !!(s && s.swim);
     }
-    const swim = this.swim = this.onWater && this.h <= 0;
+    const swim = this.swim = this.onWater && this.h <= 0 && !(fly && rise > 0);
 
     const len = Math.hypot(dirX, dirZ);
     this.moving = len > 0.01;
     if (this.moving) {
-      let v = swim ? (run ? SWIM_FAST : SWIM) : (run ? RUN : WALK);
-      if (swim && this.carry) v *= 0.7;                                                        // 捧著東西游比較慢
+      let v = fly ? this.flySpeed : swim ? (run ? SWIM_FAST : SWIM) : (run ? RUN : WALK);
+      if (fly) { /* 飛行：不管水、不管手上拿什麼 */ } else if (swim && this.carry) v *= 0.7;                                                        // 捧著東西游比較慢
       else if (!swim && !this.boat && this.base < world.water(this.x, this.z) - 0.45) v *= 0.6; // 涉水
       const sp = v * dt, dx = (dirX / len) * sp, dz = (dirZ / len) * sp;
       if (!this._move(dx, dz, world)) {
@@ -228,6 +232,15 @@ export class Player {
       this.phase += dt * (swim ? 6 : run ? 13 : 8.5);
     }
 
+    if (fly) {
+      // 飛行：Shift 上升、Ctrl 下降，放開就停在半空；往上碰到頭頂的東西（棧板底、洞頂）不管，往下碰到地面就站著
+      this.vy = 0;
+      this.h = Math.min(Math.max(this.h + rise * this.flyVert * dt, 0), Math.max(0, this.flyMaxH - this.base));
+      this.y = this.base + this.h;
+      this.run = false;
+      this.animate(dt);
+      return;
+    }
     // 跳躍與重力。游泳時也能跳：用力一蹬，整個人竄出水面（腳離水面約半公尺）
     if (jump && swim && !this.boat && world.ground(this.x, this.z) > this.base + 1.5) jump = false;   // 在棧橋底下游：頭上是棧板，跳不起來
     if (jump && this.h <= 0) { this.vy = swim ? JUMP_SWIM : JUMP; this.h = 1e-3; }
