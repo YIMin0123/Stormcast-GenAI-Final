@@ -2541,6 +2541,7 @@ const wildlife = makeWildlife({
   stealables: () => fish.items.filter((it) => !it.remote && it.uid && !it.can && (it.state === 'ground' || (it.state === 'boat' && it.boat && !it.boat.sinking))),
   itemPos: (it, out) => fish.worldPos(it, out),
   steal: (it) => fish.steal(it),
+  cry: (x, y, z, v, rate) => audio.play('gull', 0.6 * v, { x, y, z }, rate),   // 單隻海鷗叫一聲：從牠的方向傳過來
 });
 // 在水裡游的人騰不出手按 E：游到漂流寶箱旁邊就直接撿
 let chestAsked = 0;

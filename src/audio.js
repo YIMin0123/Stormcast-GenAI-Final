@@ -49,6 +49,8 @@ const CLIPS = {
   rope: one('thud.mp3', 0.55, [5.05, 0.5]),
   // 腳步：一步一聲，跟著角色的腳落地的那一下播（走在木板上、走在草地沙地上各一組）
   stepWood: one('steps-wood.mp3', 0.75, [0.05, 0.5], [0.7, 0.5], [1.35, 0.5], [1.95, 0.5], [2.55, 0.5], [3.1, 0.5], [3.8, 0.5], [4.45, 0.5], [5.1, 0.5]),
+  // 單隻海鷗的一聲叫（從港口那段錄音裡挑前後都很安靜的幾聲）；wildlife.js 照每隻海鷗的位置、動作播，從那隻的方向傳過來
+  gull: one('gulls-harbor.mp3', 1.0, [14.94, 0.46], [25.98, 0.4], [19.68, 0.4], [38.54, 0.42], [27.30, 0.4], [20.86, 0.4], [35.34, 0.46], [23.22, 0.4], [18.58, 0.4], [24.70, 0.42]),
   stepGrass: one('steps-grass.mp3', 0.9, [0.0, 0.6], [0.95, 0.6], [1.95, 0.6], [2.85, 0.5], [7.35, 0.5], [8.35, 0.45], [9.3, 0.5], [10.05, 0.55]),
 };
 const THUNDER = ['thunder-1.mp3', 'thunder-2.mp3', 'thunder-3.mp3'];
@@ -176,7 +178,7 @@ export class OceanAudio {
     const dry = o.under ? 0 : 1;
     this._vol('sea', 0.75 * o.sea * (o.under ? 0.25 : 1));
     this._vol('shore', 0.55 * o.shore * dry);
-    this._vol('gulls', 0.4 * o.gulls * dry, 1.5);
+    this._vol('gulls', 0.3 * o.gulls * dry, 1.5);   // 港口上空的一大片叫聲（單隻海鷗的叫聲另外見 CLIPS.gull）
     this._vol('rain', 0.9 * o.rain * dry);
     this._vol('engine', o.engine * (0.22 + 0.3 * o.throttle), 0.3);
     this._rate('engine', o.pitch * (0.85 + 0.5 * o.throttle));
@@ -273,14 +275,15 @@ export class OceanAudio {
 
   // 播一個短音效（拋竿、落水、斷竿、開關……）。還沒有載入那個聲音就不播。
   // pos：聲音在世界裡的位置（有給就從那個方向傳過來；離耳朵三公尺內方向感漸漸淡掉）
-  play(name, vol = 1, pos = null) {
+  // rate：音高倍率（每隻海鷗聲音各有高低）
+  play(name, vol = 1, pos = null, rate = 1) {
     const list = CLIPS[name];
     if (!this.ctx || !this.on || !list) return;
     const [file, at, dur, k] = list[Math.floor(Math.random() * list.length)], buf = this.buf[file];
     if (!buf) return;
     const src = this.ctx.createBufferSource(), g = this.ctx.createGain(), t = this.ctx.currentTime;
     src.buffer = buf;
-    src.playbackRate.value = 0.94 + Math.random() * 0.12;   // 每次音高差一點點，連續聽不會一模一樣
+    src.playbackRate.value = rate * (0.94 + Math.random() * 0.12);   // 每次音高差一點點，連續聽不會一模一樣
     g.gain.setValueAtTime(vol * k, t);
     g.gain.setValueAtTime(vol * k, t + Math.max(0.05, dur - 0.08));
     g.gain.linearRampToValueAtTime(0, t + dur);              // 尾巴收掉，不會「啪」一聲斷

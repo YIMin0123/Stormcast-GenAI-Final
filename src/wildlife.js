@@ -120,6 +120,7 @@ export function makeWildlife(E) {
       home: r < GS.harborShare ? 'harbor' : r < GS.harborShare + (1 - GS.harborShare) * 0.45 ? 'haven' : 'boat', kind: '', R: 30, h: 14,
       phase: rand(0, TAU), flapK: 1, gliding: false, glideT: rand(0, 3), fold: 0, legs: false, perch: null, perchT: 0, nextPerch: rand(...GS.perchEvery),
       noPerch: 0, hunt: null, fish: null, hideT: 0, riseT: 0, pitch: 0, roll: 0,
+      voice: rand(0.86, 1.16), nextCry: rand(2, GS.cryEvery[1]), cryT: 0,   // 每隻海鷗的音高、下次叫的時間
     };
     const a = anchorFor(o);
     placeOnRing(o, a);
@@ -169,7 +170,15 @@ export function makeWildlife(E) {
     }
     return list.filter((p) => { perchPos(p, _w); return Math.hypot(_w.x - o.x, _w.z - o.z) < 220; });
   }
+  // 這隻海鷗叫一聲：從牠現在的位置傳過來（遠了就不播；夜裡、躲起來、看不見的也不叫）。v：叫得多大聲 0–1
+  function cry(o, v = 1) {
+    if (!o.g.visible || W.day < 0.12 || W.storm) return;
+    const d = Math.hypot(o.x - cam.x, o.y - cam.y, o.z - cam.z), k = 1 - d / GS.cryFar;
+    if (k <= 0) return;
+    E.cry(o.x, o.y, o.z, v * Math.pow(k, 1.5), o.voice);
+  }
   function takeOff(o, why) {
+    if (why === 'flee') cry(o, 1); else if (Math.random() < 0.5) cry(o, 0.55);   // 被嚇走叫得最大聲
     if (o.perch) { perchBusy.delete(o.perch.key); o.perch = null; }
     o.st = 'rise'; o.riseT = rand(1.1, 1.6); o.legs = true; o.hd = o.hd + rand(-0.8, 0.8);
     if (why === 'flee') o.noPerch = GS.noPerchAfterFlee;
@@ -184,7 +193,7 @@ export function makeWildlife(E) {
     const dy = clamp(ty - o.y, -climb * dt, climb * dt);
     o.y += dy; o.vy += (dy / Math.max(dt, 1e-3) - o.vy) * Math.min(1, dt * 4);
   }
-  function startPerch(o, p) { o.st = 'land'; o.perch = p; perchBusy.set(p.key, o); o.legs = false; }
+  function startPerch(o, p) { if (Math.random() < 0.6) cry(o, 0.45); o.st = 'land'; o.perch = p; perchBusy.set(p.key, o); o.legs = false; }
 
   function updateGull(o, dt) {
     const P = E.player();
@@ -204,6 +213,11 @@ export function makeWildlife(E) {
       const a = anchorFor(o); placeOnRing(o, a); o.st = 'orbit';
     }
     if (o.noPerch > 0) o.noPerch -= dt;
+    // 空中盤旋、停著的時候，隔一陣子叫一聲（兩聲連著叫的機會也有）
+    if ((o.st === 'orbit' || o.st === 'perch') && (o.nextCry -= dt) <= 0) {
+      cry(o, o.st === 'perch' ? 0.4 : 0.6);
+      o.nextCry = Math.random() < 0.25 ? rand(0.5, 1.0) : rr(GS.cryEvery);
+    }
 
     switch (o.st) {
       case 'orbit': {
@@ -287,6 +301,7 @@ export function makeWildlife(E) {
     const h = o.hunt;
     if (!h) { o.st = 'orbit'; steal.gull = null; return; }
     if (h.phase === 'carry') {
+      if ((o.cryT -= dt) <= 0) { cry(o, 1); o.cryT = rand(1.4, 2.6); }   // 叼著魚逃走，一路叫
       const away = Math.atan2(o.z - P.z, o.x - P.x);
       o.hd += clamp(wrap(away - o.hd), -1.4 * dt, 1.4 * dt);
       steer(o, o.x + Math.cos(o.hd) * 30, 17, o.z + Math.sin(o.hd) * 30, 9.5, dt, 1.4, 3.6);
@@ -340,7 +355,8 @@ export function makeWildlife(E) {
       o.x = _v.x + Math.cos(a) * 75; o.z = _v.z + Math.sin(a) * 75; o.y = 20; o.hd = a + Math.PI; o.sp = 8;
     }
     o.g.visible = true;
-    o.st = 'hunt'; o.hunt = { it, phase: 'in', t: 0 }; steal.gull = o;
+    o.st = 'hunt'; o.hunt = { it, phase: 'in', t: 0 }; steal.gull = o; o.cryT = rand(0.5, 1.2);
+    cry(o, 0.9);
   }
   function stealTick(dt) {
     if (steal.gull) return;
