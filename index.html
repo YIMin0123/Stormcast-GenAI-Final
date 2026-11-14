@@ -168,7 +168,8 @@
       background: rgba(14, 53, 80, 0.38); z-index: 40; }
     #menu .card, #net .card { position: static; margin: auto; padding: 24px 30px 22px; width: min(380px, calc(100vw - 32px)); box-sizing: border-box; text-align: center; user-select: auto; }
     #menu { flex-wrap: wrap; gap: 16px; justify-content: center; align-content: center; }   /* 名字卡片旁邊放公告；窄的畫面公告掉到下面 */
-    #menu #notice { width: min(330px, calc(100vw - 32px)); text-align: left; margin: auto 0; }
+    #menu .card { margin: auto 0; }   /* 左右交給 justify-content 置中（auto 會把多出來的空間平分到卡片兩側，變成偏移）；上下仍自動置中、卡片比畫面高時可捲 */
+    #menu #notice { width: min(330px, calc(100vw - 32px)); text-align: left; }
     #menu #notice h2 { text-align: center; }
     #noticeList { margin: 0 0 12px; padding-left: 20px; font-size: 14px; line-height: 1.6; color: var(--ink); }
     #noticeList li { margin-bottom: 6px; }
