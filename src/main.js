@@ -2411,7 +2411,7 @@ function updatePrompt() {
     const ab = a && a.boat;
     if (player.swim) {
       text = stamina < 0.3 ? '快沒力了！趕快上岸，或游到船邊爬上去'
-        : fish.held ? `捧著${fish.held.sp.name}游：比較慢，也比較累` : '';
+        : fish.held ? `捧著${fish.held.sp.name}游：比較慢，也比較累` : heldBox() ? '抱著魚箱游：比較慢，也比較累，上岸或爬上船再放下' : '';
     } else if (kind === 'hook' || kind === 'pump') {
       text = kind === 'hook' ? hookText() : pumpText();
     } else if (kind === 'chest') {
@@ -2555,6 +2555,20 @@ const wildlife = makeWildlife({
   steal: (it) => fish.steal(it),
   cry: (x, y, z, v, rate) => audio.play('gull', 0.6 * v, { x, y, z }, rate),   // 單隻海鷗叫一聲：從牠的方向傳過來
 });
+// 在水裡游的人騰不出手按 E：游到自己浮在水面的魚箱旁邊就直接抱起來（抱著游比較慢、比較累，上岸或爬上船再放下）
+const boxAsked = new Map();
+function boxSwim() {
+  if (!player.swim || !net.online || heldBox() || fish.held) return;
+  const now = performance.now();
+  for (const d of boxes.mine(net.id)) {
+    if (d.k !== 'w') continue;
+    const p = boxes.worldPos(d);
+    if (Math.hypot(p.x - player.pos.x, p.z - player.pos.z) > FISHBOX.reach || now - (boxAsked.get(d.bid) ?? 0) < 1500) continue;
+    boxAsked.set(d.bid, now);
+    toast('抱起魚箱了：抱著游比較慢也比較累，上岸或爬上船再放下');
+    return net.send({ t: 'boxTake', bid: d.bid });
+  }
+}
 // 在水裡游的人騰不出手按 E：游到漂流寶箱旁邊就直接撿
 let chestAsked = 0;
 function chestSwim() {
@@ -4274,6 +4288,7 @@ function advance(dt) {
     if (player.onWater && !drown) waveRide(dt);
     riverRide(dt);
     chestSwim();
+    boxSwim();
     // 腳步聲：腳每落地一次（走路動作每半圈）播一聲，木板和草地沙地各一組
     const stepN = Math.floor(player.phase / Math.PI);
     if (stepN !== lastStep) {
@@ -4286,7 +4301,7 @@ function advance(dt) {
 
   // 魚與釣魚
   fish.update(dt);
-  // 魚箱：抱著的時候手往前抱、照重量走慢；抱著不能游泳，一下水箱子就浮在水面上
+  // 魚箱：抱著的時候手往前抱、照重量走慢；抱著也能游（比較累），游到自己浮在水上的箱子旁會自動抱起
   const hbx = heldBox();
   // 拿著平板（空手、走路、沒在游泳時才拿在手上；別人也看得到）
   tabHand = tabOpen() && !fish.held && !hbx && mode === 'walk' && !player.swim && !player.seat;
@@ -4300,7 +4315,7 @@ function advance(dt) {
   if (tabHand) setTabletScreen(tabMesh, tabScreen);   // 螢幕上畫的是現在開著的畫面（別人看到的也是）
   player.carry = !!fish.held || !!hbx || tabHand;
   player.load = hbx ? boxes.speed(hbx) : 1;
-  if (hbx && player.swim && performance.now() - boxSent > 700) { putBoxDown(hbx, true); toast('抱著魚箱不能游泳，箱子先浮在水面上（從岸上、甲板上伸手拿得回來）'); }
+  // （抱著魚箱也能游：比較慢、比較累（player.carry 讓體力掉得快），騰不出手放下，要上岸或爬上船才能放）
   boxes.update(time);
   boxes.marks(camera, meAt(), net.id, inGame && !tabOpen());   // 開船時人的座標不會跟著船動，距離要用船的位置量（meAt）
   markMyBoat();
