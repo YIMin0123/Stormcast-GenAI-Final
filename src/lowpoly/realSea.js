@@ -129,7 +129,7 @@ export function makeRealSea(renderer, { heightAt, quays = [], waveAngle = Math.P
     uHullSize: { value: Array.from({ length: 3 }, () => new THREE.Vector3(1, 1, 0)) },
     uDanger: { value: dangerTex }, uTsuK: { value: tsuKTex }, uStorm: { value: 0 }, uTsu: { value: new THREE.Vector4(0, 1, 0, 0) }, uTsu2: { value: new THREE.Vector2() }, uGloom: { value: 0 },
     uSunCol: { value: new THREE.Vector3(1, 0.93, 0.8) }, uAmbient: { value: new THREE.Vector3(1, 1, 1) },
-    uDay: { value: 1 }, uDusk: { value: 0 }, uFog: { value: 0 }, uHazeK: { value: 1 }, uFlash: { value: 0 }, uFlashDir: { value: new THREE.Vector3(0, 1, 0) }, uRain: { value: 0 }, uCloudMap: { value: null }, uPaint: { value: new THREE.Vector4() }, uPaintOff: { value: new THREE.Vector4() }, uCloudT: { value: new THREE.Vector2() }, uCloudSh: { value: Array.from({ length: CLOUDS.shadowN }, () => new THREE.Vector4(1e6, 1e6, 1, 0)) }, uSwell: { value: 0 }, uSurge: { value: 0 },
+    uDay: { value: 1 }, uDusk: { value: 0 }, uFog: { value: 0 }, uHazeK: { value: 1 }, uFlash: { value: 0 }, uFlashDir: { value: new THREE.Vector3(0, 1, 0) }, uRain: { value: 0 }, uCloudMap: { value: null }, uPaint: { value: new THREE.Vector4() }, uPaintOff: { value: new THREE.Vector4() }, uDeck: { value: new THREE.Vector4(0, 0, 1, 0) }, uCloudSh: { value: Array.from({ length: CLOUDS.shadowN }, () => new THREE.Vector4(1e6, 1e6, 1, 0)) }, uSwell: { value: 0 }, uSurge: { value: 0 },
     uVortex: { value: V4(3) },
     uLamp: { value: Array.from({ length: 8 }, () => new THREE.Vector3()) },
     uBeam: { value: new THREE.Vector4(0, 0, 1, 0) }, uBeamOn: { value: 0 },

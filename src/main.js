@@ -578,7 +578,7 @@ const shared = {
   uHullSize: { value: Array.from({ length: 3 }, () => new THREE.Vector3(1, 1, 0)) },
   uDanger: { value: dangerTex }, uTsuK: { value: tsuKTex }, uStorm: { value: 0 }, uTsu: { value: new THREE.Vector4(0, 1, 0, 0) }, uTsu2: { value: new THREE.Vector2() }, uGloom: { value: 0 },
   uSunCol: { value: new THREE.Vector3(1, 0.93, 0.8) }, uAmbient: { value: new THREE.Vector3(1, 1, 1) },
-  uDay: { value: 1 }, uDusk: { value: 0 }, uFog: { value: 0 }, uHazeK: { value: 1 }, uFlash: { value: 0 }, uFlashDir: { value: new THREE.Vector3(0, 1, 0) }, uRain: { value: 0 }, uCloudMap: { value: null }, uStormMap: { value: null }, uPaint: { value: new THREE.Vector4(0, 0, CLOUDS.H, CLOUDS.stormH) }, uPaintOff: { value: new THREE.Vector4() }, uCloudT: { value: new THREE.Vector2() }, uSwell: { value: 0 }, uSurge: { value: 0 }, uFlood: { value: 0 },
+  uDay: { value: 1 }, uDusk: { value: 0 }, uFog: { value: 0 }, uHazeK: { value: 1 }, uFlash: { value: 0 }, uFlashDir: { value: new THREE.Vector3(0, 1, 0) }, uRain: { value: 0 }, uCloudMap: { value: null }, uPaint: { value: new THREE.Vector4(0, 0, CLOUDS.H, 0) }, uPaintOff: { value: new THREE.Vector4() }, uDeck: { value: new THREE.Vector4(0, 0, 1, 0) }, uSwell: { value: 0 }, uSurge: { value: 0 }, uFlood: { value: 0 },
   uCloudSh: { value: Array.from({ length: CLOUDS.shadowN }, () => new THREE.Vector4(1e6, 1e6, 1, 0)) },
   uVortex: { value: Array.from({ length: 3 }, () => new THREE.Vector4()) },
   uLamp: { value: Array.from({ length: 8 }, () => new THREE.Vector3()) },
@@ -709,20 +709,18 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), new THREE.Shader
   vertexShader: skyVert, fragmentShader: skyFrag, uniforms: shared, defines: { PAINT_SKY: 1 },
   side: THREE.BackSide, depthWrite: false,
 }));
-// 手繪平塗的雲：載入時畫成環景圖（clouds.js），之後只是查圖。晴天的積雲一張；風暴的低雲另一張（天色變沉時長出來）。
-// 手機和陰影「低」用小一半的圖。電腦的海面倒影映得出晴天的積雲；風暴那張只給天空用（倒影的取樣器不夠），
-// 手機的海面程式已經很吃緊（見上面 WATER_SPLIT），倒影維持原本那套。網址加 ?nopaint 可以關掉，換回舊的雲（比較用）
+// 手繪平塗的積雲：載入時畫成一張環景圖（clouds.js），之後只是查圖。手機和陰影「低」用小一半的圖。
+// 電腦的海面倒影也映得出這些雲；手機的海面程式已經很吃緊（見上面 WATER_SPLIT），倒影只有低雲層。
+// 變天時的低雲層（一整片的暴風雨天空）是著色器直接畫的，每個材質都有。網址加 ?nopaint 可以關掉積雲（比較用）
 if (!new URLSearchParams(window.location.search).has('nopaint')) {
   const small = TOUCH || gfx.lite;
   shared.uCloudMap.value = bakeClouds(renderer, small ? 512 : 1024).texture;
-  shared.uStormMap.value = bakeClouds(renderer, small ? 256 : 512, { storm: true }).texture;
   shared.uPaint.value.x = 1;
-  sky.material.defines.PAINT_STORM = 1;
   if (!TOUCH) for (const m of [water.material, waterFlag.material]) m.defines.PAINT_SKY = 1;
 }
 // 雲順著風飄（見 config.js 的 CLOUDS）：雲固定在世界上，A、B 兩組位移都跟著風累加。
 // A 飄出 loop/2 就讓 B 從上風處接手，交疊 morph 公里（看起來是雲慢慢變形），換完 B 變成新的 A
-const drift = { a: [0, 0], b: [0, 0], w: 0, moved: 0 };
+const drift = { a: [0, 0], b: [0, 0], w: 0, moved: 0, deck: [0, 0] };   // deck：低雲層一路飄過去的量（不用換組）
 // 雲影用的每朵雲；m：天上那朵雲跟著飄移的比例（跟 renderShaders.js 的 paintDir 一樣：越靠近地平線的越遠、移得越少）
 const CORES = cloudCores().map((c) => {
   const t = clamp((c.y / Math.hypot(c.x, c.y, c.z) - CLOUDS.nearLo) / (CLOUDS.nearHi - CLOUDS.nearLo), 0, 1);
@@ -731,7 +729,7 @@ const CORES = cloudCores().map((c) => {
 const shCand = [];
 function driftClouds(dt) {
   const D = drift, v = gale.steady * CLOUDS.drift / 1000 * dt, dx = WDX * v, dz = WDZ * v;   // 這一幀飄了幾公里
-  D.a[0] += dx; D.a[1] += dz; D.b[0] += dx; D.b[1] += dz;
+  D.a[0] += dx; D.a[1] += dz; D.b[0] += dx; D.b[1] += dz; D.deck[0] += dx; D.deck[1] += dz;
   if (D.w > 0) {
     D.moved += v; D.w = Math.min(1, D.moved / CLOUDS.morph);
     if (D.w >= 1) { D.a[0] = D.b[0]; D.a[1] = D.b[1]; D.w = 0; }
@@ -741,6 +739,7 @@ function driftClouds(dt) {
   const w = D.w * D.w * (3 - 2 * D.w), cx = camera.position.x / 1000, cz = camera.position.z / 1000;
   shared.uPaint.value.y = w;
   shared.uPaintOff.value.set(cx - D.a[0], cz - D.a[1], cx - D.b[0], cz - D.b[1]);
+  shared.uDeck.value.set(cx - D.deck[0], cz - D.deck[1], WDX, WDZ);
   // 雲影：每朵雲投到雲那層平面上的位置（跟天上畫出來的對得上），再順著太陽光往下移到地面；只留離鏡頭最近的幾朵
   const H = CLOUDS.H, sy = Math.max(sunDir.y, 0.15), lx = sunDir.x / sy * H, lz = sunDir.z / sy * H;
   shCand.length = 0;
@@ -2901,9 +2900,7 @@ function updateWeather(dt) {
   gale.steady = windSpeed(wind, sea.storm);   // 風速跟浪對得上：浪大的日子風也大
   gale.v = gale.steady * (1 + 0.28 * Math.sin(time * 0.37) + 0.17 * Math.sin(time * 1.13 + 2) + 0.1 * Math.sin(time * 2.9 + 5));
   gale.x = WDX * gale.v; gale.z = WDZ * gale.v;
-  // 雲跟著風飄：平常慢慢的，颱風時低雲整片飛過去
-  shared.uCloudT.value.x -= WDX * 0.0005 * gale.steady * dt; shared.uCloudT.value.y -= WDZ * 0.0005 * gale.steady * dt;
-  driftClouds(dt);   // 畫好的雲和雲影順著風飄
+  driftClouds(dt);   // 雲（積雲、低雲層）和雲影順著風飄：平常慢慢的，颱風時低雲整片飛過去
   shared.uSwell.value = SWELL.amp * sea.swell;
   // 雨被風吹斜：颱風時幾乎是橫著飛的
   const cpos = camera.position, wk = windK(cpos.x, cpos.z);

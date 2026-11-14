@@ -37,17 +37,13 @@ uniform float uHazeK;      // 遠景薄霧的濃度倍數（畫質「手機」�
 uniform float uFlash;      // 閃電
 uniform vec3 uFlashDir;    // 閃電在哪個方向（從鏡頭看過去）：那一片天空和雲被照得最亮
 uniform float uRain;       // 雨勢
-uniform vec2 uCloudT;      // 舊的雜訊雲（倒影、?nopaint 用）飄了多遠（風越大飄越快，所以是累加的，不是「速度 × 時間」）
+uniform vec4 uDeck;        // 低雲層：(鏡頭位置 − 雲層被風吹走的量 x, z（公里）, 風往哪邊吹 x, z)
 uniform vec4 uCloudSh[${CLOUDS.shadowN}];   // 雲影：離鏡頭最近的幾朵雲投在地上的位置 (x, z, 半徑, 多暗)，main.js 每幀從雲的佈局算出來
 // 手繪平塗的雲：先畫好的環景圖（見 clouds.js）。有開 PAINT_SKY 的材質才會用到（天空一定開；海面的倒影看機器）
 #ifdef PAINT_SKY
 uniform samplerCube uCloudMap;   // 晴天的積雲：RGB 雲表面朝哪個方向、A 有沒有雲
-uniform vec4 uPaint;             // (用不用 0–1, A→B 兩組換到幾成, 晴天雲那層多高, 風暴雲那層多高)（高度單位公里）
+uniform vec4 uPaint;             // (用不用 0–1, A→B 兩組換到幾成, 晴天雲那層多高（公里）, 沒用到)
 uniform vec4 uPaintOff;          // A、B 兩組雲各自的位移：鏡頭位置 − 雲被風吹走的量（公里）。雲固定在世界上順風飄，人走動也有視差
-#endif
-// 風暴的低雲：另一張環景圖，A 存「視線穿進雲裡多深」，天色越沉門檻越低，雲就一塊一塊長出來。只有天空開（取樣器不夠用）
-#ifdef PAINT_STORM
-uniform samplerCube uStormMap;
 #endif
 float gCloud = 0.0;              // skyBase 算完之後：這個方向被畫好的雲擋住幾成（太陽、月亮躲在雲後面用）
 
@@ -145,31 +141,11 @@ vec3 skyBase(vec3 d, int oct) {
     float st = step(0.90, hash21(ip)) * smoothstep(0.10, 0.0, length(fp - o)) * (0.4 + 0.6 * hash21(ip + 1.3));
     c += vec3(0.9, 0.95, 1.0) * st * (1.0 - uDay) * (1.0 - uGloom) * (1.0 - uFog) * 1.3;
   }
-  // 天空用畫好的雲（晴天的積雲＋風暴的低雲）。倒影沒有風暴那張圖：天色一沉就換回下面這套雜訊雲（paint：畫好的雲佔幾成）
+  // 晴天的積雲用畫好的那張圖（paint：有沒有那張圖）；沒有的材質（手機倒影、?nopaint）用下面地平線的積雨雲和低雲層代替
   float paint = 0.0;
-#ifdef PAINT_STORM
+#ifdef PAINT_SKY
   paint = uPaint.x;
-#elif defined(PAINT_SKY)
-  paint = uPaint.x * (1.0 - smoothstep(0.08, 0.42, uGloom));
 #endif
-  if (d.y > 0.015 && paint < 0.995) {
-    vec2 uv = d.xz / (d.y + 0.14) * 1.15 + uCloudT;
-    float n = fbm(uv, oct);
-    float soft = oct >= 5 ? 0.0 : 0.13;   // 倒影用的（oct 少的那份）邊緣放柔很多
-    float dens = smoothstep(0.55 - 0.36 * uGloom - soft, 0.66 - 0.2 * uGloom + soft, n) * smoothstep(0.015, 0.16, d.y) * (1.0 - paint);   // 雲的邊緣是清楚的塊面；天色越沉雲越厚
-    float s = max(dot(d, uSunDir), 0.0);
-    vec3 lit = mix(vec3(1.0, 0.99, 0.97), vec3(0.70, 0.77, 0.93), smoothstep(0.71, 0.75, n)) * SKY_AMB;   // 雲只有亮面和偏藍的暗面兩階
-    if (oct >= 5) {
-      // 往太陽方向再取一次密度：朝陽的雲緣亮、背陽面暗，做出厚度感
-      float n2 = fbm(uv + normalize(uSunDir.xz + 1e-4) * 0.10, 3);
-      lit *= mix(0.80, 1.06, smoothstep(0.44, 0.56, (n - n2) * 4.0 + 0.5));
-    }
-    lit += SUN_COL * pow(s, 6.0) * 0.35 * (1.0 - smoothstep(0.6, 0.9, n));
-    lit *= (1.0 - 0.5 * uGloom) * (1.0 - 0.3 * uRain);
-    // 閃電從雲裡面把雲照亮：薄的地方透出來特別亮、厚的地方還是暗的，一瞬間看得出雲的厚薄
-    lit += vec3(0.62, 0.68, 0.95) * uFlash * 0.38 * pow(max(dot(d, uFlashDir), 0.0), 3.0) * (1.0 - 0.75 * smoothstep(0.5, 0.8, n));
-    c = mix(c, lit, dens * 0.92);
-  }
   if (oct >= 5 && d.y > -0.03 && d.y < 0.5 && paint < 0.995) {
     // 夏天的積雨雲：從地平線往上堆，有的方向堆得特別高；頂端亮白、底部藍灰、朝太陽的一側更亮
     vec2 ap = normalize(d.xz + 1e-5) * 2.3;
@@ -196,21 +172,37 @@ vec3 skyBase(vec3 d, int oct) {
       c = mix(c, mix(c, paintShade(cm.rgb, d, gl), far), a * paint);
       gCloud = a * paint;
     }
-#ifdef PAINT_STORM
-    // 風暴的低雲：比晴天的雲低、在它前面；天色越沉長得越滿，最後只剩幾道縫
-    float sk = smoothstep(0.06, 0.5, uGloom);
-    if (sk > 0.0) {
-      vec4 sm = paintTap(uStormMap, d, uPaint.w);
-      float th = mix(0.9, 0.08, sk);
-      float a2 = smoothstep(th, th + 0.06, sm.a) * hz * paint;
-      if (a2 > 0.0) {
-        c = mix(c, mix(c, paintShade(sm.rgb, d, 0.85 + 0.15 * sk), far), a2);
-        gCloud = max(gCloud, a2);
-      }
-    }
-#endif
   }
 #endif
+  // 低雲層（層雲）：天色變沉時先是零星幾條，再長成一整片蓋住天空，只剩幾道縫——暴風雨的天空。
+  // 平塗三階：薄的邊緣比較亮、中間、厚的地方最暗；順著風拉長、跟著風飄。底下再飄幾片被風吹散的碎雲，比雲層低、跑得比較快
+  float deckK = smoothstep(0.05, 0.55, uGloom);
+  if (paint < 0.5) deckK = max(deckK, 0.32);   // 沒有畫好積雲的材質：晴天也留幾條雲
+  if (d.y > 0.0 && deckK > 0.0) {
+    float gl = smoothstep(0.05, 0.6, uGloom);
+    vec2 wd = uDeck.zw, wn = vec2(-wd.y, wd.x);
+    vec2 P = d.xz * (${f1(CLOUDS.stormH)} / (d.y + 0.06)) + uDeck.xy;   // 雲層上這一點（公里，固定在世界上）
+    float n = fbm(vec2(dot(P, wd) * 0.35, dot(P, wn) * 0.9) + 3.0, oct);
+    float th = mix(0.66, 0.30, deckK), soft = oct >= 5 ? mix(0.004, 0.03, smoothstep(0.3, 0.02, d.y)) : 0.12;   // 邊緣是利落的一條線（靠近地平線雜訊變很密，放柔一點免得閃）；倒影用的放柔
+    float cov = smoothstep(th, th + soft, n) * smoothstep(0.0, 0.05, d.y);
+    vec3 amb = SKY_AMB * (1.0 - 0.3 * uRain);
+    vec3 edge = mix(vec3(1.0, 0.99, 0.97), vec3(0.36, 0.40, 0.48), gl) + vec3(1.0, 0.5, 0.3) * uDusk * (1.0 - uGloom) * 0.3;
+    vec3 body = mix(vec3(0.84, 0.88, 0.96), vec3(0.24, 0.26, 0.32), gl);
+    vec3 thick = mix(vec3(0.70, 0.77, 0.93), vec3(0.16, 0.17, 0.22), gl);
+    vec3 dc = mix(mix(edge, body, smoothstep(th + 0.06, th + 0.08, n)), thick, smoothstep(th + 0.2, th + 0.22, n)) * amb;
+    // 閃電從雲裡面打亮：薄的地方透出來特別亮
+    dc += vec3(0.62, 0.68, 0.95) * uFlash * 0.4 * pow(max(dot(d, uFlashDir), 0.0), 3.0) * (1.0 - 0.6 * smoothstep(th + 0.06, th + 0.2, n));
+    dc = mix(c, dc, 0.35 + 0.65 * smoothstep(0.0, 0.25, d.y));   // 越靠近地平線越淡進天色
+    c = mix(c, dc, cov);
+    gCloud = max(gCloud, cov);
+    if (oct >= 5 && gl > 0.3) {
+      vec2 P2 = d.xz * (${f1(CLOUDS.stormH * 0.5)} / (d.y + 0.06)) + uDeck.xy * 1.4;
+      float n2 = fbm(vec2(dot(P2, wd) * 0.6, dot(P2, wn) * 1.6) + 13.0, 3);
+      float cov2 = smoothstep(0.70, 0.72, n2) * smoothstep(0.3, 0.8, gl) * smoothstep(0.04, 0.2, d.y);
+      c = mix(c, mix(c, thick * 0.85 * amb, 0.4 + 0.6 * smoothstep(0.0, 0.25, d.y)), cov2);
+      gCloud = max(gCloud, cov2);
+    }
+  }
   if (oct >= 5 && uRain > 0.02 && d.y > -0.03 && d.y < 0.55) {
     // 遠處的雨幕：雲底垂下來一道一道灰濛濛的雨簾，有的方向下得大、有的方向稀，被風吹得斜斜的
     vec2 ap = normalize(d.xz + 1e-5);
