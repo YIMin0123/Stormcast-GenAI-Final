@@ -2,14 +2,16 @@ import * as THREE from 'three';
 import { makeTerrain, computeShelter, computeShoreDist, ISLANDS } from './terrain.js';
 import { waterVert, waterFrag, liteWaterVert, liteWaterFrag, terrainVert, terrainFrag, grassVert, grassFrag, skyVert, skyFrag, diagVert, diagFrag, diagPtFrag, HAZE, RAIN_HAZE } from './renderShaders.js';
 import { FftOcean, makeFoamTexture } from './ocean.js';
-import { Boat, BOAT_TYPES, BOX_CAP } from './boat.js';
+import { Boat, BOAT_TYPES } from './boat.js';
 import { BOAT_ORDER, CAN, newKit, shopItem, baitCount } from './boatdata.js';
 import { Player } from './player.js';
 import { ShallowWater, SWE } from './shallow.js';
 import { makeSwimFx } from './swimfx.js';
 import { makeSurfaceProbe } from './swimProbe.js';
 import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SELL, setBoard, BOLLARDS, MoorLine, SHELF, setTag, LAMPS, UNLIT, WET, ROOM_LIGHTS, ROOM_LAMPS, setRoomLights, GLOW_KEEP, lightBulbs, updateFlags, updateScale, PORCHES, HOME_LAND } from './harbor.js';
-import { WORLD, THROW, DEVMODE, SHORE_WIND, CLOUDS } from './config.js';
+import { WORLD, THROW, DEVMODE, SHORE_WIND, CLOUDS, FISHBOX } from './config.js';
+import { BoxWorld } from './fishBox.js';
+import { ask, cancelAsk } from './ask.js';
 import { HOME_U, placeInHome } from './homeGl.js';
 import { HOME_YAW, toWorld, toLocal, headingToWorld, havenToLocal, HAVEN } from './frame.js';
 import { makeSeascape, HAVEN_LAND, HAVEN_GROUND } from './haven.js';
@@ -21,7 +23,7 @@ import { makeHavenFx } from './havenFx.js';
 import { HOME_GROUND, ZONE_LABEL } from './lowpoly/harborPlan.js';
 import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SWITCHES_W, ROOFS_W, underRoof, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
 import { fishLabel, FishWorld } from './fish.js';
-import { money as cash, rarityOf, BAITS } from './fishdata.js';
+import { money as cash, rarityOf, BAITS, SPECIES } from './fishdata.js';
 import { Fishing } from './fishing.js';
 import { EmoteWheel } from './emotes.js';
 import { TOUCH, TouchUI, touchText, touchSet, canFullscreen, isFullscreen, setFullscreen } from './touch.js';
@@ -1098,9 +1100,8 @@ function shallowNear(c) {
 // 世界裡的每一艘船：自己的那一艘（myBoat）和同房其他人的。每個人同時只有一艘放在世界裡，
 // 其他買了的收在倉庫（garage），到魚市場前的停船位置牌換出來
 const boats = [];
-function addBoat(type, pose, boxLv = 0) {
+function addBoat(type, pose) {
   const b = new Boat(type, pose.x, pose.z, pose.heading);
-  if (boxLv > 0) b.setBox(boxLv);
   boats.push(b);
   scene.add(b.mesh);
   shade(b.mesh);
@@ -1239,7 +1240,11 @@ const fish = new FishWorld({
   player, boats, scene, ground: walkGround, splash, toast, basket: SELL_W.basket,
   waveAt: (x, z) => ocean.sampleCached(x, z) * waveK(x, z) + tsuAt(x, z),
   onLost: (uids) => net.send({ t: 'fishGone', uids }),   // 魚掉回海裡、跟著船沉了：告訴伺服器這幾條沒了
-  ownBoat: () => myBoat,   // 丟出去的魚只會掉進自己船上的魚箱
+  boxOver: (x, z, it) => boxes.over(x, z, it),   // 丟出去的魚從口掉進魚箱（誰的都可以：丟進別人的就是送給他）
+  intoBox(it, bid) {   // 掉進魚箱了：請伺服器放進去；伺服器說不行就擺回箱子旁邊（見 boxNo）
+    pendingIn.set(it.uid, { it, bid });
+    if (net.online) net.send({ t: 'boxIn', bid, uid: it.uid }); else boxBounce(it.uid, '連線中斷');
+  },
   flyGround,
   // 自己的魚放在外面了：告訴伺服器放在哪（大家都看得到、誰都撿得走）。放在倉庫的船上（別人看不到）就當作收回來
   placed(it) {
@@ -1260,6 +1265,71 @@ const fish = new FishWorld({
     audio.play(where === 'water' ? 'plop' : 'drop', 1, pos);
   },
 });
+// 魚箱：照伺服器傳來的狀態畫（抱在誰手上、放在哪、裡面有什麼）；怎麼動都由伺服器決定
+const boxes = new BoxWorld({
+  scene,
+  figureOf: (id) => (id === net.id ? player.mesh : others.map.get(id)?.fig?.mesh ?? null),
+  boatOf: (id) => (id === net.id ? myBoat : others.boat(id)),
+  waveAt: (x, z) => ocean.sampleCached(x, z) * waveK(x, z) + tsuAt(x, z),
+});
+const pendingIn = new Map();   // 丟進魚箱、還在等伺服器回話的魚：uid → { it, bid }
+// 自己抱著的箱子
+const heldBox = () => (inGame && net.id ? boxes.held(net.id) : null);
+// 丟進箱子卻放不進去：擺回箱子旁邊的地上（或甲板上）
+function boxBounce(uid, msg) {
+  const w = pendingIn.get(uid);
+  if (!w) return;
+  pendingIn.delete(uid);
+  const d = boxes.get(w.bid), p = d ? boxes.worldPos(d) : new THREE.Vector3(player.pos.x, player.pos.y, player.pos.z);
+  const s = fish._spot(p.x + 0.9, p.z), it = w.it;
+  if (s && s !== 'water' && s.boat) fish._toBoat(it, s.boat, s.lx, s.lz);
+  else fish._toGround(it, s && s !== 'water' ? p.x + 0.9 : player.pos.x, s && s !== 'water' ? p.z : player.pos.z);
+  if (msg) toast(msg);
+}
+// 把抱著的箱子放下：面前、腳邊；面前是海就讓它浮著（water：直接放在腳下的水面，游泳時用）
+let boxSent = 0;
+function putBoxDown(d, water = false) {
+  if (!net.online) return toast('連線中斷，等接回去再放');
+  if (performance.now() - boxSent < 700) return;
+  const fx = Math.cos(player.yaw), fz = Math.sin(player.yaw);
+  let msg = null;
+  for (const dd of water ? [0] : [0.95, 0.55, 0]) {
+    const x = player.pos.x + fx * dd, z = player.pos.z + fz * dd, s = water ? 'water' : fish._spot(x, z);
+    if (!s) continue;
+    if (s === 'water') { msg = { k: 'w', x, y: 0, z, yaw: player.yaw }; break; }
+    if (s.boat) {
+      const o = boatOwner(s.boat);
+      if (o === null || Math.abs(s.boat.deckY(x, z) - player.pos.y) > 0.9) continue;
+      msg = { k: 'd', b: o, x: s.lx, y: 0, z: s.lz, yaw: player.yaw - s.boat.heading };
+      break;
+    }
+    const y = walkGround(x, z);
+    if (Math.abs(y - player.pos.y) > 0.9) continue;
+    msg = { k: 'g', x, y, z, yaw: player.yaw };
+    break;
+  }
+  if (!msg) return toast('這裡放不下');
+  boxSent = performance.now();
+  net.send({ t: 'boxPut', bid: d.bid, ...msg, x: r2(msg.x), y: r2(msg.y), z: r2(msg.z), yaw: r2(msg.yaw) });
+}
+// 手上的魚放進對準的箱子
+function fishIntoBox(d) {
+  const it = fish.held, why = boxes.fit(d, it.id, it.len);
+  if (why) return toast(why === 'long' ? `這條${it.sp.name}太大，放不進魚箱` : '魚箱滿了');
+  if (!net.online) return toast('連線中斷，等接回去再放');
+  net.send({ t: 'boxIn', bid: d.bid, uid: it.uid });
+}
+function boxInText(d) {
+  const it = fish.held, why = boxes.fit(d, it.id, it.len);
+  if (why) return why === 'long' ? `這條${it.sp.name}太大，放不進魚箱` : '魚箱滿了';
+  return d.o === net.id ? `按 E 放進魚箱（已經 ${Math.round(boxes.used(d) * 100)}% 滿）` : `按 E 放進 ${others.map.get(d.o)?.name ?? '別人'} 的魚箱（等於送給他）`;
+}
+// 送東西給對準的人（what：{ uid } 手上的魚、{ bid } 抱著的箱子），對方要按接受
+function giveTo(a, what) {
+  if (!net.online) return toast('連線中斷，等接回去再送');
+  net.send({ t: 'give', to: a.pid, ...what });
+}
+
 // 釣魚：這裡只管手感和畫面。魚什麼時候咬、是哪條、多大、值多少、算不算釣起來，都由伺服器決定
 const fishing = new Fishing({
   player, scene, isWater, surfaceY: (x, z) => { const r = riverLevel(x, z); return r === null ? waterY(x, z) : r + RIVER.flood.rise * flood; }, splash, toast,
@@ -1270,7 +1340,7 @@ const fishing = new Fishing({
     land: () => { if (net.online) { landing = true; net.send({ t: 'land' }); } else toast('連線中斷，這條魚沒算到'); },
     lose: (why) => net.send({ t: 'lose', why }),
   },
-  canFish: () => inGame && net.online && mode === 'walk' && !fish.held && !player.swim,
+  canFish: () => inGame && net.online && mode === 'walk' && !fish.held && !heldBox() && !player.swim,
   rodLv: () => rodLv,
   broken: () => rodBroken,
   sound: (name, vol) => audio.play(name, vol, name === 'plop' || name === 'bite' || name === 'hook' || name === 'land' ? fishing.bob.position : null),   // 水花聲從浮標那裡傳過來
@@ -1774,19 +1844,20 @@ function releaseHelm() {
 // ---- 大港：吊鉤大秤收購站（收購價比潮汐灣多 15%）、碼頭加油柱 ----
 const boatWithin = (p, r) => !myBoat.sinking && !myBoat.stored && Math.hypot(myBoat.x - p.x, myBoat.z - p.z) < r;
 // 這一秤要賣哪些魚：手上那一條；手上沒東西就是停在碼頭的船上整箱
-const hookFish = () => (fish.held ? (fish.held.can ? [] : [fish.held]) : boatWithin(HAVEN_SELL_W, PORT.sell.range) ? myBoat.boxFish : []);
+const hookFish = () => { const hb = heldBox(); return hb ? hb.fish : fish.held ? (fish.held.can ? [] : [fish.held]) : []; };
 const hookPrice = (list) => Math.round(list.reduce((s, it) => s + it.value, 0) * (1 + PORT.bonus));
 function hookText() {
   const list = hookFish(), pct = Math.round(PORT.bonus * 100);
   if (fish.held && fish.held.can) return `大港收購站（比潮汐灣多 ${pct}%）　油桶不能賣`;
-  if (!list.length) return `大港收購站（比潮汐灣多 ${pct}%）　手上拿一條魚過來，或把船停在碼頭整箱一起秤`;
-  return fish.held ? `按 E 把這條魚掛上大秤賣出（$${hookPrice(list)}，多 ${pct}%）` : `按 E 把船上整箱 ${list.length} 條魚吊上來賣出（$${hookPrice(list)}，多 ${pct}%）`;
+  if (!list.length) return heldBox() ? `大港收購站（比潮汐灣多 ${pct}%）　魚箱是空的` : `大港收購站（比潮汐灣多 ${pct}%）　手上拿一條魚過來，或抱著魚箱過來整箱秤`;
+  return fish.held ? `按 E 把這條魚掛上大秤賣出（$${hookPrice(list)}，多 ${pct}%）` : `按 E 把整箱 ${list.length} 條魚吊上來賣出（$${hookPrice(list)}，多 ${pct}%）`;
 }
 function havenSell() {
   const list = hookFish();
-  if (!list.length) return toast(fish.held ? '油桶不能賣' : '手上拿一條魚過來，或把船停在碼頭（整箱一起秤）');
+  const hb = heldBox();
+  if (!list.length) return toast(hb ? '魚箱是空的' : fish.held ? '油桶不能賣' : '手上拿一條魚過來，或抱著魚箱過來整箱秤');
   if (!net.online) return toast('連線中斷，等接回去再賣');
-  net.send({ t: 'sell', at: 'haven', uids: list.map((it) => it.uid) });
+  net.send(hb ? { t: 'sell', at: 'haven', bid: hb.bid } : { t: 'sell', at: 'haven', uids: list.map((it) => it.uid) });
 }
 // 加油柱：船停在旁邊，人站在柱子前面按 E，加到滿（錢不夠就加到錢用完）
 function pumpLiters() {
@@ -1811,13 +1882,6 @@ function havenPump() {
 // 賣魚的籃子與按鈕
 const nearBasket = () => !player.boat && Math.hypot(player.x - SELL_W.basket.x, player.z - SELL_W.basket.z) < 2.0;
 const nearButton = () => !player.boat && Math.hypot(player.x - SELL_W.button.x, player.z - SELL_W.button.z) < 1.7;
-// 腳下這艘船的魚箱（要站在箱子旁邊）
-function nearBox() {
-  const b = player.boat;
-  if (!b || b !== myBoat || !b.boxLv) return null;
-  const B = b.spec.box;
-  return Math.hypot(player.lx - B.x, player.lz - B.z) < Math.max(B.w, B.d) / 2 + 0.9 ? b : null;
-}
 
 // 腳下這艘船的油箱（要站在油箱旁邊）
 const nearTank = () => (player.boat && player.boat === myBoat && Math.hypot(player.lx - player.boat.parts.tank.x, player.lz - player.boat.parts.tank.z) < 1.9 ? player.boat : null);
@@ -1967,7 +2031,7 @@ let wrench = false;      // 有沒有扳手（修船用，買一次就一直有�
 let buying = false;      // 已經送出購買、還在等伺服器回話
 // 每樣商品現在賣什麼：lines = 價格牌上的三行字；price 為 null 表示沒得買。引擎和魚箱是裝在自己放在世界裡的那艘船上
 function offer(id) {
-  const o = shopItem(id, kit), cur = kit.boats[kit.active] ?? { engineLv: 0, boxLv: 0 }, bn = BOAT_TYPES[kit.active].name;
+  const o = shopItem(id, kit), cur = kit.boats[kit.active] ?? { engineLv: 0 }, bn = BOAT_TYPES[kit.active].name;
   if (id === 'fuel') return { name: `一桶油（${CAN} 公升）`, lines: [`油桶 ${CAN}公升`, '提到船尾倒進油箱', `$${o.price}`], price: o.price };
   if (id === 'wrench') {
     if (o.price === null) return { name: '扳手', lines: ['扳手', '已經有了', '售完'], price: null };
@@ -1983,10 +2047,7 @@ function offer(id) {
     if (o.price === null) return { name: '引擎', lines: ['引擎', `${bn}已升到頂`, '售完'], price: null };
     return { name: `${bn}的第 ${cur.engineLv + 1} 級引擎`, lines: [`引擎 第${cur.engineLv + 1}級`, `裝在${bn}，更快`, `$${o.price}`], price: o.price };
   }
-  if (id === 'box') {
-    if (o.price === null) return { name: '魚箱', lines: ['魚箱', `${bn}已是最大`, '售完'], price: null };
-    return { name: `${bn}的魚箱（${BOX_CAP[cur.boxLv + 1]} 條）`, lines: [`魚箱 ${BOX_CAP[cur.boxLv + 1]}條`, `放在${bn}，魚不跑`, `$${o.price}`], price: o.price };
-  }
+  if (id === 'box') return { name: '魚箱', lines: ['魚箱', '抱著搬，魚不會跑', `$${o.price}`], price: o.price };
   if (id.startsWith('bait_')) {
     const B = BAITS[id.slice(5)];
     if (o.price === null) return { name: B.name, lines: [B.name, '已經囤滿了', '售完'], price: null };
@@ -2033,7 +2094,6 @@ function applyKit(k) {
   const cur = k.boats[k.active];
   if (cur && myBoat.spec.id === k.active) {
     myBoat.engineLv = cur.engineLv;
-    if (cur.boxLv > 0 && cur.boxLv !== myBoat.boxLv) myBoat.setBox(cur.boxLv);
   }
   refreshTags();
   boards.setBerth(berth.label, BOAT_TYPES[k.active].name, Object.keys(k.boats).length > 1);
@@ -2056,8 +2116,8 @@ function useBoat(type, pose) {
     boats.push(b);
     scene.add(b.mesh);
   } else {
-    const lv = kit.boats[type] ?? { engineLv: 0, boxLv: 0 };
-    b = addBoat(type, pose, lv.boxLv);
+    const lv = kit.boats[type] ?? { engineLv: 0 };
+    b = addBoat(type, pose);
     b.engineLv = lv.engineLv;
     if (kept) {   // 收進倉庫之後重新整理過頁面：油量、破洞照收進去時的樣子
       b.fuel = clamp(kept.fuel, 0, b.spec.tank);
@@ -2107,7 +2167,6 @@ function aimTarget() {
     // 舵、魚箱、油箱、破洞、船燈只有自己的船能動；別人的船只能搭（坐下）
     if (b === myBoat) {
       if (nearHelm()) add('helm', at(P.helm.x, P.helm.y, P.helm.z), 0.5, { boat: b });
-      if (nearBox()) add('box', at(S.box.x, D + 0.3, S.box.z), Math.max(S.box.w, S.box.d) / 2 + 0.05, { boat: b });
       if (near(P.tank.x, P.tank.z, 1.9)) add('tank', at(P.tank.x, P.tank.y, P.tank.z), 0.36, { boat: b });
       for (const c of b.damage) if (near(c.lx, c.lz, 1.7)) add('crack', at(c.lx, D + 0.05, c.lz), 0.4, { boat: b, crack: c });
       if (near(P.switch.x, P.switch.z, 2.3)) add('lamp', at(P.switch.x, P.switch.y, P.switch.z), P.switchR, { boat: b });
@@ -2140,7 +2199,27 @@ function aimTarget() {
     if (c) add('chest', c.pos, 0.6, { chest: c });
   }
   // 放在甲板或地上的魚、油桶，還有籃子裡的魚（自己的、別人的都拿得起來：籃子裡的魚不受保護）
-  for (const it of [...fish.items, ...(fish.held ? [] : fish.basket)]) {   // 手上拿著魚時對準籃子是要放進去，不是拿裡面的
+  // 魚箱：自己的抱得起來、拿得出魚；誰的都放得進魚（放進別人的就是送給他）
+  const hb = heldBox();
+  if (!hb && !player.swim) for (const d of boxes.all()) {   // 游泳時抱不了箱子，也就不對準箱子
+    if (d.k === 'hand') continue;
+    const p = boxes.worldPos(d);
+    if (Math.hypot(p.x - player.pos.x, p.z - player.pos.z) > FISHBOX.reach || Math.abs(p.y - player.pos.y) > 2.2) continue;
+    if (fish.held) { if (!fish.held.can) add('fbox', p.clone().setY(p.y + FISHBOX.h * 0.6), 0.6, { box: d }); continue; }
+    add('fbox', p.clone().setY(p.y + FISHBOX.h * 0.3), 0.42, { box: d });
+    if (d.o === net.id && d.fish.length) add('fpile', p.clone().setY(p.y + FISHBOX.h + 0.12), 0.26, { box: d });
+  }
+  // 旁邊的人：手上拿著魚、抱著自己的箱子時可以送給他
+  if (hb || (fish.held && !fish.held.can)) {
+    for (const [id, o] of others.map) {
+      const fig = o.fig && o.fig.mesh;
+      if (!fig || !o.here || !fig.visible) continue;
+      const p = fig.getWorldPosition(new THREE.Vector3());
+      if (Math.hypot(p.x - player.pos.x, p.z - player.pos.z) > FISHBOX.giveReach || Math.abs(p.y - player.pos.y) > 1.5) continue;
+      add('player', p.setY(p.y + 1.1), 0.45, { pid: id, name: o.name });
+    }
+  }
+  if (!hb) for (const it of [...fish.items, ...(fish.held ? [] : fish.basket)]) {   // 手上拿著魚時對準籃子是要放進去，不是拿裡面的
     if (it.fly || (it.boat && it.boat.stored)) continue;   // 還在飛／在收進倉庫的船上
     const v = fish.worldPos(it, new THREE.Vector3());
     if (Math.hypot(v.x - player.pos.x, v.z - player.pos.z) > 1.8 || Math.abs(v.y - player.pos.y) > 1.3) continue;
@@ -2176,6 +2255,17 @@ function interact() {
     if (!net.online) return toast('連線中斷，等接回去再試');
     return net.send({ t: 'chest', id: a.chest.id });
   }
+  const hb = heldBox();
+  if (hb) {
+    // 抱著魚箱：對準籃子整箱賣、對準人送給他，其他就放下（大港的大秤在上面 havenSell）
+    if (kind === 'basket') {
+      if (!hb.fish.length) return toast('魚箱是空的');
+      if (!net.online) return toast('連線中斷，等接回去再賣');
+      return net.send({ t: 'sell', bid: hb.bid });
+    }
+    if (kind === 'player') return giveTo(a, { bid: hb.bid });
+    return putBoxDown(hb);
+  }
   if (fish.held && fish.held.can) {
     // 提著油桶：對準油箱的加油口就倒進去，倒不完的留在桶裡；沒對準就放下
     const can = fish.held, b = kind === 'tank' ? a.boat : null, room = b ? b.spec.tank - b.fuel : 0;
@@ -2188,8 +2278,9 @@ function interact() {
     return;
   }
   if (fish.held) {
+    if (kind === 'fbox') return fishIntoBox(a.box);
+    if (kind === 'player') return giveTo(a, { uid: fish.held.uid });
     if (kind === 'basket') refreshBoard(fish.toBasket());
-    else if (kind === 'box' && a.boat.boxFish.length < a.boat.boxCap) fish.toBox(a.boat);
     else fish.drop();
     audio.play('drop');
     return;
@@ -2222,7 +2313,13 @@ function interact() {
       fish.pick(a.item);
       if (a.item.state === 'held') refreshBoard();
       return;
-    case 'box': if (a.boat.boxFish.length) { audio.play('pick'); fish.fromBox(a.boat); } return;
+    case 'fbox':   // 自己的箱子抱起來（裡面的魚一起）；別人的搬不動
+      if (a.box.o !== net.id) return toast(`這是 ${others.map.get(a.box.o)?.name ?? '別人'} 的魚箱，只有他搬得動`);
+      if (!net.online) return toast('連線中斷，等接回去再搬');
+      return net.send({ t: 'boxTake', bid: a.box.bid });
+    case 'fpile':   // 從自己的箱子拿最上面那條出來
+      if (!net.online) return toast('連線中斷，等接回去再拿');
+      return net.send({ t: 'boxOut', bid: a.box.bid });
     case 'lamp':
       a.boat.lampOn = !a.boat.lampOn;
       audio.play('switch');
@@ -2312,14 +2409,20 @@ function updatePrompt() {
       text = kind === 'hook' ? hookText() : pumpText();
     } else if (kind === 'chest') {
       text = '按 E 打開漂流寶箱';
+    } else if (heldBox()) {
+      const hb = heldBox(), n = hb.fish.length;
+      text = kind === 'basket' ? (n ? `按 E 整箱賣出（${n} 條，$${boxes.value(hb)}）` : '魚箱是空的')
+        : kind === 'player' ? `按 E 把魚箱（${n} 條）送給 ${a.name}（對方要按接受）`
+          : `抱著魚箱（${n} 條、${boxes.kg(hb).toFixed(1)} 公斤${boxes.speed(hb) < 0.99 ? '，走得比較慢' : ''}）　按 E 放下`;
     } else if (fish.held && fish.held.can) {
       const b = kind === 'tank' ? ab : null;
       text = b && b.spec.tank - b.fuel >= 0.1 ? `按 E 把油倒進油箱（${litres(b.fuel)} / ${b.spec.tank} 公升）`
         : `${itemLabel(fish.held)}${b ? '　油箱是滿的' : ''}　按 E 放下${!b && nearTank() ? '（對準油箱可以加油）' : ''}，右鍵蓄力丟出去`;
     } else if (fish.held) {
       text = kind === 'basket' ? '按 E 把魚放進籃子'
-        : kind === 'box' ? (ab.boxFish.length < ab.boxCap ? `按 E 放進魚箱（${ab.boxFish.length}/${ab.boxCap}）` : `魚箱滿了（${ab.boxCap}/${ab.boxCap}）　按 E 放在地上，右鍵蓄力丟出去`)
-          : `${fishLabel(fish.held)}　按 E 放下${nearBox() ? '（對準魚箱可以放進去）' : nearBasket() ? '（對準籃子可以放進去）' : ''}，右鍵蓄力丟出去`;
+        : kind === 'fbox' ? boxInText(a.box)
+          : kind === 'player' ? `按 E 把${fish.held.sp.name}送給 ${a.name}（對方要按接受）`
+            : `${fishLabel(fish.held)}　按 E 放下${nearBasket() ? '（對準籃子可以放進去）' : ''}，右鍵蓄力丟出去`;
     } else if (fishing.state === 'wait') text = '等魚上鉤…（按 F 收回）';
     else if (fishing.state === 'bite') text = '魚咬了！快按 F';
     else if (fishing.state !== 'idle') text = '';
@@ -2327,7 +2430,11 @@ function updatePrompt() {
     else if (kind === 'crack') text = wrench ? '按 E 用扳手修補破洞' : '船板破了一個洞（要有扳手才能修）';
     else if (kind === 'bollard') text = a.moor.tied ? `按 E 解開${a.moor.boat.spec.name}的纜繩` : `按 E 把${a.moor.boat.spec.name}的纜繩綁在這根樁上`;
     else if (kind === 'item') text = a.item.remote ? `按 E 撿起${a.item.sp.name}（${others.map.get(a.item.owner)?.name ?? '沒人'}的，撿到就是你的）` : `按 E 拿起${a.item.can ? itemLabel(a.item) : a.item.sp.name}`;
-    else if (kind === 'box') text = ab.boxFish.length ? `按 E 從魚箱拿一條出來（${ab.boxFish.length}/${ab.boxCap}）` : `魚箱是空的（0/${ab.boxCap}）`;
+    else if (kind === 'fbox') {
+      const d = a.box, n = d.fish.length;
+      text = d.o === net.id ? `按 E 抱起魚箱（${n ? `${n} 條、${boxes.kg(d).toFixed(1)} 公斤` : '空的'}）`
+        : `${others.map.get(d.o)?.name ?? '別人'} 的魚箱（${n} 條）：只有他搬得動，可以把魚放進去送給他`;
+    } else if (kind === 'fpile') text = `按 E 從魚箱拿一條出來（${a.box.fish.length} 條）`;
     else if (kind === 'tank') text = `油箱　${litres(ab.fuel)} / ${ab.spec.tank} 公升（提著油桶對準這裡按 E 加油）`;
     else if (kind === 'lamp') text = ab.lampOn ? '按 E 關掉船燈' : '按 E 打開船燈';
     else if (kind === 'seat') text = player.seat && player.seat.src === a.seat ? '按 E 站起來' : '按 E 坐下';
@@ -2374,8 +2481,9 @@ function updatePrompt() {
   // 手機按鈕先更新：提示裡畫的「互動」圖示要跟按鈕現在的樣子一樣
   touch.update({
     on: inGame && !mapOpen && !chat.isOpen && !wheel.isOpen, helm: mode === 'helm', sink: mode === 'sink', held: !!fish.held && !player.swim,
-    target: !!a || mode === 'helm' || !!fish.held || !!player.seat,
-    act: mode === 'helm' ? '放手' : fish.held ? (kind === 'tank' || kind === 'basket' || kind === 'box' ? '放進去' : '放下') : player.seat && !a ? '站起來' : '互動',
+    target: !!a || mode === 'helm' || !!fish.held || !!heldBox() || !!player.seat,
+    act: mode === 'helm' ? '放手' : kind === 'player' ? '送給他' : heldBox() ? (kind === 'basket' ? '賣出' : '放下')
+      : fish.held ? (kind === 'tank' || kind === 'basket' || kind === 'fbox' ? '放進去' : '放下') : player.seat && !a ? '站起來' : '互動',
   });
   touchSet($('prompt'), text);   // 字和圖示都沒變時它自己會跳過
   if (text !== promptText) {
@@ -3397,8 +3505,7 @@ function sendState(dt) {
 
 // 自己身上、船上、籃子裡所有魚的編號
 function myFishUids() {
-  const all = [...fish.items, ...fish.basket, fish.held, ...myBoat.boxFish];
-  for (const b of garage.values()) all.push(...b.boxFish);
+  const all = [...fish.items, ...fish.basket, fish.held];
   return all.filter((it) => it && it.uid && !it.remote).map((it) => it.uid);
 }
 // 這艘船是誰的（玩家編號）；放在倉庫裡、別人看不到的船是 null
@@ -3433,6 +3540,59 @@ net.on('taken', (m) => {
   const it = fish.removeOwn(m.uid);
   refreshBoard();
   if (it) toast(`${m.by} 撿走了你的${it.sp.name}`);
+});
+// ---- 魚箱：伺服器說箱子變了（誰抱著、放在哪、裡面有什麼）就照著重畫 ----
+net.on('box', (m) => {
+  for (const bid of m.del ?? []) boxes.del(bid);
+  for (const d of m.add ?? []) boxes.set(d);
+});
+// 買魚箱：已經有兩個了，先問要不要清掉最舊的那個
+net.on('boxFull', async (m) => {
+  buying = false;
+  const yes = await ask(`你已經有 ${FISHBOX.max} 個魚箱了。\n買新的會把最舊的那個收走${m.n ? `，裡面的 ${m.n} 條魚會一起不見` : ''}。`, { yes: '買新的', no: '不買了' });
+  if (yes && net.online) net.send({ t: 'buy', id: 'box', replace: true });
+});
+net.on('boxedIn', (m) => {
+  if (fish.held && fish.held.uid === m.uid) fish.discardHeld();
+  pendingIn.delete(m.uid);
+  audio.play('drop');
+  if (m.to) toast(`放進 ${m.to} 的魚箱，送給他了`);
+});
+net.on('boxNo', (m) => { if (pendingIn.has(m.uid)) boxBounce(m.uid, m.msg); else if (m.msg) toast(m.msg); });
+net.on('boxGift', (m) => toast(`${m.from} 放了一條${SPECIES[m.id]?.name ?? '魚'}到你的魚箱`));
+net.on('boxOut', (m) => {
+  const f = m.fish;
+  audio.play('pick');
+  if (fish.held) fish.stowDeck(myBoat, 0, 0, f.id, f.kg, f.len, f.uid, f.value);
+  else fish.spawnHeld(f.id, f.kg, f.len, f.uid, f.value).lively = 0;
+});
+
+// ---- 送東西：對方要按接受 ----
+net.on('offering', (m) => toast(`等 ${m.to} 回答要不要收…`));
+net.on('giveNo', (m) => toast(m.msg || '對方沒有收'));
+net.on('offer', async (m) => {
+  const w = m.what, what = w.box !== undefined ? `一個魚箱（裡面 ${w.box} 條魚、${w.kg.toFixed(1)} 公斤、值 ${cash(w.value)}）`
+    : `一條${SPECIES[w.id]?.name ?? '魚'}（${Math.round(w.len * 100)} 公分、${w.kg.toFixed(2)} 公斤、值 ${cash(w.value)}）`;
+  const yes = await ask(`${m.from} 想送你${what}`, { yes: '收下', no: '不要', sec: m.sec, tag: `offer${m.oid}` });
+  if (net.online) net.send({ t: 'giveAns', oid: m.oid, yes });
+});
+net.on('offerGone', (m) => cancelAsk(`offer${m.oid}`));
+net.on('gave', (m) => {   // 對方收下了：手上那條（或抱著的箱子，由 box 訊息重畫）給出去
+  if (m.uid && fish.held && fish.held.uid === m.uid) fish.discardHeld();
+  else if (m.uid) fish.removeOwn(m.uid);
+  toast(`${m.to} 收下了`);
+});
+net.on('gift', (m) => {   // 收到別人送的：魚拿在手上（手上有東西就放到自己船上）；箱子由 box 訊息畫在手上
+  if (m.fish) {
+    const f = m.fish;
+    if (fish.held || heldBox()) fish.stowDeck(myBoat, 0, 0, f.id, f.kg, f.len, f.uid, f.value);
+    else fish.spawnHeld(f.id, f.kg, f.len, f.uid, f.value).lively = 0;
+    toast(`收下 ${m.from} 送的${SPECIES[f.id]?.name ?? '魚'}`);
+  } else {
+    if (fish.held) fish.drop();
+    toast(`收下 ${m.from} 送的魚箱（${m.n} 條魚）`);
+  }
+  audio.play('pick');
 });
 net.on('expired', (m) => {
   let n = 0;
@@ -3477,11 +3637,15 @@ net.on('caught', (m) => {
 
 // ---- 買賣、換船 ----
 net.on('sold', (m) => {
+  if (m.box) {   // 抱著魚箱整箱賣（箱子空了由 box 訊息重畫）
+    applyKit(m.kit);
+    if (m.total > 0) { audio.play('coin'); toast(`整箱 ${m.uids.length} 條賣出${m.at === 'haven' ? `（大港多 ${Math.round(PORT.bonus * 100)}%）` : ''}，得到 ${cash(m.total)}`); }
+    return;
+  }
   if (m.at === 'haven') {
     // 大港的大秤：賣掉的是手上那條、或船上魚箱裡的（不經過籃子）
     const gone = new Set(m.uids);
     if (fish.held && gone.has(fish.held.uid)) fish.discardHeld();
-    for (const b of boats) for (let i = b.boxFish.length - 1; i >= 0; i--) if (gone.has(b.boxFish[i].uid)) { b.boxFish[i].mesh.removeFromParent(); b.boxFish.splice(i, 1); }
     applyKit(m.kit);
     if (m.total > 0) { audio.play('coin'); toast(`大港收購價（多 ${Math.round(PORT.bonus * 100)}%）：賣出 ${m.uids.length} 條，得到 ${cash(m.total)}`); }
     return;
@@ -3510,6 +3674,7 @@ net.on('bought', (m) => {
   applyKit(m.kit);
   audio.play('coin');
   if (m.id === 'fuel') fish.spawnCan(CAN);
+  if (m.id === 'box' && fish.held) fish.drop();   // 魚箱抱在手上：手上原本拿的先放下
   toast(m.repair ? (m.cheap ? '釣竿修好了（錢不夠，老闆算你便宜）' : '釣竿修好了')
     : BOAT_TYPES[m.id] ? `買了${o.name}，先收在倉庫。到魚市場前的「停船位置」牌子可以換出來` : `買了${o.name}`);
 });
@@ -3571,6 +3736,7 @@ net.on('merged', (m) => {
   boards.set(m.boards);
   applyWorld(m.world, true);
   fish.applyLoose(m.loose ?? [], net.id);
+  boxes.apply(m.boxes);
   lastPosMsg = lastBoatMsg = lastBoatDetail = '';
   if (!wreck && !drown) fadeIn = 1.6;
   chat.sys(`已經合併到${room.name}${m.repark ? `，你的船移到 ${berth.label}` : ''}`, 'merge');
@@ -3602,6 +3768,7 @@ net.on('rejoin', (j) => {
   const mine = new Set(myFishUids());
   const gone = (j.resume?.fish ?? []).filter((f) => !mine.has(f.uid)).map((f) => f.uid);
   if (gone.length) net.send({ t: 'fishGone', uids: gone });
+  boxes.apply(j.boxes);
   fish.applyLoose(j.loose ?? [], net.id);   // 斷線時別人放下、撿走的魚對回來；自己放在外面被撿走的拿掉
   if (myBoat._wrecked && !j.resume?.boat?.sunk) net.send({ t: 'sink', why: myBoat.sunkBy, side: myBoat._side });
   lastPosMsg = lastBoatMsg = lastBoatDetail = '';
@@ -3619,11 +3786,11 @@ function enterRoom(j) {
   kit = j.kit;
   berth = j.berth;
   // 自己的船：新進房的停在分到的格子；回來的照離開時的位置、油量、破洞
-  const rb = j.resume?.boat, lv = kit.boats[kit.active] ?? { engineLv: 0, boxLv: 0 };
+  const rb = j.resume?.boat, lv = kit.boats[kit.active] ?? { engineLv: 0 };
   const old = myBoat;
   boats.splice(boats.indexOf(old), 1);
   old.mesh.removeFromParent();
-  myBoat = boat = addBoat(kit.active, rb && !rb.sunk ? { x: rb.s[0], z: rb.s[1], heading: rb.s[2] } : berth, lv.boxLv);
+  myBoat = boat = addBoat(kit.active, rb && !rb.sunk ? { x: rb.s[0], z: rb.s[1], heading: rb.s[2] } : berth);
   myBoat.engineLv = lv.engineLv;
   if (rb && !rb.sunk) {
     myBoat.fuel = clamp(rb.s[10], 0, myBoat.spec.tank);
@@ -3647,11 +3814,10 @@ function enterRoom(j) {
     net.send({ t: 'boatLost' });
   } else if (back) {
     const S = myBoat.spec;
-    for (const f of back.fish) {
-      if (myBoat.boxFish.length < myBoat.boxCap) fish.stowFish(myBoat, f.id, f.kg, f.len, f.uid, f.value);
-      else fish.stowDeck(myBoat, S.box.x + (Math.random() - 0.5) * 1.2, (Math.random() - 0.5) * S.beam * 0.4, f.id, f.kg, f.len, f.uid, f.value);
-    }
+    // 魚箱裡的魚跟著箱子回來（boxes）；其他的（斷線時拿在手上的）放在甲板上
+    for (const f of back.fish) fish.stowDeck(myBoat, (Math.random() - 0.5) * S.len * 0.3, (Math.random() - 0.5) * S.beam * 0.4, f.id, f.kg, f.len, f.uid, f.value);
   }
+  boxes.apply(j.boxes);
   fish.applyLoose(j.loose ?? [], j.id);   // 大家放在外面的魚（地上、甲板上、籃子裡）；自己斷線前放在外面的也照原位放回去
   let px = SPAWN_W.x + (Math.random() - 0.5) * 3, pz = SPAWN_W.z + (Math.random() - 0.5) * 2, yaw = SPAWN_W.yaw, deck = null;
   if (pos && !(rb && rb.sunk)) {
@@ -3769,6 +3935,13 @@ function advance(dt) {
 
   // 魚與釣魚
   fish.update(dt);
+  // 魚箱：抱著的時候手往前抱、照重量走慢；抱著不能游泳，一下水箱子就浮在水面上
+  const hbx = heldBox();
+  player.carry = !!fish.held || !!hbx;
+  player.load = hbx ? boxes.speed(hbx) : 1;
+  if (hbx && player.swim && performance.now() - boxSent > 700) { putBoxDown(hbx, true); toast('抱著魚箱不能游泳，箱子先浮在水面上（從岸上、甲板上伸手拿得回來）'); }
+  boxes.update(time);
+  boxes.marks(camera, player.pos, net.id, inGame && !mapOpen);
   throwTick(dt);
   fishing.reel = keys.f || keys.mouse;
   fishing.update(dt);
@@ -4093,7 +4266,7 @@ renderer.setAnimationLoop((ms) => {
 
 // 供除錯與測試使用
 window.__sim = {
-  advance, drawFrame, get boat() { return boat; }, boats, addBoat, offer, refreshTags, nearBox, nearShelf, SHELF,
+  advance, drawFrame, get boat() { return boat; }, boats, addBoat, offer, refreshTags, boxes, heldBox, nearShelf, SHELF,
   get rodLv() { return rodLv; }, get rodBroken() { return rodBroken; },
   aimTarget, wheel, closeWheel, sitDown, standUp, offAt, audio, player, ocean, keys, view, bedAt, walkGround, walkWorld, shelterAt, nearHelm, interact, toggleFp,
   fish, fishing, isWater, SELL: SELL_W, get money() { return money; },

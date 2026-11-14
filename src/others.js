@@ -37,7 +37,7 @@ const dispose = (root) => root.traverse((m) => { if (m.isMesh || m.isSprite) { m
 // env：
 //   scene
 //   decorate(mesh)：把新的人偶加上陰影、描邊（跟自己的人偶一樣）
-//   makeBoat(type, pose, boxLv)：造一艘船放進世界（加進可以走上去的船的名單），回傳它；dropBoat(boat)：把它拿掉
+//   makeBoat(type, pose)：造一艘船放進世界（加進可以走上去的船的名單），回傳它；dropBoat(boat)：把它拿掉
 //   boatOf(id)：這個玩家放在世界裡的那艘船（自己的也算）
 export class Others {
   constructor(env) {
@@ -45,7 +45,7 @@ export class Others {
     this.map = new Map();   // id → { id, name, fig, tag, rod, boat, st, lastAct }
   }
 
-  // 房裡的一個人。here：他現在連著線（沒有的話只有船，人不在）；boat：{ type, boxLv, s, sunk }
+  // 房裡的一個人。here：他現在連著線（沒有的話只有船，人不在）；boat：{ type, s, sunk }
   // look：他選的角色（'girl'／'boy'）
   add({ id, name, look = 'girl', here = true, pos = null, boat = null, hold = null, line = null }) {
     let o = this.map.get(id);
@@ -126,11 +126,11 @@ export class Others {
     if (o.boat && (o.boat.spec.id !== info.type || o.boat.sinking)) { this.env.dropBoat(o.boat); o.boat = null; }
     if (info.sunk) return;
     if (!o.boat) {
-      o.boat = this.env.makeBoat(info.type, { x: info.s[0], z: info.s[1], heading: info.s[2] }, info.boxLv);
+      o.boat = this.env.makeBoat(info.type, { x: info.s[0], z: info.s[1], heading: info.s[2] });
       o.boat.remote = true;
       o.boat.owner = { id, name: o.name };
       restyle(o.boat.parts.helmsman, o.look);   // 只有船主能開：舵手長得跟船主一樣
-    } else if (o.boat.boxLv !== info.boxLv && info.boxLv > 0) o.boat.setBox(info.boxLv);
+    }
     o.boat.setNet(info.s, true);
   }
 

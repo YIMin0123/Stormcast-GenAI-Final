@@ -5,9 +5,9 @@ import { bulb } from './toon.js';
 import { buildFigure } from './figure.js';
 export { buildFigure };
 
-import { BOAT_TYPES, BOX_CAP, MAX_LEVEL } from './boatdata.js';
+import { BOAT_TYPES, MAX_LEVEL } from './boatdata.js';
 // 三種船的規格在 boatdata.js（伺服器也用同一份）
-export { BOAT_TYPES, BOX_CAP, MAX_LEVEL };
+export { BOAT_TYPES, MAX_LEVEL };
 const CRACKS = 6;          // 耐久度分成幾處破洞：全破了船就沉
 const DRIFT = 1.2;         // 沒油時只能用這個速度慢慢漂（公尺/秒）
 // 船受得了的搖晃（斜率）：超過 SAFE 開始受損，橫搖超過 CAPSIZE 就翻
@@ -459,9 +459,6 @@ export class Boat {
     this.aground = false;
     this.manned = false;
     this.engineLv = 0;   // 引擎等級：每級極速 +15%
-    this.boxLv = 0;      // 魚箱等級：0 = 沒有
-    this.boxFish = [];   // 魚箱裡的魚
-    this.boxMesh = null;
     this.fuel = S.tank;  // 油箱裡的油（公升）；新船是滿的
     this.damage = [];    // 甲板上的破洞：{ lx, lz, dmg, mesh }。耐久度 = 滿的 - 所有破洞
     this.roll = 0;       // 目前的橫搖、縱搖（斜率）
@@ -482,7 +479,6 @@ export class Boat {
   }
 
   get maxSpeed() { return this.spec.speed * (1 + 0.15 * this.engineLv); }
-  get boxCap() { return BOX_CAP[this.boxLv]; }
   get hp() { return Math.max(0, this.spec.hp - this.damage.reduce((sum, d) => sum + d.dmg, 0)); }
 
   // 受損：甲板上裂開一個洞，繼續受損洞會變大，大到一定程度再裂下一個
@@ -566,21 +562,6 @@ export class Boat {
     _q.setFromAxisAngle(Y_AXIS, -this.heading).multiply(_q2.setFromAxisAngle(X_AXIS, this._side * lean));
     this.mesh.quaternion.slerp(_q, 1 - Math.exp(-dt * 5));
     this.mesh.position.set(this.x, this.y, this.z);
-  }
-
-  // 裝上（或加大）魚箱：甲板上一個敞口木箱，魚放進去不會跳走、滑走
-  setBox(level) {
-    const S = this.spec, B = S.box;
-    if (!this.boxLv && level) this.blocks.push([B.x - B.w / 2 - 0.05, B.x + B.w / 2 + 0.05, B.z - B.d / 2 - 0.05, B.z + B.d / 2 + 0.05]);
-    this.boxLv = level;
-    if (this.boxMesh) this.boxMesh.removeFromParent();
-    const g = this.boxMesh = new THREE.Group(), h = B.h * (0.8 + 0.2 * level);
-    const mat = lambert([0xa9824e, 0xa9824e, 0x8f6a3c, 0x6f4f2c][level]);
-    g.add(box(B.w, 0.05, B.d, mat, 0, 0.025, 0),
-      box(B.w, h, 0.05, mat, 0, h / 2, -B.d / 2), box(B.w, h, 0.05, mat, 0, h / 2, B.d / 2),
-      box(0.05, h, B.d, mat, -B.w / 2, h / 2, 0), box(0.05, h, B.d, mat, B.w / 2, h / 2, 0));
-    g.position.set(B.x, S.deck, B.z);
-    this.mesh.add(g);
   }
 
   // 船燈的樣子。glow：天有多黑（0 白天、1 全黑）。開著的燈白天也看得出是亮的，天黑後亮到會暈開；關掉就是一顆暗的玻璃

@@ -13,6 +13,7 @@ import { randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Room, newPlayer, profileOf, applyProfile, MAX_PLAYERS, TICK } from './room.js';
+import { boxPub, inBoxes } from './fishBoxes.js';
 import { Daily } from './daily.js';
 import { Profiles, epochAt } from './profiles.js';
 import { SERVER } from '../src/config.js';
@@ -97,8 +98,13 @@ function doMerge() {
   for (const e of carried) to.loose.set(e.uid, e);
   from.loose.clear();
   if (carried.length) to.all({ t: 'loose', add: carried.map((e) => to.loosePub(e)) });
+  // 魚箱也搬過去（主人跟著搬過去，箱子裡的魚還是他的）；送到一半的東西作廢
+  const boxes = [...from.boxes.values()];
+  for (const bx of boxes) to.boxes.set(bx.bid, bx);
+  from.boxes.clear(); from.offers.clear();
   const moved = new Map();
   for (const p of moving) moved.set(p, to.enter(p, { fresh: false, quiet: true }));
+  if (boxes.length) to.all({ t: 'box', add: boxes.map((bx) => boxPub(to, bx)) });
   for (const p of moving) {
     if (p.ws) to.send(p, { t: 'merged', from: from.name, repark: moved.get(p), ...to.snapshot(p) });
   }
@@ -237,7 +243,7 @@ wss.on('connection', (ws) => {
       hub.lobby.delete(ws);
       r.enter(me);
       // 有存著的進度：家當、倉庫裡的船、還沒賣的魚還給他，人從港口出發、船停在分到的格子
-      const back = prof && { pos: null, boat: { ...me.boat, s: [...me.boat.s] }, stored: me.stored, fish: [...me.fish].map(([uid, f]) => ({ uid, ...f })) };
+      const back = prof && { pos: null, boat: { ...me.boat, s: [...me.boat.s] }, stored: me.stored, fish: [...me.fish].filter(([uid]) => !inBoxes(me).has(uid)).map(([uid, f]) => ({ uid, ...f })) };   // 魚箱裡的跟著箱子回來
       r.send(me, { t: 'joined', resume: back || null, ...r.snapshot(me) });
       hub.keep(me);
       console.log(`[join] ${name} 進了 ${r.name}（${r.count}/${MAX_PLAYERS}）${prof ? '，帶著存著的進度' : ''}`);

@@ -45,7 +45,8 @@ export class Player {
     this.tilt = 0;                         // 游泳時身體往前趴的角度
     this.wPitch = 0; this.wRoll = 0;       // 跟著浪面傾斜的角度
     this.clock = 0; this.bob = 0; this.lean = 0; this.roll = 0;   // 動作用：時間、上下起伏、前傾、左右晃
-    this.airSide = 1; this.wasAir = false;   // 跳起來時哪隻腳在前（每跳一次換一邊）
+    this.airSide = 1; this.wasAir = false;
+    this.load = 1;   // 走路速度的倍數：抱著裝滿魚的箱子會變慢（main.js 照箱子的重量設）   // 跳起來時哪隻腳在前（每跳一次換一邊）
     this.lookYaw = 0; this.lookPitch = 0;  // 鏡頭看的方向（頭會跟著轉）
     this.eyeH = 1.25;                      // 眼睛離腳多高（游泳時只剩頭露出水面）
     this.seat = null;                      // 坐在船上的哪個位子：{ boat, x, z, h 坐墊高度, yaw 面向（相對船首） }；沒坐是 null
@@ -266,7 +267,7 @@ export class Player {
     let dx = 0, dz = 0;
     if (airborne) {
       if (this.moving) {
-        const v = run ? RUN : WALK, steer = 1 - Math.exp(-AIR_STEER * dt);
+        const v = (run ? RUN : WALK) * this.load, steer = 1 - Math.exp(-AIR_STEER * dt);
         this.airVX += (dirX / len * v - this.airVX) * steer;
         this.airVZ += (dirZ / len * v - this.airVZ) * steer;
       }
@@ -274,7 +275,7 @@ export class Player {
       this.airVX *= drag; this.airVZ *= drag;
       dx = this.airVX * dt; dz = this.airVZ * dt;
     } else if (this.moving) {
-      let v = fly ? (this.flyDash ? this.flyFast : this.flySpeed) : swim ? (run ? SWIM_FAST : SWIM) : (run ? RUN : WALK);
+      let v = fly ? (this.flyDash ? this.flyFast : this.flySpeed) : swim ? (run ? SWIM_FAST : SWIM) : (run ? RUN : WALK) * this.load;   // load：抱著重的魚箱走得慢
       if (fly) { /* 飛行：不管水、不管手上拿什麼 */ } else if (swim && this.carry) v *= 0.7;                                                        // 捧著東西游比較慢
       else if (!swim && !this.boat && this.base < world.water(this.x, this.z) - 0.45) v *= 0.6; // 涉水
       dx = (dirX / len) * v * dt; dz = (dirZ / len) * v * dt;

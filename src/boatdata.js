@@ -24,22 +24,22 @@ export const BOAT_TYPES = {
   },
 };
 import { BAITS, BAIT_MAX } from './fishdata.js';
+import { FISHBOX } from './config.js';
 export const BOAT_ORDER = ['skiff', 'fisher', 'trawler'];
-export const BOX_CAP = [0, 6, 12, 20];   // 魚箱各等級裝幾條
 export const MAX_LEVEL = 3;
 
 // ---- 商店的價錢（伺服器照這份扣錢，瀏覽器照這份顯示） ----
-export const PRICE = { rod: [120, 350, 800], engine: [200, 500, 1000], box: [100, 300, 700], fuel: 30, wrench: 150 };
+export const PRICE = { rod: [120, 350, 800], engine: [200, 500, 1000], fuel: 30, wrench: 150 };   // 魚箱的價錢在 config.js 的 FISHBOX
 export const REPAIR = [40, 100, 220, 450];   // 修釣竿的價錢（依釣竿等級）
 export const CAN = 20;                        // 一桶油幾公升
 
-// 玩家的家當（伺服器保管）：{ money, rodLv, rodBroken, wrench, boats: { 船種: { engineLv, boxLv } }, active: 現在放在世界裡的是哪一艘,
+// 玩家的家當（伺服器保管）：{ money, rodLv, rodBroken, wrench, boats: { 船種: { engineLv } }, active: 現在放在世界裡的是哪一艘,
 //   baits: { 餌種: 剩幾個 }, bait: 現在掛的餌種（'' 是基本餌） }
-export const newKit = () => ({ money: 0, rodLv: 0, rodBroken: false, wrench: false, boats: { skiff: { engineLv: 0, boxLv: 0 } }, active: 'skiff', baits: Object.fromEntries(Object.keys(BAITS).map((k) => [k, 0])), bait: '' });
+export const newKit = () => ({ money: 0, rodLv: 0, rodBroken: false, wrench: false, boats: { skiff: { engineLv: 0 } }, active: 'skiff', baits: Object.fromEntries(Object.keys(BAITS).map((k) => [k, 0])), bait: '' });
 export const baitCount = (kit, id) => (kit.baits && kit.baits[id]) || 0;
 
 // 商品架上的一樣東西現在賣多少、買了會怎樣。回傳 { price, apply(kit) }；price 為 null 表示沒得買（why：原因）
-// 引擎和魚箱是裝在「現在放在世界裡的那艘船」上
+// 引擎是裝在「現在放在世界裡的那艘船」上；魚箱是拿在手上的道具（伺服器另外處理，見 server/fishBoxes.js）
 export function shopItem(id, kit) {
   const cur = kit.boats[kit.active], S = BOAT_TYPES[kit.active];
   if (id === 'fuel') return { price: PRICE.fuel, apply() {} };
@@ -59,13 +59,10 @@ export function shopItem(id, kit) {
     if (!cur || cur.engineLv >= MAX_LEVEL) return { price: null, why: 'max' };
     return { price: Math.round(PRICE.engine[cur.engineLv] * S.costK / 10) * 10, apply(k) { k.boats[k.active].engineLv++; } };
   }
-  if (id === 'box') {
-    if (!cur || cur.boxLv >= MAX_LEVEL) return { price: null, why: 'max' };
-    return { price: PRICE.box[cur.boxLv], apply(k) { k.boats[k.active].boxLv++; } };
-  }
+  if (id === 'box') return { price: FISHBOX.price, apply() {} };
   if (BOAT_TYPES[id] && id !== 'skiff') {
     if (kit.boats[id]) return { price: null, why: 'have' };
-    return { price: BOAT_TYPES[id].price, apply(k) { k.boats[id] = { engineLv: 0, boxLv: 0 }; } };
+    return { price: BOAT_TYPES[id].price, apply(k) { k.boats[id] = { engineLv: 0 }; } };
   }
   return { price: null, why: 'none' };
 }

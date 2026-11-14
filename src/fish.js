@@ -146,16 +146,7 @@ export class FishWorld {
     return it;
   }
 
-  // 讀檔用：直接把一條魚放進船的魚箱、把一桶油放在甲板上
-  stowFish(boat, id, kg, len, uid = 0, value = undefined) {
-    const keep = this.held;
-    this.held = null;
-    this.spawnHeld(id, kg, len, uid, value).lively = 0;
-    this.toBox(boat);
-    this.held = keep;
-    this.env.player.carry = !!keep;
-  }
-
+  // 讀檔用：把一桶油放在甲板上
   stowCan(boat, lx, lz, liters) {
     const keep = this.held;
     this.held = null;
@@ -164,10 +155,9 @@ export class FishWorld {
     this.env.player.carry = !!keep;
   }
 
-  // 全部清掉（進到一間新的房間時）：地上、甲板上、魚箱裡、籃子裡、手上的都不留
+  // 全部清掉（進到一間新的房間時）：地上、甲板上、籃子裡、手上的都不留（魚箱另外由 fishBox.js 照伺服器重畫）
   clearAll() {
     for (const it of [...this.items, ...this.basket]) it.mesh.removeFromParent();
-    for (const b of this.env.boats) { for (const it of b.boxFish) it.mesh.removeFromParent(); b.boxFish.length = 0; }
     this.items.length = 0;
     this.basket.length = 0;
     this.discardHeld();
@@ -182,7 +172,7 @@ export class FishWorld {
     this.env.player.carry = false;
   }
 
-  // 船沉了：甲板上和魚箱裡的東西都沒了；人也在船上的話，手上的也沒了
+  // 船沉了：甲板上的東西都沒了（魚箱會浮起來，由伺服器處理）；人也在船上的話，手上的也沒了
   wreck(boat, aboard) {
     const gone = [];
     for (const it of this.items.filter((o) => o.boat === boat)) {
@@ -190,8 +180,6 @@ export class FishWorld {
       this.items.splice(this.items.indexOf(it), 1);
       gone.push(it);
     }
-    for (const it of boat.boxFish) { it.mesh.removeFromParent(); gone.push(it); }
-    boat.boxFish.length = 0;
     if (aboard && this.held) { gone.push(this.held); this.discardHeld(); }
     this._gone(gone);
   }
@@ -390,27 +378,6 @@ export class FishWorld {
     return best;
   }
 
-  // 把手上的魚放進船上的魚箱：在箱子裡不會跳、不會滑、不會被浪捲走（it：丟過來掉進箱子的那條）
-  toBox(boat, it = this.held) {
-    const B = boat.spec.box;
-    if (!it || boat.boxFish.length >= boat.boxCap) return false;
-    this._release(it);
-    this._unlist(it);
-    this._unpub(it);
-    it.state = 'box'; it.boat = boat;
-    boat.mesh.add(it.mesh);
-    it.mesh.position.set(B.x + rand(-0.25, 0.25) * B.w, boat.spec.deck + 0.1 + 0.05 * boat.boxFish.length, B.z + rand(-0.25, 0.25) * B.d);
-    it.mesh.rotation.set(Math.PI / 2, 0, rand(0, Math.PI * 2));
-    boat.boxFish.push(it);
-    return true;
-  }
-
-  // 從魚箱拿一條出來
-  fromBox(boat) {
-    if (this.held || !boat.boxFish.length) return;
-    this._hold(boat.boxFish.pop());
-  }
-
   // 把手上的魚放進商店的籃子（it：丟過來掉進籃子的那條）
   toBasket(it = this.held) {
     const k = this.env.basket;
@@ -481,23 +448,16 @@ export class FishWorld {
     return y !== undefined && this.env.flyGround ? this.env.flyGround(x, z, y) : this.env.ground(x, z);
   }
 
-  // (x, z) 在不在籃子、自己船上魚箱的範圍裡（那一塊對人來說是牆）：
-  // 回傳 { rim 口的高度, into 從口掉下去會落進哪裡（'basket' 或那艘船；油桶、魚箱滿了、打在邊上是 null） }
+  // (x, z) 在不在籃子、魚箱的範圍裡（那一塊對人來說是牆）：
+  // 回傳 { rim 口的高度, into 從口掉下去會落進哪裡（'basket' 或魚箱的 bid；油桶、魚箱滿了、魚太長、打在邊上是 null） }
   _over(it, x, z) {
     const k = this.env.basket;
     if (k) {
       const d = Math.hypot(x - k.x, z - k.z);
       if (d < 0.75) return { rim: k.y + 0.53, into: !it.can && d < 0.4 ? 'basket' : null };
     }
-    const b = this.env.ownBoat && this.env.ownBoat();
-    if (b && !b.sinking && b.boxCap > 0) {
-      const B = b.spec.box, l = b.toLocal(x, z), ax = Math.abs(l.x - B.x), az = Math.abs(l.z - B.z);
-      if (ax < B.w / 2 + 0.1 && az < B.d / 2 + 0.1) {
-        const room = !it.can && b.boxFish.length < b.boxCap && ax < B.w / 2 && az < B.d / 2;
-        return { rim: b.deckY(x, z) + B.h, into: room ? b : null };
-      }
-    }
-    return null;
+    // 放在地上、甲板上的魚箱（誰的都可以：丟進別人的箱子就是送給他）
+    return this.env.boxOver ? this.env.boxOver(x, z, it) : null;
   }
 
   _flyPose(it) {
@@ -520,7 +480,8 @@ export class FishWorld {
         if (ny > c.rim) { it.x = nx; it.z = nz; it.y = ny; continue; }
         if (c.into && it.y >= c.rim - 0.1) {
           it.fly = null;
-          if (c.into === 'basket') this.toBasket(it); else this.toBox(c.into, it);
+          if (c.into === 'basket') this.toBasket(it);
+          else { this._unlist(it); it.mesh.removeFromParent(); this.env.intoBox(it, c.into); }   // 掉進魚箱：交給伺服器放進去（放不進去會再擺回箱子旁邊）
           if (this.env.landed) this.env.landed(it, c.into === 'basket' ? 'basket' : 'box', new THREE.Vector3(nx, ny, nz));
           return;
         }
