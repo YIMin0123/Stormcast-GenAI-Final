@@ -58,7 +58,7 @@ export const SPECIES = {
   wreckEel: { name: '沉船巨鰻', kg: [12, 30], mult: 0.6, strength: 1.25, color: 0x4a4a3a, h: 0.08, w: 0.08, lenK: 0.8, rarity: 'rare', where: ['atoll'], nightK: 2.5, spots: [{}] },
   lanternfish: { name: '燈籠魚', kg: [0.2, 0.6], mult: 1.6, strength: 0.4, color: 0x3a5f8a, h: 0.3, w: 0.13, lenK: 0.3, rarity: 'uncommon',
     spots: [{ where: ['beacon'], time: 'night' }, { w: 10, depth: [30, INF], off: [250, INF], time: 'night' }] },
-  glowsquid: { name: '夜光魷', kg: [0.8, 2.5], mult: 1.2, strength: 0.5, color: 0xa8f0ff, h: 0.26, w: 0.2, rarity: 'rare', where: ['beacon'], spots: [{ time: 'night' }] },
+  glowsquid: { name: '夜光魷', model: 'squid', kg: [0.8, 2.5], mult: 1.2, strength: 0.5, color: 0xa8f0ff, h: 0.26, w: 0.2, rarity: 'rare', where: ['beacon'], spots: [{ time: 'night' }] },
   // ---- 離岸與外海 ----
   bonito: { name: '鰹魚', kg: [2.0, 5.0], mult: 0.38, strength: 1.0, color: 0x2a4f8f, h: 0.28, w: 0.17, rarity: 'common',
     spots: [{ w: 35, off: [120, 250], time: 'day' }, { w: 45, off: [250, 400], time: 'day' }, { w: 40, off: [400, INF], time: 'day' },
@@ -73,7 +73,7 @@ export const SPECIES = {
   shark: { name: '鯊魚', kg: [40, 120], mult: 0.1, strength: 1.3, color: 0x6f7c88, h: 0.2, w: 0.18, lenK: 0.55, fin: 2.2, rarity: 'rare', before: 4, after: 2, spots: [{ w: 3, off: [250, INF] }] },
   oarfish: { name: '皇帶魚', kg: [10, 40], mult: 0.35, strength: 0.9, color: 0xd6dee6, h: 0.06, w: 0.04, lenK: 1.1, rarity: 'rare', need: 'after', spots: [{ off: [200, INF] }] },
   // ---- 只在晚上出現的魚 ----
-  squid: { name: '小卷', kg: [0.1, 0.4], mult: 0.75, strength: 0.3, color: 0xd99a94, h: 0.26, w: 0.2, rarity: 'common',
+  squid: { name: '小卷', model: 'squid', kg: [0.1, 0.4], mult: 0.75, strength: 0.3, color: 0xd99a94, h: 0.26, w: 0.2, rarity: 'common',
     spots: [{ w: 55, depth: [0, 7], time: 'night' }, { w: 10, depth: [7, INF], off: [0, 120], time: 'night' }, { w: 25, where: ['reef'], time: 'night' }, { w: 25, where: ['cave'] }] },
   hairtail: { name: '白帶魚', kg: [0.5, 1.8], mult: 0.62, strength: 0.7, color: 0xc4ccd6, h: 0.07, w: 0.03, lenK: 0.95, rarity: 'common',
     spots: [{ w: 40, depth: [7, INF], off: [0, 120], time: 'night' }, { w: 35, off: [120, 250], time: 'night' }, { w: 15, off: [250, 400], time: 'night' }, { w: 30, where: ['reef'], time: 'night' }] },
@@ -108,6 +108,8 @@ export const SPECIES = {
   coins: { name: '海盜金幣袋', kind: 'junk', model: 'coins', kg: [1, 3], mult: 1.2, strength: 0.4, color: 0xd9a82a, h: 0.7, w: 0.7, rarity: 'rare', notes: ['沉甸甸的，裡面叮噹作響！'],
     spots: [{ w: 25, where: ['atoll'] }, { w: 2, off: [0, 400] }] },
 };
+
+for (const [id, sp] of Object.entries(SPECIES)) sp.id = id;   // 每一筆記住自己的名字（模型要用）
 
 export const rarityOf = (id) => RARITY[SPECIES[id]?.rarity ?? 'common'];
 export const isJunk = (id) => SPECIES[id]?.kind === 'junk';

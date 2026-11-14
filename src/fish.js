@@ -4,10 +4,11 @@ import * as THREE from 'three';
 
 import { SPECIES, typicalLength, fishValue } from './fishdata.js';
 import { THROW } from './config.js';
+import { makeFishModel } from './fishModel.js';
 // 魚種資料、「釣到什麼、多大、值多少」的規則在 fishdata.js（伺服器也用同一份）
 export { SPECIES, SPECIALTY, pickSpecies, rollFish, fishValue, fishLabel } from './fishdata.js';
 
-// 雜物與章魚的模型：長邊朝 +X、Y 朝上，先照身長 1 蓋好，最後整個乘上 len
+// 雜物的模型：長邊朝 +X、Y 朝上，先照身長 1 蓋好，最後整個乘上 len
 const JUNK_MODELS = {
   slipper(g, col, M) {
     M(0xf2efe6, 1, 0.07, 0.38, 0, 0.035, 0);                      // 鞋底
@@ -69,17 +70,6 @@ const JUNK_MODELS = {
       c.position.set(0.3 + (i % 3) * 0.12 - 0.2, 0.03 + Math.floor(i / 3) * 0.04, 0.4 + (i % 2) * 0.1); g.add(c);
     }
   },
-  octopus(g, col) {
-    const mat = new THREE.MeshLambertMaterial({ color: col });
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8), mat); head.scale.set(0.95, 1.2, 0.95); head.position.set(-0.28, 0.34, 0); g.add(head);
-    for (const s of [-1, 1]) { const e = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 5), new THREE.MeshBasicMaterial({ color: 0x111111 })); e.position.set(-0.12, 0.28, s * 0.14); g.add(e); }
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2, leg = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.07, 0.62, 6), mat);
-      leg.position.set(0.05 + Math.cos(a) * 0.3, 0.06, Math.sin(a) * 0.3);
-      leg.rotation.set(Math.sin(a) * 1.25, 0, -Math.cos(a) * 1.25);
-      g.add(leg);
-    }
-  },
 };
 function makeJunkMesh(sp, len) {
   const g = new THREE.Group(), col = sp.color;
@@ -93,44 +83,9 @@ function makeJunkMesh(sp, len) {
   return g;
 }
 
-// 魚的模型：+X 是頭，Y 是背。背上是魚種的顏色、肚子是白的
+// 魚（和章魚、小卷）的模型在 fishModel.js；雜物的模型在上面
 export function makeFishMesh(sp, len) {
-  if (sp.model) return makeJunkMesh(sp, len);
-  const g = new THREE.Group();
-  const geo = new THREE.SphereGeometry(0.5, 12, 8);
-  const pos = geo.attributes.position, col = new Float32Array(pos.count * 3);
-  const back = new THREE.Color(sp.color), belly = new THREE.Color(0xe9eef0), c = new THREE.Color();
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i) / 0.5, y = pos.getY(i) / 0.5;
-    const k = x < 0 ? 1 - 0.62 * x * x : 1 - 0.25 * x * x;   // 尾巴那一頭收得比較細
-    pos.setY(i, pos.getY(i) * k); pos.setZ(i, pos.getZ(i) * k);
-    c.copy(belly).lerp(back, THREE.MathUtils.smoothstep(y, -0.3, 0.3));
-    col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
-  }
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  geo.computeVertexNormals();
-  const body = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
-  body.scale.set(len * 0.82, len * sp.h, len * sp.w);
-  g.add(body);
-
-  const finMat = new THREE.MeshLambertMaterial({ color: back.clone().multiplyScalar(0.75), side: THREE.DoubleSide });
-  const tri = (pts) => {
-    const b = new THREE.BufferGeometry();
-    b.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts.flat().map((v) => v * len)), 3));
-    b.computeVertexNormals();
-    g.add(new THREE.Mesh(b, finMat));
-  };
-  const hh = sp.h * 0.5, fin = sp.fin ?? 1;   // fin：背鰭放大幾倍（鯊魚）
-  tri([[-0.34, 0, 0], [-0.52, hh * 1.15, 0], [-0.46, 0, 0]]);        // 尾鰭上半
-  tri([[-0.34, 0, 0], [-0.46, 0, 0], [-0.52, -hh * 1.15, 0]]);       // 尾鰭下半
-  tri([[0.12, hh * 0.9, 0], [-0.16, hh * 0.85, 0], [-0.12, hh * (0.85 + 0.6 * fin), 0]]); // 背鰭
-  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
-  for (const side of [-1, 1]) {
-    const e = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.012, len * 0.022), 6, 5), eyeMat);
-    e.position.set(len * 0.29, len * sp.h * 0.08, side * len * sp.w * 0.36);
-    g.add(e);
-  }
-  return g;
+  return sp.kind === 'junk' ? makeJunkMesh(sp, len) : makeFishModel(sp, len);
 }
 
 const rand = (a, b) => a + Math.random() * (b - a);
