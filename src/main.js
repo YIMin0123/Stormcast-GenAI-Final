@@ -1415,7 +1415,7 @@ function applyViewSettings() {
   player.mesh.visible = mode === 'walk';
   player.setFirstPerson(mode === 'walk' && v.fp);
   myBoat.setManned(mode === 'helm', v.fp);
-  $('hSpeed').style.display = mode === 'helm' ? 'inline' : 'none';
+  $('hSpeed').style.display = mode === 'helm' ? 'inline-flex' : 'none';
   syncAim();
   onResize();
 }
@@ -2291,7 +2291,7 @@ function updatePrompt() {
   }
   // 人在船上時顯示這艘船的耐久與燃油
   const hb = mode === 'helm' ? boat : mode === 'walk' ? player.boat : null;
-  $('hShip').style.display = hb ? 'inline' : 'none';
+  $('hShip').style.display = hb ? 'flex' : 'none';
   if (hb) {
     $('hHp').textContent = hpText(hb);
     $('hHp').className = hb.hp < hb.spec.hp * 0.35 ? 'low' : '';
@@ -2300,16 +2300,35 @@ function updatePrompt() {
   }
   if (toastState.until && performance.now() > toastState.until) { toastState.until = 0; $('toast').style.display = 'none'; }
   if (!inGame) text = '';
-  if (text !== promptText) {
-    promptText = text;
-    touchSet($('prompt'), text);
-    $('prompt').style.display = text ? 'block' : 'none';
-  }
+  // 手機按鈕先更新：提示裡畫的「互動」圖示要跟按鈕現在的樣子一樣
   touch.update({
     on: inGame && !mapOpen && !chat.isOpen && !wheel.isOpen, helm: mode === 'helm', sink: mode === 'sink', held: !!fish.held && !player.swim,
     target: !!a || mode === 'helm' || !!fish.held || !!player.seat,
     act: mode === 'helm' ? '放手' : fish.held ? (kind === 'tank' || kind === 'basket' || kind === 'box' ? '放進去' : '放下') : player.seat && !a ? '站起來' : '互動',
   });
+  touchSet($('prompt'), text);   // 字和圖示都沒變時它自己會跳過
+  if (text !== promptText) {
+    promptText = text;
+    $('prompt').style.display = text ? 'block' : 'none';
+  }
+  updateKeybar();
+}
+
+// 電腦版右下角的按鍵提示：走路、開船各一組，拿著東西時多一個「右鍵 丟」
+const KEYBAR = {
+  walk: [['F', '釣魚'], ['B', '換餌'], ['G', '表情'], ['M', '地圖'], ['C', '視角'], ['Enter', '聊天']],
+  held: [['E', '放下'], ['右鍵', '丟'], ['M', '地圖'], ['C', '視角'], ['Enter', '聊天']],
+  helm: [['W S', '油門'], ['A D', '方向'], ['E', '放手'], ['M', '地圖'], ['C', '視角']],
+};
+let keybarSet = '';
+function updateKeybar() {
+  const set = TOUCH || !inGame || mapOpen || chat.isOpen || wheel.isOpen || mode === 'sink' ? ''
+    : mode === 'helm' ? 'helm' : fish.held && !player.swim ? 'held' : 'walk';
+  if (set === keybarSet) return;
+  keybarSet = set;
+  const el = $('keybar');
+  el.style.display = set ? 'flex' : 'none';
+  el.innerHTML = set ? KEYBAR[set].map(([k, t]) => `<span>${k.split(' ').map((x) => `<kbd>${x}</kbd>`).join('')}${t}</span>`).join('') : '';
 }
 
 // ---- 介面 -----------------------------------------------------------------
@@ -2602,7 +2621,7 @@ if (TOUCH) {
   wheel.root.addEventListener('pointermove', at);
   wheel.root.addEventListener('pointerup', (e) => { at(e); closeWheel(mode === 'walk'); });
   $('map').addEventListener('click', () => { if (mapOpen) toggleMap(); });
-  $('mapNote').textContent = '紅色箭頭是你，黃色是你的船，白色是其他人　點一下地圖關閉';
+  $('mapNote').textContent = '紅色箭頭是你，黃色是你的船，白色是其他人　點一下地圖或 ✕ 關閉';
 }
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement || !inGame) return;
@@ -3097,22 +3116,23 @@ function makeMapBase() {
   g.putImageData(img, 0, 0);
   return cv;
 }
+// 地圖上島和礁石的名字（位置照 config.js 的 WORLD）
+const MAP_PLACES = [
+  ['大港灣島', WORLD.haven.center],
+  ['石拱門', WORLD.reefs.arch.center],
+  ['沉船環礁', WORLD.reefs.atoll.center],
+  ['燈標岩', WORLD.reefs.beacon.center],
+];
+const MAP_FONT = '"Huninn", "Microsoft JhengHei", system-ui, sans-serif';
 function drawMap() {
   const g = $('mapCv').getContext('2d');
   g.drawImage(mapBase, 0, 0);
   const P = (x, z) => [(x / L + 0.5) * MAP_PX, (z / L + 0.5) * MAP_PX];
   g.lineJoin = 'round';
   g.textBaseline = 'middle';
-  g.font = '600 13px system-ui, "Microsoft JhengHei", sans-serif';
-  const placed = [];
-  // 文字標在記號右邊；跟別的標籤疊在一起就往下排
-  const label = (text, x, y, color) => {
-    let ly = y;
-    while (placed.some((p) => Math.abs(p.x - x) < 70 && Math.abs(p.y - ly) < 15)) ly += 15;
-    placed.push({ x, y: ly });
-    g.lineWidth = 3.5; g.strokeStyle = 'rgba(20, 30, 40, 0.85)'; g.fillStyle = color;
-    g.strokeText(text, x + 11, ly); g.fillText(text, x + 11, ly);
-  };
+  // 標籤先收集起來，記號全畫完再依重要順序擺：每個標籤試右、左、上、下四個位置，挑第一個不跟別人疊的
+  const labels = [];
+  const label = (text, x, y, color, pri, size = 13) => labels.push({ text, x, y, color, pri, size });
   // 尖頭朝行進方向的記號
   const arrow = (x, y, yaw, len, wid, fill) => {
     g.save();
@@ -3126,7 +3146,10 @@ function drawMap() {
   // 指北
   g.fillStyle = 'rgba(20, 30, 40, 0.55)';
   g.beginPath(); g.moveTo(MAP_PX - 26, 14); g.lineTo(MAP_PX - 19, 30); g.lineTo(MAP_PX - 33, 30); g.closePath(); g.fill();
+  g.font = `13px ${MAP_FONT}`;
   g.textAlign = 'center'; g.fillText('北', MAP_PX - 26, 42); g.textAlign = 'left';
+  // 島和礁石的名字（最不重要，最後擺）
+  for (const [name, c] of MAP_PLACES) { const [px, py] = P(c.x, c.z); label(name, px, py, 'rgba(255, 255, 255, 0.92)', 5, 12); }
   // 魚群熱點
   const hs = havenFx.hot();
   if (hs) {
@@ -3134,7 +3157,7 @@ function drawMap() {
     g.beginPath(); g.arc(hx, hy, 7, 0, Math.PI * 2);
     g.lineWidth = 3; g.strokeStyle = 'rgba(20, 30, 40, 0.9)'; g.stroke();
     g.fillStyle = '#ffd250'; g.fill();
-    label('魚群', hx, hy, '#ffe9a0');
+    label('魚群', hx, hy, '#ffe9a0', 2);
   }
 
   // 母港
@@ -3142,7 +3165,7 @@ function drawMap() {
   g.beginPath(); g.arc(hx, hy, 5, 0, Math.PI * 2);
   g.lineWidth = 2.5; g.strokeStyle = 'rgba(20, 30, 40, 0.9)'; g.stroke();
   g.fillStyle = '#fff'; g.fill();
-  label('母港', hx, hy - 12, '#fff');
+  label('母港', hx, hy, '#fff', 3);
 
   // 同房的其他人和他們的船（白色）
   for (const o of others.list()) {
@@ -3152,20 +3175,35 @@ function drawMap() {
     g.beginPath(); g.arc(ox, oy, 3.2, 0, Math.PI * 2);
     g.lineWidth = 2; g.strokeStyle = 'rgba(20, 30, 40, 0.9)'; g.stroke();
     g.fillStyle = '#fff'; g.fill();
-    label(o.name, ox, oy, '#fff');
+    label(o.name, ox, oy, '#fff', 4);
   }
   // 自己的船
+  const helm = mode !== 'walk';
   if (!myBoat.sinking) {
     const [bx, by] = P(myBoat.x, myBoat.z);
     arrow(bx, by, myBoat.heading, 7, 4.5, '#ffd257');
-    label(myBoat.spec.name, bx, by, '#ffe9a8');
+    if (!helm) label(myBoat.spec.name, bx, by, '#ffe9a8', 1);   // 掌舵時船就是「你」，不另外標
   }
 
   // 自己：掌舵時就是船的位置與船首方向
-  const helm = mode !== 'walk';
   const [mx, my] = helm ? P(boat.x, boat.z) : P(player.x, player.z);
   arrow(mx, my, helm ? boat.heading : player.yaw, 9, 6, '#ff5a3c');
-  label('你', mx, my + (helm ? 15 : 0), '#ffb9a6');
+  label('你', mx, my, '#ffb9a6', 0, 14);
+
+  // 擺標籤
+  const boxes = [];
+  const hit = (b) => boxes.some((o) => b.x < o.x + o.w && o.x < b.x + b.w && b.y < o.y + o.h && o.y < b.y + b.h);
+  g.lineWidth = 3.5; g.strokeStyle = 'rgba(20, 30, 40, 0.85)';
+  for (const l of labels.sort((a, b) => a.pri - b.pri)) {
+    g.font = `${l.size}px ${MAP_FONT}`;
+    const w = g.measureText(l.text).width, h = l.size + 3, gap = 11;
+    const tries = l.pri === 5 ? [[l.x - w / 2, l.y]] : [[l.x + gap, l.y], [l.x - gap - w, l.y], [l.x - w / 2, l.y - 15], [l.x - w / 2, l.y + 15]];
+    let at = tries.find(([x, y]) => !hit({ x, y: y - h / 2, w, h }));
+    if (!at) { let [x, y] = tries[0]; while (hit({ x, y: y - h / 2, w, h })) y += h; at = [x, y]; }
+    boxes.push({ x: at[0], y: at[1] - h / 2, w, h });
+    g.fillStyle = l.color;
+    g.strokeText(l.text, at[0], at[1]); g.fillText(l.text, at[0], at[1]);
+  }
 }
 function toggleMap() {
   mapOpen = !mapOpen;
@@ -3173,8 +3211,10 @@ function toggleMap() {
   syncAim();
   if (!mapOpen) return;
   if (!mapBase) mapBase = makeMapBase();
+  if (document.fonts) document.fonts.load(`13px ${MAP_FONT}`, '北母港大港灣島石拱門沉船環礁燈標岩你魚群').catch(() => {});
   drawMap();
 }
+$('mapX').addEventListener('click', (e) => { e.stopPropagation(); if (mapOpen) toggleMap(); });
 
 
 // 釣魚時的介面：拋竿是力道條；收線是「亂跑的區間 + 自己的力道指標 + 拉近的進度」
@@ -3192,7 +3232,7 @@ function updateFishUi() {
   $('fishui').style.marginLeft = strain > 0.35 ? `${(Math.random() - 0.5) * 10 * strain}px` : '0';
   if (!fight) {
     $('barFill').style.width = `${fishing.power * 100}%`;
-    $('barFill').style.background = '#e2b21c';
+    $('barFill').style.background = 'var(--sun)';
     $('fishLabel').textContent = '拋竿力道';
     touchSet($('fishHint'), '放開 F 拋出去');
     return;
@@ -3201,9 +3241,9 @@ function updateFishUi() {
   $('barSafe').style.left = `${(fishing.zone - fishing.zoneW / 2) * 100}%`;
   $('barSafe').style.width = `${fishing.zoneW * 100}%`;
   $('barMark').style.left = `${fishing.force * 100}%`;
-  $('barMark').style.background = fishing.inZone ? '#fff' : '#ff8a70';
+  $('barMark').style.background = fishing.inZone ? 'var(--ink)' : 'var(--coral)';
   $('progFill').style.width = `${clamp(fishing.progress, 0, 1) * 100}%`;
-  $('fishLabel').textContent = `把白色指標維持在綠色區間內　還有 ${Math.max(fishing.dist, 0).toFixed(0)} 公尺`;
+  $('fishLabel').textContent = `把指標維持在綠色區間內　還有 ${Math.max(fishing.dist, 0).toFixed(0)} 公尺`;
   touchSet($('fishHint'), strain > 0.5 ? '釣竿快斷了！放開 F！' : fishing.inZone ? '很好，保持住' : fishing.force < fishing.zone ? '力道不夠：按住 F' : '太用力了：放開 F');
 }
 

@@ -1,7 +1,7 @@
 // 手機的觸控操作（只支援橫放）：
 //   左半邊畫面：手指按下去的地方冒出搖桿，推它移動（推到底是跑；開船時是油門和方向盤）
 //   其餘的畫面：滑動轉視角，兩指捏合調鏡頭遠近
-//   右下角：互動、釣魚、跳；右上角：地圖、聊天、表情、視角、全螢幕（都是圖示，見 icons.js）
+//   右下角：互動、釣魚、跳、丟（拿著東西時）；右上角：地圖、聊天、表情、視角、換餌、全螢幕（都是圖示，見 icons.js）
 // 電腦上網址加 ?touch 可以強制打開（測試用）。
 import { ICON } from './icons.js';
 
@@ -20,19 +20,22 @@ export function touchText(s) {
   return s.replace(/按 Enter 可以聊天/g, '點右上角的對話框圖示可以聊天').replace(/按住 F（或滑鼠左鍵）/g, '按住「釣魚」').replace(/按住 F ?/g, '按住「釣魚」').replace(/放開 F ?/g, '放開「釣魚」').replace(/按 F ?/g, '按「釣魚」')
     .replace(/再按一次 E ?/g, '再按一次「互動」').replace(/按 E ?/g, '按「互動」')
     .replace(/按移動鍵、空白鍵/g, '推搖桿、按「跳」')
-    .replace(/右鍵蓄力丟出去/g, '按住「丟」鈕丟出去');
+    .replace(/右鍵蓄力丟出去/g, '按住「丟」丟出去');
 }
 
-// 把提示文字放進元素裡；手機上「互動」「釣魚」「跳」這幾個按鈕名稱換成按鈕上的那個圖示
-const NAMED = { 互動: 'hand', 釣魚: 'fish', 跳: 'jump' };
+// 把提示文字放進元素裡；手機上「互動」「釣魚」「跳」「丟」這幾個按鈕名稱換成按鈕上的那個圖示。
+// 「互動」鈕的圖示會變（手、放下、離開），提示裡畫的是它現在的樣子（actIcon，由 TouchUI.update 更新）
+const NAMED = { 互動: 'hand', 釣魚: 'fish', 跳: 'jump', 丟: 'throw' };
+let actIcon = 'hand';
 export function touchSet(node, s) {
   s = touchText(s);
-  if (node._shown === s) return;   // 每一幀都會被叫到：字沒變就不動
-  node._shown = s;
-  if (!TOUCH || !s || !/「(?:互動|釣魚|跳)」/.test(s)) { node.textContent = s; return; }
+  const key = `${s}|${actIcon}`;
+  if (node._shown === key) return;   // 每一幀都會被叫到：字和圖示都沒變就不動
+  node._shown = key;
+  if (!TOUCH || !s || !/「(?:互動|釣魚|跳|丟)」/.test(s)) { node.textContent = s; return; }
   node.textContent = '';
-  for (const part of s.split(/(「(?:互動|釣魚|跳)」)/)) {
-    const name = NAMED[part.slice(1, -1)];
+  for (const part of s.split(/(「(?:互動|釣魚|跳|丟)」)/)) {
+    const name = part.slice(1, -1) === '互動' ? actIcon : NAMED[part.slice(1, -1)];
     if (!name || part[0] !== '「') { if (part) node.append(part); continue; }
     const i = document.createElement('i');
     i.className = 'key';
@@ -96,7 +99,7 @@ export class TouchUI {
     this.bFish = hold('tFish', '釣魚', () => env.fishDown(), () => env.fishUp());
     this.bJump = hold('tJump', '跳', () => env.jump(true), () => env.jump(false));
     this.bThrow = hold('tThrow', '丟', () => env.throwDown(), () => env.throwUp());
-    this.bThrow.textContent = '丟';
+    this.bThrow.innerHTML = ICON.throw;
     this.bFish.innerHTML = ICON.fish; this.bJump.innerHTML = ICON.jump;
     // 右上角：小按鈕
     const bar = this.bar = el('div', 'tBar');
@@ -199,7 +202,8 @@ export class TouchUI {
     this.bAct.classList.toggle('hit', !!st.target);
     if (st.act !== this.actText) {
       this.actText = st.act;
-      this.bAct.innerHTML = ICON[st.act === '互動' ? 'hand' : st.act === '放下' || st.act === '放進去' ? 'drop' : 'leave'];
+      actIcon = st.act === '互動' ? 'hand' : st.act === '放下' || st.act === '放進去' ? 'drop' : 'leave';
+      this.bAct.innerHTML = ICON[actIcon];
       this.bAct.setAttribute('aria-label', st.act);
     }
   }

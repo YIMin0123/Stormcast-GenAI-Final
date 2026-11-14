@@ -107,12 +107,12 @@ export class EmoteWheel {
     ring(ACTIONS.map((a) => [a.id, a.name]), R_OUT0, R_OUT1, 'action', 18);
     const hub = document.createElementNS(SVGNS, 'circle');
     hub.setAttribute('cx', C); hub.setAttribute('cy', C); hub.setAttribute('r', R_IN0 - 8);
-    hub.setAttribute('fill', 'rgba(46,30,16,0.86)'); hub.setAttribute('stroke', 'rgba(240,214,160,0.35)');
+    hub.setAttribute('fill', 'rgba(255,251,242,0.96)'); hub.setAttribute('stroke', '#fff'); hub.setAttribute('stroke-width', 3);
     this.label = document.createElementNS(SVGNS, 'text');
     this.label.setAttribute('x', C); this.label.setAttribute('y', C + 6);
-    this.label.setAttribute('text-anchor', 'middle'); this.label.setAttribute('font-size', 15); this.label.setAttribute('fill', '#dccba6');
+    this.label.setAttribute('text-anchor', 'middle'); this.label.setAttribute('font-size', 16); this.label.setAttribute('fill', '#5d7387');
     this.dot = document.createElementNS(SVGNS, 'circle');
-    this.dot.setAttribute('r', 6); this.dot.setAttribute('fill', '#ffd24a'); this.dot.setAttribute('stroke', 'rgba(0,0,0,0.5)');
+    this.dot.setAttribute('r', 7); this.dot.setAttribute('fill', '#ff7f5c'); this.dot.setAttribute('stroke', '#fff'); this.dot.setAttribute('stroke-width', 2.5);
     svg.append(hub, this.label, this.dot);
     document.body.appendChild(root);
     this.isOpen = false;
@@ -167,12 +167,14 @@ export class EmoteWheel {
   _paint() {
     for (const it of this.items) {
       const on = it === this.hover;
-      it.path.setAttribute('fill', on ? '#e2b21c' : it.kind === 'face' ? 'rgba(58,38,22,0.84)' : 'rgba(46,30,16,0.80)');
-      it.path.setAttribute('stroke', on ? '#ffe28a' : 'rgba(240,214,160,0.28)');
-      it.text.setAttribute('fill', on ? '#2e1e10' : '#f3ead6');
-      it.text.setAttribute('font-weight', on ? 700 : 400);
+      it.path.setAttribute('fill', on ? '#2c8fc9' : it.kind === 'face' ? 'rgba(232,244,251,0.92)' : 'rgba(255,251,242,0.90)');
+      it.path.setAttribute('stroke', '#fff');
+      it.path.setAttribute('stroke-width', on ? 3 : 2);
+      it.text.setAttribute('fill', on ? '#fff' : '#23394d');
     }
     this.label.textContent = this.hover ? this.hover.name : this.hint ?? '移動滑鼠選擇';
+    // 選的那個點：還沒移開中心時不畫（不然會壓在中間的字上）
+    this.dot.style.display = Math.hypot(this.vx, this.vy) < R_DEAD ? 'none' : '';
     this.dot.setAttribute('cx', (C + this.vx).toFixed(1));
     this.dot.setAttribute('cy', (C + this.vy).toFixed(1));
   }

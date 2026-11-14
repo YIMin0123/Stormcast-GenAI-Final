@@ -10,14 +10,14 @@ import { restyle } from './figure.js';
 // 頭上的名牌：一張畫著名字的小圖，永遠面向鏡頭、遠近都一樣大
 function nameTag(name) {
   const cv = document.createElement('canvas'), ctx = cv.getContext('2d');
-  const font = '600 30px "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif';
+  const font = '30px "Huninn", "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif';
   ctx.font = font;
   const w = Math.ceil(ctx.measureText(name).width) + 28, h = 44;
   cv.width = w; cv.height = h;
   ctx.font = font;
-  ctx.fillStyle = 'rgba(46, 30, 16, 0.72)';
-  ctx.beginPath(); ctx.roundRect(0, 0, w, h, 12); ctx.fill();
-  ctx.fillStyle = '#ffe9a8'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(255, 251, 242, 0.88)';   // 跟介面的卡片同一種奶油白
+  ctx.beginPath(); ctx.roundRect(0, 0, w, h, h / 2); ctx.fill();
+  ctx.fillStyle = '#1d6f9f'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText(name, w / 2, h / 2 + 1);
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
