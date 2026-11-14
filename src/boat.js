@@ -10,6 +10,7 @@ import { BOAT_TYPES, MAX_LEVEL } from './boatdata.js';
 export { BOAT_TYPES, MAX_LEVEL };
 const CRACKS = 6;          // 耐久度分成幾處破洞：全破了船就沉
 const DRIFT = 1.2;         // 沒油時只能用這個速度慢慢漂（公尺/秒）
+const GROUND_MIN = 0.12;   // 擱淺的船拖著船底往淺處爬，水深剩這麼多（公尺）就不能再往淺處走（不會開上陸地）
 // 船受得了的搖晃（斜率）：超過 SAFE 開始受損，橫搖超過 CAPSIZE 就翻
 const SAFE_ROLL = 0.24, SAFE_PITCH = 0.28, CAPSIZE_ROLL = 0.5, CAPSIZE_PITCH = 1.0;   // 外海的浪變大之後，船受得了的角度也跟著放寬
 const HURT_K = 5;          // 搖過頭時每秒扣多少耐久（乘上超出的角度）。以前是 40，船太容易壞；
@@ -605,14 +606,15 @@ export class Boat {
     if (this.fuel > 0) this.fuel = Math.max(0, this.fuel - S.burn * Math.abs(this.throttle) * dt);
     // 浪大的時候開不快（船一直在爬坡、砸進浪裡）：小船受的影響比大船大
     const slow = env.slow ? Math.min(0.6, env.slow(this.x, this.z) * Math.min(1.4, 13 / S.len)) : 0;
-    const target = afloat ? thrust * (this.fuel > 0 ? this.maxSpeed : DRIFT) * (1 - slow) : 0;
-    this.speed += (target - this.speed) * (1 - Math.exp(-dt * (afloat ? 0.5 * (1 + 0.2 * this.engineLv) : 3)));
+    // 擱淺了：引擎還能慢慢推（前進、倒車都行，約三成速度；沒油就用慢慢撐的），不然就永遠困在淺灘上（見下面 blocked：只准往不會更淺的方向走）
+    const target = afloat ? thrust * (this.fuel > 0 ? this.maxSpeed : DRIFT) * (1 - slow) : thrust * (this.fuel > 0 ? this.maxSpeed * 0.3 : DRIFT * 0.5);
+    this.speed += (target - this.speed) * (1 - Math.exp(-dt * (afloat ? 0.5 * (1 + 0.2 * this.engineLv) : 1.2)));
 
     // 方向盤：按著就打過去，放開自動回正；船越短轉得越靈活
     const turn = (k.d ? 1 : 0) - (k.a ? 1 : 0);
     this.rudder += (turn - this.rudder) * (1 - Math.exp(-dt * (turn ? 2.2 : 1.6)));
-    if (afloat) {
-      const authority = clamp(Math.abs(this.speed) / 3, 0.12, 1) * (this.speed < -0.2 ? -1 : 1);
+    {   // 擱淺時也能慢慢轉（把船頭掰向深水），只是比較沒力
+      const authority = (afloat ? clamp(Math.abs(this.speed) / 3, 0.12, 1) : 0.3) * (this.speed < -0.2 ? -1 : 1);
       this.heading += this.rudder * 0.55 * Math.sqrt(13 / S.len) * dt * authority;
     }
 
@@ -623,8 +625,10 @@ export class Boat {
     // 不會開上岸，也不會撞穿碼頭
     const nx = this.x + (fx * this.speed + (flow ? flow.x : 0)) * dt, nz = this.z + (fz * this.speed + (flow ? flow.z : 0)) * dt;
     const dir = Math.sign(this.speed || 1), rx = -fz, rz = fx;
-    const blocked = [[half * 0.8, 0], [half * 0.65, S.beam * 0.35], [half * 0.65, -S.beam * 0.35]].some(([a, b]) =>
+    // 擱淺的船（船底已經碰地）：只准往「不會更淺」的方向走，這樣倒車、掉頭開回深水都行，但不會再往岸上推
+    const blocked = (afloat ? [[half * 0.8, 0], [half * 0.65, S.beam * 0.35], [half * 0.65, -S.beam * 0.35]].some(([a, b]) =>
       env.ground(nx + (fx * a * dir) + rx * b, nz + (fz * a * dir) + rz * b) > -S.draft * 0.7)
+      : (env.ground(nx, nz) > -GROUND_MIN && env.ground(nx, nz) > env.ground(this.x, this.z)))   // 水深剩不到 GROUND_MIN 又比現在更淺：不准（可以拖著船底爬過小凸起，但不會開上陸地）
       // 太窄的水道（大港灣島的暗門）：船比水道寬就進不去
       || (env.gate ? env.gate(nx + fx * half * 0.8 * dir, nz + fz * half * 0.8 * dir) < S.beam : false);
     if (blocked) this.speed *= Math.exp(-dt * 6);
