@@ -12,7 +12,7 @@ import { WORLD, THROW, DEVMODE } from './config.js';
 import { HOME_U, placeInHome } from './homeGl.js';
 import { HOME_YAW, toWorld, toLocal, headingToWorld, havenToLocal, HAVEN } from './frame.js';
 import { makeSeascape, HAVEN_LAND, HAVEN_GROUND } from './haven.js';
-import { caveUnder, caveCeil, caveFloor, caveRock, havenLow, nearCave, caveGate, CAVE_AXIS, skyEdge, havenDeck, riverAt, portWall, portPier } from './lowpoly/havenShape.js';
+import { caveUnder, caveCeil, caveFloor, caveRock, havenLow, nearCave, caveGate, CAVE_AXIS, skyEdge, havenDeck, riverAt, portWall, portFoundation, portPier } from './lowpoly/havenShape.js';
 import { CAVE, RIVER, PORT } from './lowpoly/havenPlan.js';
 import { HAVEN_SELL_W, HAVEN_PUMP_W } from './layout.js';
 import { riverLevel } from './fishzone.js';
@@ -290,7 +290,7 @@ function walkGround(x, z, under = false) {
   const [hx, hz] = toLocal(x, z);   // 商店、牆這些矩形是用港座標寫的
   // 開發者模式飛得夠高（腳比底下的地面高 DEVMODE.wallTop）：房子、牆、燈塔、燈柱這些沒記高度的東西從上面飛過去
   const over = walker.fly && walker.feet !== null && walker.feet > Math.max(landAt(x, z, hx, hz), 0) + DEVMODE.wallTop;
-  if (!over) for (const r of BLOCKS) if (inWall(r, hx, hz)) return 99;
+  if (!under && !over) for (const r of BLOCKS) if (inWall(r, hx, hz)) return 99;
   if (!over && Math.hypot(x - LIGHTHOUSE_W.x, z - LIGHTHOUSE_W.z) < LIGHTHOUSE_W.r) return 99;
   // 棧板上的樁、燈柱、木桶…（在棧板底下游泳時不算）。有 top 的（木箱、木桶、魚箱）跳得上去：跟石頭一樣看玩家的腳（walker）——
   // 腳已經在箱頂的高度、或跳起來離箱頂不到 0.35 公尺就站得上去；矮的（不到半公尺）直接踏上去
@@ -343,6 +343,8 @@ function landAt(x, z, hx, hz) {
       // 透天洞穴是上下兩層：人比洞頂低（在洞裡游泳、從天窗掉下去）就照洞底，在洞頂上面走就照山坡
       const over = walker.fly && walker.feet !== null && walker.feet > HAVEN_LAND.at(vx, vz) + DEVMODE.wallTop;   // 開發者模式飛得夠高：從屋頂上飛過去
       if (!over && portWall(vx, vz)) return 99;   // 山城的小屋：牆擋著
+      const foundation = portFoundation(vx, vz, HAVEN_LAND.at);
+      if (foundation !== null) return Math.max(foundation, HAVEN_LAND.at(vx, vz));
       // 天窗邊的跳水台、碼頭的棧板：踩在上面的人照板面
       const dk = havenDeck(vx, vz, walker.feet);
       if (dk !== null) return skyEdge(vx, vz) > 0 ? Math.max(dk, HAVEN_LAND.at(vx, vz)) : dk;

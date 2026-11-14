@@ -358,6 +358,18 @@ export function portWall(x, z, pad = 0.1) {
   }
   return false;
 }
+// 山城小屋的石砌地基和門前平台，與 port3d 的建模採用同一組尺寸及高度。
+export function portFoundation(x, z, groundAt) {
+  for (const [hx, hz, w, d, , turn] of PT.houses) {
+    if (Math.abs(x - hx) + Math.abs(z - hz) > w + d + 2) continue;
+    const rot = Math.atan2(V.BAY.x - hx, V.BAY.z - hz) + turn * Math.PI / 180, c = Math.cos(rot), s = Math.sin(rot);
+    const a = (x - hx) * c - (z - hz) * s, b = (x - hx) * s + (z - hz) * c, hw = w / 2, hd = d / 2;
+    if (Math.abs(a) > hw + 0.2 || b < -hd - 0.2 || b > hd + 1.2) continue;
+    return Math.max(...[[-hw, -hd], [hw, -hd], [-hw, hd + 1.2], [hw, hd + 1.2], [0, 0]]
+      .map(([u, v]) => groundAt(hx + u * c + v * s, hz - u * s + v * c))) + 0.3;
+  }
+  return null;
+}
 // 繫纜樁的位置 [{ x, z }]：長棧橋兩側、丁字碼頭朝海灣那一側
 export function portBollards() {
   const list = [];

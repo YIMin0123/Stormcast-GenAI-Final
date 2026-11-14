@@ -128,7 +128,8 @@ export function buildPort({ P, r, mat, group, groundAt, bedAt }) {
     cyl(T.x, T.z, T.top + 0.75, T.top + 0.6, yt, yt + 0.28, P.metal, 8);       // 瞭望台
     for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; beam(fb, V3(T.x + Math.cos(a) * (T.top - 0.15), yt + 0.28, T.z + Math.sin(a) * (T.top - 0.15)), V3(T.x + Math.cos(a) * (T.top - 0.15), yt + 2.2, T.z + Math.sin(a) * (T.top - 0.15)), 0.1, 0.1, P.lampPole); }
     cyl(T.x, T.z, 0.05, T.top + 0.25, yt + 2.2, yt + 3.6, P.flagRed, 8);       // 尖頂
-    out.rocks.push({ x: T.x, z: T.z, r: T.r + 0.8, top: 99 });
+    out.rocks.push({ x: T.x, z: T.z, r: T.r + 0.7, top: y0 + 1.0 });
+    out.rocks.push({ x: T.x, z: T.z, r: T.r, top: yt + 3.6 });
     // 燈：自己發亮、不吃霧（遠遠就要看得到）
     const bulb = new THREE.Mesh(new THREE.CylinderGeometry(T.top - 0.3, T.top - 0.3, 1.7, 8), new THREE.MeshBasicMaterial({ color: 0xffe9a8, fog: false }));
     bulb.position.set(T.x, yt + 1.25, T.z);

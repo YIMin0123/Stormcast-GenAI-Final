@@ -629,11 +629,9 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
         if (y > hgt[q]) hgt[q] = y;
       }
     }
-    // 往外撐一格（0.2 公尺）：玩家碰撞只算腳下一個點，身體有寬度，不撐的話會半個身子卡進石頭裡
-    const mx = nx + 2, mz = nz + 2, out2 = new Float32Array(mx * mz).fill(-99), at = (i, j) => (i < 0 || j < 0 || i >= nx || j >= nz ? -99 : hgt[j * nx + i]);
-    for (let j = 0; j < mz; j++) for (let i = 0; i < mx; i++) out2[j * mx + i] = Math.max(at(i - 1, j - 1), at(i - 2, j - 1), at(i, j - 1), at(i - 1, j - 2), at(i - 1, j));
-    const hx = (x1 - x0) / 2 + ROCK_CELL, hz = (z1 - z0) / 2 + ROCK_CELL;
-    return { x: (x0 + x1) / 2, z: (z0 + z1) / 2, hx, hz, c: 1, s: 0, r: Math.hypot(hx, hz), top, cell: ROCK_CELL, nx: mx, nz: mz, hgt: out2 };
+    // 格子的原點必須與取樣時的 x0/z0 一致；角色寬度由 player.js 的探測處理。
+    const hx = nx * ROCK_CELL / 2, hz = nz * ROCK_CELL / 2;
+    return { x: x0 + hx, z: z0 + hz, hx, hz, c: 1, s: 0, r: Math.hypot(hx, hz), top, cell: ROCK_CELL, nx, nz, hgt };
   };
   const addRock = (x, z, s, sink) => {
     const k = Math.floor(r() * 3);

@@ -146,7 +146,8 @@ export function buildBeacon({ P, r, place, mat, group, phone = false }) {
   const post = new THREE.Mesh(fb.build(), mat);
   post.castShadow = post.receiveShadow = true;
   group.add(post);
-  out.rocks.push({ x: 0, z: 0, r: 1.1, top: 99 });
+  out.rocks.push({ x: 0, z: 0, r: 1.05, top: y0 + 0.9 });
+  out.rocks.push({ x: 0, z: 0, r: 0.22, top: y0 + H + 0.1 });
   // 燈：自己發亮的一顆，不吃霧（遠遠就要看得到，這是它的用途）
   const bulb = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.4, 8), new THREE.MeshBasicMaterial({ color: 0xffe9a8, fog: false }));
   bulb.position.set(0, y0 + H - 0.25, 0);

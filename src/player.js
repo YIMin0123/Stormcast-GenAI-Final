@@ -96,10 +96,10 @@ export class Player {
   // 船以外的地方：(x, z) 處能待的面。地面比水面下 SUBMERGE 還低就是踩不到底，浮在水裡
   _surface(x, z, world) {
     let g = world.ground(x, z);
-    if (g > 90) return null;
     const w = world.water(x, z) - SUBMERGE;
     // 人已經在水裡：頭上是棧橋的話，從橋底下游過去
     if (this.onWater && g > w + STEP) { const u = world.ground(x, z, true); if (u < w) g = u; }
+    if (g > 90) return null;
     return g < w ? { boat: null, y: w, swim: true } : { boat: null, y: g, swim: false };
   }
 
@@ -218,10 +218,12 @@ export class Player {
       if (fly) { /* 飛行：不管水、不管手上拿什麼 */ } else if (swim && this.carry) v *= 0.7;                                                        // 捧著東西游比較慢
       else if (!swim && !this.boat && this.base < world.water(this.x, this.z) - 0.45) v *= 0.6; // 涉水
       const sp = v * dt, dx = (dirX / len) * sp, dz = (dirZ / len) * sp;
-      if (!this._move(dx, dz, world)) {
+      // 高速飛行一幀可能跨越薄牆，分段檢查整條路徑。
+      const steps = Math.max(1, Math.ceil(sp / 0.15)), sx = dx / steps, sz = dz / steps;
+      for (let i = 0; i < steps; i++) if (!this._move(sx, sz, world)) {
         // 被擋住就沿著邊滑：在船上沿船的縱橫向分解，在陸地沿東西南北分解
         const ax = this.boat ? Math.cos(this.boat.heading) : 1, az = this.boat ? Math.sin(this.boat.heading) : 0;
-        const a = dx * ax + dz * az, b = -dx * az + dz * ax;
+        const a = sx * ax + sz * az, b = -sx * az + sz * ax;
         this._move(a * ax, a * az, world);
         this._move(-b * az, b * ax, world);
       }
