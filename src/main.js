@@ -4287,7 +4287,7 @@ function advance(dt) {
   player.load = hbx ? boxes.speed(hbx) : 1;
   if (hbx && player.swim && performance.now() - boxSent > 700) { putBoxDown(hbx, true); toast('抱著魚箱不能游泳，箱子先浮在水面上（從岸上、甲板上伸手拿得回來）'); }
   boxes.update(time);
-  boxes.marks(camera, player.pos, net.id, inGame && !tabOpen());
+  boxes.marks(camera, meAt(), net.id, inGame && !tabOpen());   // 開船時人的座標不會跟著船動，距離要用船的位置量（meAt）
   markMyBoat();
   throwTick(dt);
   fishing.reel = keys.f || keys.mouse;
