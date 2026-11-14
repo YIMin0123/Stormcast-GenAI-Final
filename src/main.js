@@ -29,6 +29,7 @@ import { REFL, addOutline, BULBS, softDisc } from './toon.js';   // 它會改掉
 import { makeScenery, SHADOW_LAYER } from './scenery.js';
 import { makeGroundDetail, makeGrassGeometry, WIND, SIGHT } from './foliage.js';
 import { Spray } from './spray.js';
+import { makeRainSplash } from './rainSplash.js';
 import { OceanAudio } from './audio.js';
 import { Sea, Climate, computeDanger, computeOffshore, computeTsuK, TSU, SWELL, swellAt, WAVE_LOOP, windWave, seaLevel, seaOpen, shoreSea, openOf, windSpeed, tideAt, tsuHK, TSU_H } from './weather.js';
 import { Rain, Bolt, Spindrift, Spout, WaveSpray } from './skyfx.js';
@@ -1168,7 +1169,10 @@ const blob = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 1.3).rotateX(-Math.PI /
 blob.position.y = 0.03;
 player.mesh.add(blob);
 
-const spray = new Spray(3000);
+const spray = new Spray(3000, shared);
+// 雨點打在地上的小皇冠和積水上的漣漪：只有電腦有（手機只有細水滴）。掛在 spray 底下，畫倒影時跟著一起藏
+const rainSplash = TOUCH ? null : makeRainSplash(shared, spray.material.uniforms.uScale);
+if (rainSplash) spray.points.add(rainSplash.group);
 // 游泳的水花、波紋、身邊的白沫、近岸推出的水波（swimfx.js）
 const swimFx = makeSwimFx({ spray, waterY: (x, z) => waterY(x, z), shallow });
 shared.uRip.value = swimFx.rip;
@@ -1217,9 +1221,10 @@ function toast(text) {
   toastState.until = performance.now() + 3200;
 }
 function splash(x, y, z, n = 14) {
-  for (let i = 0; i < n; i++) {
+  // 濺起來的是一顆顆大小不一的水滴（少數大的、多數小的），往上衝再落回去
+  for (let i = 0; i < n * 3; i++) {
     const a = Math.random() * Math.PI * 2, r = 0.4 + Math.random() * 1.4;
-    spray.emit(x, y, z, Math.cos(a) * r, 1.5 + Math.random() * 2.5, Math.sin(a) * r, 0.4 + Math.random() * 0.5, 0.25 + Math.random() * 0.4);
+    spray.emit(x, y, z, Math.cos(a) * r, 1.5 + Math.random() * 2.5, Math.sin(a) * r, 0.4 + Math.random() * 0.5, 0.12 + Math.random() ** 2 * 0.4);
   }
 }
 // 某處是不是可以拋竿的水面（不是岸、不是棧板、不是船上）
@@ -2918,14 +2923,19 @@ function updateWeather(dt) {
   shared.uWet.value = clamp(shared.uWet.value + (rainNow > 0.05 ? dt / 12 * (0.4 + rainNow) : -dt / 80), 0, 1);
   WET.wet.value = shared.uWet.value; WET.rain.value = rainNow; WET.time.value = time;   // 港口的水泥地跟著濕、積水
   if (rainNow > 0.05) {
-    splashAcc = Math.min(splashAcc + dt * 720 * rainNow, 60);
+    // 雨點打下去：電腦上先彈起一圈小皇冠（積水上再擴一圈漣漪），再往外甩幾顆細水滴；手機只有細水滴、少一半
+    splashAcc = Math.min(splashAcc + dt * (rainSplash ? 900 : 450) * rainNow, 60);
     for (; splashAcc >= 1; splashAcc--) {
       const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * 12;
       const x = target.x + Math.cos(a) * r, z = target.z + Math.sin(a) * r, y = walkGround(x, z);
       if (y < 0.05 || y > 50 || underRoof(x, y, z)) continue;   // 落在水裡的、牆和石頭上的、屋頂底下的不算
-      for (let k = 0; k < 2; k++) {
-        const b = Math.random() * Math.PI * 2, v = 0.3 + Math.random() * 0.7;
-        spray.emit(x, y + 0.03, z, Math.cos(b) * v, 0.9 + Math.random() * 0.9, Math.sin(b) * v, 0.14 + Math.random() * 0.1, 0.11 + Math.random() * 0.08);
+      if (rainSplash) {
+        const flat = r < 9 && Math.abs(walkGround(x + 0.2, z) - y) < 0.02 && Math.abs(walkGround(x, z + 0.2) - y) < 0.02;
+        rainSplash.hit(x, y + 0.005, z, flat, shared.uWet.value);
+      }
+      for (let k = 0, n = 1 + (Math.random() < 0.6); k < n; k++) {
+        const b = Math.random() * Math.PI * 2, v = 0.4 + Math.random() * 0.8;
+        spray.emit(x, y + 0.04, z, Math.cos(b) * v, 0.7 + Math.random() * 0.9, Math.sin(b) * v, 0.12 + Math.random() * 0.12, 0.1 + Math.random() * 0.1);
       }
     }
   }
@@ -3706,15 +3716,16 @@ function advance(dt) {
     const bow = boat.spec.len * 0.46;
     const bx = boat.x + fx * bow * dir, bz = boat.z + fz * bow * dir, by = boat.mesh.position.y + 0.3;
     while (sprayAcc >= 1) {
-      sprayAcc -= 1;
+      sprayAcc -= 1 / 3;   // 一團水拆成三顆小一點的水滴
       const side = Math.random() < 0.5 ? -1 : 1, out = (1.2 + Math.random() * 3.0) * sc;
       spray.emit(bx + (Math.random() - 0.5), by, bz + (Math.random() - 0.5),
         fx * boat.speed * 0.35 - fz * side * out, (1.6 + Math.random() * 3.0) * Math.sqrt(sc), fz * boat.speed * 0.35 + fx * side * out,
-        0.6 + Math.random() * 0.7, (0.5 + Math.random() * 0.9) * sc);
+        0.6 + Math.random() * 0.7, (0.25 + Math.random() ** 2 * 0.8) * sc);
     }
   }
   swimFx.update(dt, [player, ...[...others.map.values()].map((o) => o.fig)], time, camera.position);
   spray.update(Math.min(dt, 0.1));
+  if (rainSplash) rainSplash.update(Math.min(dt, 0.1));
 
   // 航跡：船在動就定時在船尾留下一點泡沫
   wakeTimer += dt;
