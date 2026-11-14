@@ -1241,6 +1241,20 @@ const fish = new FishWorld({
   onLost: (uids) => net.send({ t: 'fishGone', uids }),   // 魚掉回海裡、跟著船沉了：告訴伺服器這幾條沒了
   ownBoat: () => myBoat,   // 丟出去的魚只會掉進自己船上的魚箱
   flyGround,
+  // 自己的魚放在外面了：告訴伺服器放在哪（大家都看得到、誰都撿得走）。放在倉庫的船上（別人看不到）就當作收回來
+  placed(it) {
+    if (!net.online) return;
+    const base = { t: 'put', uid: it.uid, yaw: r2(it.yaw) };
+    if (it.state === 'basket') { const p = it.mesh.position; return net.send({ ...base, k: 'b', x: r2(p.x), y: r2(p.y), z: r2(p.z), yaw: r2(it.mesh.rotation.z) }); }
+    if (it.state === 'boat') {
+      const b = boatOwner(it.boat);
+      if (b === null) { it.pub = false; return net.send({ t: 'take', uid: it.uid }); }
+      return net.send({ ...base, k: 'd', b, x: r2(it.lx), y: 0, z: r2(it.lz) });
+    }
+    net.send({ ...base, k: 'g', x: r2(it.x), y: r2(it.y), z: r2(it.z) });
+  },
+  taken: (it) => net.online && net.send({ t: 'take', uid: it.uid }),
+  boatOf: (id) => (id === net.id ? myBoat : others.boat(id)),
   landed(it, where, pos) {   // 丟出去的東西落地了：where = deck / ground / basket / box / water
     if (where === 'basket') refreshBoard(it);
     audio.play(where === 'water' ? 'plop' : 'drop', 1, pos);
@@ -1268,7 +1282,7 @@ const fishing = new Fishing({
   },
   viewYaw: () => view.walk.yaw,
 });
-function refreshBoard(last) {
+function refreshBoard(last = fish.basket[fish.basket.length - 1]) {
   if (!fish.basket.length) setBoard(['把魚放進籃子', '$0']);
   else setBoard([`${last.sp.name} ${Math.round(last.len * 100)}cm ${last.kg.toFixed(2)}kg`, `這條 $${last.value}　共 ${fish.basket.length} 條`, `$${fish.basketTotal}`]);
 }
@@ -2125,8 +2139,8 @@ function aimTarget() {
     const c = havenFx.chestNear(player.pos.x, player.pos.y, player.pos.z);
     if (c) add('chest', c.pos, 0.6, { chest: c });
   }
-  // 放在甲板或地上的魚、油桶
-  for (const it of fish.items) {
+  // 放在甲板或地上的魚、油桶，還有籃子裡的魚（自己的、別人的都拿得起來：籃子裡的魚不受保護）
+  for (const it of [...fish.items, ...(fish.held ? [] : fish.basket)]) {   // 手上拿著魚時對準籃子是要放進去，不是拿裡面的
     if (it.fly || (it.boat && it.boat.stored)) continue;   // 還在飛／在收進倉庫的船上
     const v = fish.worldPos(it, new THREE.Vector3());
     if (Math.hypot(v.x - player.pos.x, v.z - player.pos.z) > 1.8 || Math.abs(v.y - player.pos.y) > 1.3) continue;
@@ -2195,7 +2209,19 @@ function interact() {
       audio.play('rope');
       return;
     }
-    case 'item': audio.play('pick'); return fish.pick(a.item);
+    case 'item':
+      if (a.item.remote) {
+        // 別人的魚：先問伺服器（同時有人去撿的話，先到的拿到），回話見 grabbed / grabNo
+        if (!net.online) return toast('連線中斷，等接回去再撿');
+        if (grabbing) return;
+        grabbing = a.item.uid;
+        window.setTimeout(() => { if (grabbing === a.item.uid) grabbing = 0; }, 1500);
+        return net.send({ t: 'grab', uid: a.item.uid });
+      }
+      audio.play('pick');
+      fish.pick(a.item);
+      if (a.item.state === 'held') refreshBoard();
+      return;
     case 'box': if (a.boat.boxFish.length) { audio.play('pick'); fish.fromBox(a.boat); } return;
     case 'lamp':
       a.boat.lampOn = !a.boat.lampOn;
@@ -2211,10 +2237,10 @@ function interact() {
       return net.send({ t: 'light', zone: a.sw.zone, on });
     }
     case 'button': {
-      // 賣魚：把籃子裡每條魚的編號送給伺服器，它算好錢再回來（見下面的 sold）
+      // 賣魚：籃子是大家共用的，按一下整籃賣掉，每條的錢由伺服器付給牠的主人（見下面的 sold）
       if (!fish.basket.length) return;
       if (!net.online) return toast('連線中斷，等接回去再賣');
-      return net.send({ t: 'sell', uids: fish.basket.map((it) => it.uid) });
+      return net.send({ t: 'sell' });
     }
     case 'shelf': {
       const o = offer(a.shelf.id);
@@ -2300,7 +2326,7 @@ function updatePrompt() {
     else if (kind === 'helm') text = '按 E 掌舵';
     else if (kind === 'crack') text = wrench ? '按 E 用扳手修補破洞' : '船板破了一個洞（要有扳手才能修）';
     else if (kind === 'bollard') text = a.moor.tied ? `按 E 解開${a.moor.boat.spec.name}的纜繩` : `按 E 把${a.moor.boat.spec.name}的纜繩綁在這根樁上`;
-    else if (kind === 'item') text = `按 E 拿起${a.item.can ? itemLabel(a.item) : a.item.sp.name}`;
+    else if (kind === 'item') text = a.item.remote ? `按 E 撿起${a.item.sp.name}（${others.map.get(a.item.owner)?.name ?? '沒人'}的，撿到就是你的）` : `按 E 拿起${a.item.can ? itemLabel(a.item) : a.item.sp.name}`;
     else if (kind === 'box') text = ab.boxFish.length ? `按 E 從魚箱拿一條出來（${ab.boxFish.length}/${ab.boxCap}）` : `魚箱是空的（0/${ab.boxCap}）`;
     else if (kind === 'tank') text = `油箱　${litres(ab.fuel)} / ${ab.spec.tank} 公升（提著油桶對準這裡按 E 加油）`;
     else if (kind === 'lamp') text = ab.lampOn ? '按 E 關掉船燈' : '按 E 打開船燈';
@@ -3373,8 +3399,47 @@ function sendState(dt) {
 function myFishUids() {
   const all = [...fish.items, ...fish.basket, fish.held, ...myBoat.boxFish];
   for (const b of garage.values()) all.push(...b.boxFish);
-  return all.filter((it) => it && it.uid).map((it) => it.uid);
+  return all.filter((it) => it && it.uid && !it.remote).map((it) => it.uid);
 }
+// 這艘船是誰的（玩家編號）；放在倉庫裡、別人看不到的船是 null
+function boatOwner(b) {
+  if (b === myBoat) return net.id;
+  for (const [id, o] of others.map) if (o.boat === b) return id;
+  return null;
+}
+
+// ---- 大家放在外面的魚：別人放下、撿走、賣掉；自己的被撿走、放太久消失 ----
+let grabbing = 0;   // 正在問伺服器能不能撿的那條（避免連按）
+net.on('loose', (m) => {
+  for (const uid of m.del ?? []) fish.removeRemote(uid);
+  for (const d of m.add ?? []) if (d.o !== net.id) fish.addRemote(d);
+  refreshBoard();
+});
+net.on('grabbed', (m) => {
+  grabbing = 0;
+  const f = m.fish;
+  fish.removeRemote(f.uid);
+  refreshBoard();
+  audio.play('pick');
+  if (fish.held) fish.stowDeck(myBoat, 0, 0, f.id, f.kg, f.len, f.uid, f.value);   // 手上剛好有東西（按下去之後才拿起來的）：放到自己船上
+  else fish.spawnHeld(f.id, f.kg, f.len, f.uid, f.value).lively = 0;
+  toast(`撿到${m.from ? ` ${m.from} 的` : ''}魚，現在是你的了`);
+});
+net.on('grabNo', (m) => {
+  grabbing = 0;
+  if (m.msg) toast(m.msg); else { fish.removeRemote(m.uid); toast('被別人先撿走了'); }
+});
+net.on('taken', (m) => {
+  const it = fish.removeOwn(m.uid);
+  refreshBoard();
+  if (it) toast(`${m.by} 撿走了你的${it.sp.name}`);
+});
+net.on('expired', (m) => {
+  let n = 0;
+  for (const uid of m.uids) if (fish.removeOwn(uid)) n++;
+  refreshBoard();
+  if (n) toast(`放在外面太久沒人拿的 ${n} 條魚不見了`);
+});
 
 net.on('k', (m) => {
   for (const q of m.p) if (q[0] !== net.id) others.setPos(q[0], q.slice(1));
@@ -3421,10 +3486,11 @@ net.on('sold', (m) => {
     if (m.total > 0) { audio.play('coin'); toast(`大港收購價（多 ${Math.round(PORT.bonus * 100)}%）：賣出 ${m.uids.length} 條，得到 ${cash(m.total)}`); }
     return;
   }
-  fish.sell();   // 籃子裡的都送去賣了：伺服器不認的（不該有）也一起清掉
+  fish.sell(m.uids);   // 籃子裡自己的魚賣掉了（別人的由 loose 拿掉）
   applyKit(m.kit);
   refreshBoard();
-  if (m.total > 0) { audio.play('coin'); toast(`賣出，得到 ${cash(m.total)}`); }
+  if (m.total > 0) { audio.play('coin'); toast(m.by ? `${m.by} 按了賣出：你籃子裡的魚得到 ${cash(m.total)}` : `賣出，得到 ${cash(m.total)}`); }
+  else if (m.helped) toast('幫大家把籃子裡的魚賣掉了（錢付給每條魚的主人）');
 });
 net.on('chestGot', (m) => {
   applyKit(m.kit);
@@ -3504,6 +3570,7 @@ net.on('merged', (m) => {
   applyKit(m.kit);
   boards.set(m.boards);
   applyWorld(m.world, true);
+  fish.applyLoose(m.loose ?? [], net.id);
   lastPosMsg = lastBoatMsg = lastBoatDetail = '';
   if (!wreck && !drown) fadeIn = 1.6;
   chat.sys(`已經合併到${room.name}${m.repark ? `，你的船移到 ${berth.label}` : ''}`, 'merge');
@@ -3535,6 +3602,7 @@ net.on('rejoin', (j) => {
   const mine = new Set(myFishUids());
   const gone = (j.resume?.fish ?? []).filter((f) => !mine.has(f.uid)).map((f) => f.uid);
   if (gone.length) net.send({ t: 'fishGone', uids: gone });
+  fish.applyLoose(j.loose ?? [], net.id);   // 斷線時別人放下、撿走的魚對回來；自己放在外面被撿走的拿掉
   if (myBoat._wrecked && !j.resume?.boat?.sunk) net.send({ t: 'sink', why: myBoat.sunkBy, side: myBoat._side });
   lastPosMsg = lastBoatMsg = lastBoatDetail = '';
   lastHold = lastLine = '?';
@@ -3584,6 +3652,7 @@ function enterRoom(j) {
       else fish.stowDeck(myBoat, S.box.x + (Math.random() - 0.5) * 1.2, (Math.random() - 0.5) * S.beam * 0.4, f.id, f.kg, f.len, f.uid, f.value);
     }
   }
+  fish.applyLoose(j.loose ?? [], j.id);   // 大家放在外面的魚（地上、甲板上、籃子裡）；自己斷線前放在外面的也照原位放回去
   let px = SPAWN_W.x + (Math.random() - 0.5) * 3, pz = SPAWN_W.z + (Math.random() - 0.5) * 2, yaw = SPAWN_W.yaw, deck = null;
   if (pos && !(rb && rb.sunk)) {
     deck = pos[8] ? (pos[8] === j.id ? myBoat : others.boat(pos[8])) : null;

@@ -92,6 +92,11 @@ function doMerge() {
   to.board.sort((a, b) => b.value - a.value);
   to.board.length = Math.min(to.board.length, 60);
   from.board = [];
+  // 放在外面的魚也跟著搬過去（同一張地圖，位置照舊）；原本就在那間房的人要知道多了這些
+  const carried = [...from.loose.values()];
+  for (const e of carried) to.loose.set(e.uid, e);
+  from.loose.clear();
+  if (carried.length) to.all({ t: 'loose', add: carried.map((e) => to.loosePub(e)) });
   const moved = new Map();
   for (const p of moving) moved.set(p, to.enter(p, { fresh: false, quiet: true }));
   for (const p of moving) {

@@ -109,6 +109,9 @@ export function makeCanMesh() {
 //   splash(x, y, z)：濺水花；toast(text)：畫面提示
 //   basket：{ x, z, y }　商店的籃子
 //   onLost(uids)：這幾條魚沒了（掉回海裡、跟著船沉了），多人模式要告訴伺服器
+//   placed(it)：自己的魚放在外面了（地上、甲板上、籃子裡），大家都看得到、誰都撿得走；taken(it)：又收回來了（拿回手上、放進魚箱）
+//   boatOf(id)：某個玩家的船（別人的魚放在誰的船上）
+// 別人的魚（remote）也放在 items、basket 裡：畫出來、可以撿，但不會自己跳、不會滑——它們在主人那邊動，動完了位置再傳過來
 export class FishWorld {
   constructor(env) {
     this.env = env;
@@ -194,7 +197,7 @@ export class FishWorld {
   }
 
   _gone(list) {
-    const uids = list.filter((it) => it.uid).map((it) => it.uid);
+    const uids = list.filter((it) => it.uid && !it.remote).map((it) => it.uid);
     if (uids.length && this.env.onLost) this.env.onLost(uids);
   }
 
@@ -209,9 +212,25 @@ export class FishWorld {
     this.env.player.carry = !!keep;
   }
 
+  // 自己的魚放在外面了：告訴大家（別人的、油桶、還沒編號的不用）
+  _pub(it) {
+    if (!it.uid || it.can || it.remote) return;
+    it.pub = true;
+    if (this.env.placed) this.env.placed(it);
+  }
+  // 收回來了（拿回手上、放進魚箱）：從外面拿掉
+  _unpub(it) {
+    if (!it.pub) return;
+    it.pub = false;
+    if (this.env.taken) this.env.taken(it);
+  }
+
   _hold(it) {
     const i = this.items.indexOf(it);
     if (i >= 0) this.items.splice(i, 1);
+    const k = this.basket.indexOf(it);
+    if (k >= 0) this.basket.splice(k, 1);
+    this._unpub(it);
     it.state = 'held'; it.hop = null; it.boat = null;
     this.env.player.mesh.add(it.mesh);
     it.mesh.position.set(0.5, 1.08, 0);
@@ -234,6 +253,7 @@ export class FishWorld {
     boat.mesh.add(it.mesh);
     if (!this.items.includes(it)) this.items.push(it);
     this._pose(it, 0);
+    this._pub(it);
   }
 
   _toGround(it, x, z, y = this.env.ground(x, z)) {
@@ -242,6 +262,78 @@ export class FishWorld {
     this.env.scene.add(it.mesh);
     if (!this.items.includes(it)) this.items.push(it);
     this._pose(it, 0);
+    this._pub(it);
+  }
+
+  // ---- 別人放在外面的魚（伺服器傳來的）----
+  // d：{ uid, id, kg, len, value, o 主人, k 放在哪 g 地上／d 甲板／b 籃子, x, y, z, yaw, b 誰的船 }
+  addRemote(d) {
+    this.removeRemote(d.uid);
+    const sp = SPECIES[d.id];
+    if (!sp) return;
+    const it = {
+      uid: d.uid, id: d.id, sp, kg: d.kg, value: d.value, len: d.len, thick: d.len * sp.w, remote: true, owner: d.o,
+      mesh: makeFishMesh(sp, d.len), state: 'ground', boat: null,
+      x: d.x, z: d.z, y: d.y, lx: 0, lz: 0, yaw: d.yaw, vx: 0, vz: 0, lively: 0, flopT: 1e9, hop: null, wash: 0, t: 0,
+    };
+    if (d.k === 'b') {
+      it.state = 'basket';
+      this.env.scene.add(it.mesh);
+      it.mesh.position.set(d.x, d.y, d.z);
+      it.mesh.rotation.set(Math.PI / 2, 0, d.yaw);
+      this.basket.push(it);
+      return it;
+    }
+    if (d.k === 'd') {
+      const b = this.env.boatOf && this.env.boatOf(d.b);
+      if (!b) return null;   // 那艘船這裡還沒有（剛進來）：先不畫
+      it.state = 'boat'; it.boat = b; it.lx = d.x; it.lz = d.z;
+      b.mesh.add(it.mesh);
+    } else this.env.scene.add(it.mesh);
+    this.items.push(it);
+    this._pose(it, 0);
+    return it;
+  }
+
+  // 別人的魚被撿走、賣掉、消失了
+  removeRemote(uid) {
+    for (const list of [this.items, this.basket]) {
+      const i = list.findIndex((o) => o.remote && o.uid === uid);
+      if (i >= 0) { list[i].mesh.removeFromParent(); list.splice(i, 1); }
+    }
+  }
+
+  // 自己放在外面的魚被別人撿走了、放太久消失了：回傳那條（沒有就是 null）
+  removeOwn(uid) {
+    for (const list of [this.items, this.basket]) {
+      const i = list.findIndex((o) => !o.remote && o.uid === uid);
+      if (i >= 0) { const it = list[i]; it.mesh.removeFromParent(); list.splice(i, 1); it.pub = false; return it; }
+    }
+    return null;
+  }
+
+  // 進房、斷線接回來：照伺服器的清單重畫別人的魚；自己的（斷線前放在外面的）照原樣放回去。myId：自己的編號
+  applyLoose(list, myId) {
+    for (const it of [...this.items, ...this.basket]) if (it.remote) this.removeRemote(it.uid);
+    const have = new Set([...this.items, ...this.basket].filter((it) => !it.remote && it.uid).map((it) => it.uid));
+    const there = new Set(list.map((d) => d.uid));
+    // 自己放在外面、伺服器那邊已經沒有的（斷線時被撿走、消失了）：這裡也拿掉
+    for (const uid of have) if (!there.has(uid) && [...this.items, ...this.basket].find((o) => o.uid === uid && o.pub)) this.removeOwn(uid);
+    for (const d of list) {
+      if (d.o !== myId) { this.addRemote(d); continue; }
+      if (have.has(d.uid)) continue;
+      // 自己的、這邊沒有（關掉分頁又回來）：照伺服器記的位置放回去
+      const keep = this.held;
+      this.held = null;
+      const it = this.spawnHeld(d.id, d.kg, d.len, d.uid, d.value);
+      it.lively = 0;
+      const b = d.k === 'd' && this.env.boatOf ? this.env.boatOf(d.b) || this.env.boatOf(myId) : null;   // 那艘船不在了：放到自己船上
+      if (d.k === 'b') this.toBasket(it);
+      else if (b) this._toBoat(it, b, d.x, d.z);
+      else this._toGround(it, d.x, d.z, d.y);
+      this.held = keep;
+      this.env.player.carry = !!keep;
+    }
   }
 
   // 某個位置能不能放魚：回傳 { boat, lx, lz } / { x, z } / null（牆）/ 'water'
@@ -277,6 +369,7 @@ export class FishWorld {
   }
 
   worldPos(it, out) {
+    if (it.state === 'basket') return out.copy(it.mesh.position);
     if (it.state === 'boat') {
       const w = it.boat.toWorld(it.lx, it.lz);
       return out.set(w.x, it.boat.deckY(w.x, w.z), w.z);
@@ -303,6 +396,7 @@ export class FishWorld {
     if (!it || boat.boxFish.length >= boat.boxCap) return false;
     this._release(it);
     this._unlist(it);
+    this._unpub(it);
     it.state = 'box'; it.boat = boat;
     boat.mesh.add(it.mesh);
     it.mesh.position.set(B.x + rand(-0.25, 0.25) * B.w, boat.spec.deck + 0.1 + 0.05 * boat.boxFish.length, B.z + rand(-0.25, 0.25) * B.d);
@@ -328,17 +422,19 @@ export class FishWorld {
     it.mesh.position.set(k.x + rand(-0.2, 0.2), k.y + 0.36 + 0.07 * this.basket.length, k.z + rand(-0.2, 0.2));
     it.mesh.rotation.set(Math.PI / 2, 0, rand(0, Math.PI * 2));
     this.basket.push(it);
+    this._pub(it);   // 籃子是大家共用的：放進去大家都看得到
     return it;
   }
 
+  // 籃子裡大家的魚（自己的、別人的）加起來：看板、磅秤用
   get basketTotal() { return this.basket.reduce((s, it) => s + it.value, 0); }
   get basketKg() { return this.basket.reduce((s, it) => s + it.kg, 0); }   // 磅秤的指針用
 
-  // 賣掉籃子裡的魚（uids：伺服器說賣掉了哪幾條；沒給就是全部），回傳金額
+  // 賣掉籃子裡自己的魚（uids：伺服器說賣掉了哪幾條；沒給就是自己的全部），回傳金額。別人的由伺服器另外通知拿掉
   sell(uids = null) {
     let total = 0;
     this.basket = this.basket.filter((it) => {
-      if (uids && !uids.includes(it.uid)) return true;
+      if (it.remote || (uids && !uids.includes(it.uid))) return true;
       total += it.value;
       it.mesh.removeFromParent();
       return false;
@@ -495,7 +591,7 @@ export class FishWorld {
     }
 
     for (const it of [...this.items]) {
-      if (it.boat && it.boat.stored) continue;   // 收在倉庫裡的船：上面的東西原封不動
+      if (it.remote || (it.boat && it.boat.stored)) continue;   // 別人的魚（在主人那邊動）、收在倉庫裡的船上的東西：原封不動
       it.t += dt; it.lively -= dt;
       if (it.fly) { this._fly(it, dt); continue; }   // 丟出去還在飛
       const boat = it.boat, onBoat = it.state === 'boat';
@@ -510,7 +606,7 @@ export class FishWorld {
         if (s >= 1) {
           it.hop = null;
           if (h.end === 'lost') { this._lose(it, h.msg || '跳回海裡了'); continue; }
-          if (h.end) this._put(it, h.end);
+          if (h.end) this._put(it, h.end); else if (h.dx || h.dz) this._pub(it);   // 跳到別的地方：位置告訴大家
         }
         continue;
       }
