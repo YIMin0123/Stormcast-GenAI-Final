@@ -13,11 +13,92 @@ import { portFoundation, portWall } from '../src/lowpoly/havenShape.js';
 registerHooks({ resolve(specifier, context, nextResolve) {
   if (context.parentURL?.endsWith('/src/player.js') && specifier === './boat.js') return { url: 'data:text/javascript,export const buildFigure = () => ({})', shortCircuit: true };
   if (context.parentURL?.endsWith('/src/player.js') && specifier === './emotes.js') return { url: 'data:text/javascript,export const ACTION_BY_ID = {}; export const MOOD_TIME = 0', shortCircuit: true };
-  if (context.parentURL?.endsWith('/src/boat.js') && specifier === './figure.js') return { url: 'data:text/javascript,export const buildFigure = () => ({})', shortCircuit: true };
+  if (context.parentURL?.endsWith('/src/boat.js') && specifier === './figure.js') return { url: 'data:text/javascript,export const buildFigure = () => globalThis.__testFigure()', shortCircuit: true };
   return nextResolve(specifier, context);
 } });
 const { Player } = await import('../src/player.js');
-const { Boat } = await import('../src/boat.js');
+const { Boat, buildBoatMesh } = await import('../src/boat.js');
+
+function testBoat(type, heading = 0) {
+  const boat = Object.create(Boat.prototype);
+  Object.assign(boat, { spec: BOAT_TYPES[type], x: 0, z: 0, heading, y: 0,
+    normal: new THREE.Vector3(0, 1, 0), blocks: [], sinking: false });
+  return boat;
+}
+
+function playerOnBoat(boat, lx, lz) {
+  const { x, z } = boat.toWorld(lx, lz), p = new Player(x, z, 0);
+  p.animate = () => {}; p.boat = boat; p.lx = lx; p.lz = lz;
+  p.base = p.y = boat.deckY(x, z);
+  return p;
+}
+const openSea = (boat) => ({ boats: [boat], water: () => 0, ground: () => -30 });
+
+test('三種船首尾的可見甲板都有支撐', () => {
+  for (const type of ['skiff', 'fisher', 'trawler']) {
+    const boat = testBoat(type), len = boat.spec.len;
+    assert.equal(boat.deckContains(-len / 2 + 0.1, 0), true, `${type} 船尾甲板`);
+    assert.equal(boat.deckContains(len / 2 - 0.3, 0), true, `${type} 船首甲板`);
+  }
+});
+
+test('三種船的甲板碰撞範圍貼合實際模型三角面', () => {
+  globalThis.__testFigure = () => new THREE.Group();
+  globalThis.document = { createElement: () => ({ getContext: () => ({ fillRect() {} }) }) };
+  try {
+    for (const type of ['skiff', 'fisher', 'trawler']) {
+      const boat = testBoat(type), mesh = buildBoatMesh(boat.spec), deck = mesh.children[1];
+      mesh.updateMatrixWorld(true);
+      for (let i = 0; i < 34; i++) for (const zFactor of [-0.9, 0, 0.9]) {
+        const x = ((i + 0.5) / 34 - 0.5) * boat.spec.len, z = boat.deckHalfWidth(x) * zFactor;
+        const ray = new THREE.Raycaster(new THREE.Vector3(x, boat.spec.deck + 2, z), new THREE.Vector3(0, -1, 0));
+        assert.ok(ray.intersectObject(deck).length && boat.deckContains(x, z), `${type} 的甲板漏判：${x}, ${z}`);
+      }
+    }
+  } finally {
+    delete globalThis.__testFigure;
+    delete globalThis.document;
+  }
+});
+
+test('三種船的船首、船尾與兩側船舷會擋住走路', () => {
+  for (const type of ['skiff', 'fisher', 'trawler']) for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const boat = testBoat(type, Math.PI / 4), p = playerOnBoat(boat, 0, 0), world = openSea(boat);
+    const c = Math.cos(boat.heading), s = Math.sin(boat.heading), wx = dx * c - dz * s, wz = dx * s + dz * c;
+    for (let i = 0; i < 180; i++) p.update(1 / 60, wx, wz, false, false, world);
+    assert.equal(p.boat, boat, `${type} 的 (${dx}, ${dz}) 船舷走出去`);
+    assert.ok(boat.deckContains(p.lx, p.lz), `${type} 站到甲板外`);
+  }
+});
+
+test('在船舷邊跳過足夠高度時可以離船', () => {
+  const boat = testBoat('fisher'), p = playerOnBoat(boat, 0, 1.6), world = openSea(boat);
+  p.update(1 / 60, 0, 1, false, true, world);
+  for (let i = 0; i < 100 && p.boat; i++) p.update(1 / 60, 0, 1, false, false, world);
+  assert.equal(p.boat, null);
+});
+
+test('漁船與大漁船的艙蓋頂面有落腳高度', () => {
+  for (const type of ['fisher', 'trawler']) {
+    const boat = testBoat(type), p = playerOnBoat(boat, boat.spec.hatch.x, 0);
+    const world = openSea(boat);
+    p.update(1 / 60, 0, 0, false, false, world);
+    assert.ok(Math.abs(p.y - (boat.spec.deck + 0.28)) < 1e-9, `${type} 的艙蓋被穿過`);
+  }
+});
+
+test('船移動、隨浪傾斜時，船上的人持續踩在甲板上', () => {
+  for (const type of ['skiff', 'fisher', 'trawler']) {
+    const boat = testBoat(type), p = playerOnBoat(boat, 0, 0), world = openSea(boat);
+    for (let i = 0; i < 120; i++) {
+      boat.x += 0.02; boat.z -= 0.01; boat.y = 0.3 * Math.sin(i / 15);
+      boat.normal.set(0.1 * Math.sin(i / 20), 1, 0.1 * Math.cos(i / 20)).normalize();
+      p.update(1 / 60, 0, 0, false, false, world);
+      assert.equal(p.boat, boat);
+      assert.ok(Math.abs(p.y - boat.walkDeckY(p.x, p.z)) < 1e-8);
+    }
+  }
+});
 
 test('商店開口兩側的牆與通道', () => {
   const blocked = (x, z) => WALLS.some((wall) => inWall(wall, x, z));
@@ -129,6 +210,25 @@ test('母港實際泊位的三種船，從橋上跨船不會產生異常速度',
       assert.ok(Math.hypot(p.airVX, p.airVZ) <= 3.2 + 1e-6, `${berth.label} ${type} 速度異常`);
     }
   }
+});
+
+test('停在母港時，三種船仍可走上附近的棧橋', () => {
+  for (const berth of [BERTHS[0], BERTHS[1], BERTHS[16], BERTHS[17]]) for (const type of ['skiff', 'fisher', 'trawler']) {
+    const boat = testBoat(type), pose = berthPose(berth, type);
+    Object.assign(boat, pose);
+    const [x, z] = toWorld(berth.ex + berth.nx, berth.ez + berth.nz), local = boat.toLocal(x, z);
+    const p = playerOnBoat(boat, local.x, local.z);
+    const world = { boats: [boat], water: () => 0, ground: (wx, wz, under) => under ? -3 : deckY(wx, wz) ?? -3 };
+    for (let i = 0; i < 120 && p.boat; i++) p.update(1 / 60, -Math.cos(pose.heading), -Math.sin(pose.heading), false, false, world);
+    assert.ok(!p.boat && p.base === DECK_Y, `${berth.label} ${type} 無法走上棧橋`);
+  }
+});
+
+test('傾斜的船上艙蓋高度沿船體法線正確抬高', () => {
+  const boat = testBoat('trawler');
+  boat.normal.set(0.2, Math.sqrt(0.95), 0.1);
+  const x = boat.spec.hatch.x, z = 0;
+  assert.ok(Math.abs(boat.walkDeckY(x, z) - boat.deckY(x, z) - 0.28 / boat.normal.y) < 1e-9);
 });
 
 test('高速飛行不會在一幀內穿過薄牆', () => {

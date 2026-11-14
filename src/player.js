@@ -84,7 +84,7 @@ export class Player {
       this.lx = x; this.lz = z;
       const w = boat.toWorld(x, z);
       this.x = w.x; this.z = w.z;
-      this.base = boat.deckY(this.x, this.z);
+      this.base = boat.walkDeckY?.(this.x, this.z) ?? boat.deckY(this.x, this.z);
     } else {
       this.x = x; this.z = z;
       const s = this._surface(x, z, world);
@@ -117,7 +117,7 @@ export class Player {
       if (b.sinking) continue;
       const l = b.toLocal(x, z);
       if (b.deckContains(l.x, l.z)) {
-        const y = b.deckY(x, z), ground = this._surface(x, z, world);
+        const y = b.walkDeckY?.(x, z) ?? b.deckY(x, z), ground = this._surface(x, z, world);
         // 船停在橋下、兩者水平範圍重疊時，腳已高於橋面就應落在橋上。
         if (ground && !ground.swim && ground.y > y && this.base + this.h >= ground.y) return ground;
         return b.blockedLocal(l.x, l.z) ? 'wall' : { boat: b, lx: l.x, lz: l.z, y, swim: false };
@@ -160,6 +160,13 @@ export class Player {
     const tx = this.x + dx, tz = this.z + dz;
     const s = this._probe(tx, tz, world);
     if (s === 'wall') return false;
+    // 船舷是有高度的牆：走路不能直接穿出去，但可以跳過，或跨往附近可站的碼頭。
+    if (this.boat && !this.fly && this.boat.deckClearance && this.boat.railHeightAt) {
+      const b = this.boat, l = b.toLocal(tx, tz), now = b.deckClearance(this.lx, this.lz), next = b.deckClearance(l.x, l.z);
+      const outward = next < BODY && next < now - 1e-6;
+      const landing = s.boat !== b && !s.swim && this._reach(s);
+      if (outward && this.h < b.railHeightAt(l.x) && !landing && !this._nearLanding(dx / len, dz / len, world, b)) return false;
+    }
     if (!s.boat && this._bump(tx, tz, dx / len, dz / len, s.swim, world)) return false;
     // 站在碼頭或船上、前面是要掉下去的水：如果只是碼頭和船之間的空隙就一步跨過去；
     // 跨不過去（前面整片是水）就直接走下去、掉進水裡
@@ -179,6 +186,16 @@ export class Player {
     if (!this._reach(s)) return false;
     this._enter(s, tx, tz);
     return true;
+  }
+
+  _nearLanding(ux, uz, world, boat) {
+    for (const hop of HOPS) {
+      const s = this._probe(this.x + ux * hop, this.z + uz * hop, world);
+      if (s === 'wall') return false;
+      if (s.boat === boat || s.swim) continue;
+      if (this._reach(s)) return true;
+    }
+    return false;
   }
 
   // 身體的寬度：往前走時，前方和斜前方離中心 BODY 的地方碰到牆就停（只看前面：已經貼著牆的人還是走得開）。
@@ -227,7 +244,7 @@ export class Player {
     if (this.boat) {
       const w = this.boat.toWorld(this.lx, this.lz);
       this.x = w.x; this.z = w.z;
-      this.base = this.boat.deckY(this.x, this.z) + (seat ? seat.h - 0.38 : 0);
+      this.base = (this.boat.walkDeckY?.(this.x, this.z) ?? this.boat.deckY(this.x, this.z)) + (seat ? seat.h - 0.38 : 0);
       this.onWater = false;
     } else {
       const feet = this.base + this.h;

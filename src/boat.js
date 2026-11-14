@@ -21,6 +21,7 @@ const SPOUT_HEEL = 0.3;  // 水龍捲最強的風橫著吹過來時，船被壓�
 const WHEEL_R = 0.25;   // Q 版人物：方向盤太大會擋住第一人稱往前看
 const FP_GAP = 0.45;     // 第一人稱時站在方向盤後面多遠：再近輪子會塞滿畫面，再遠手要伸成細長一根擋在眼前
 const HELM_GAP = 0.34;   // 第三人稱時舵手站在方向盤後面多遠（瀏海離輪子剩幾公分，手才搆得到）
+const HULL_SEGMENTS = 34, RAIL_WIDTH = 1.03, DECK_WIDTH = 0.97; // 船殼與甲板碰撞共用的模型尺寸
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const DOWN = new THREE.Vector3(0, -1, 0);
 const X_AXIS = new THREE.Vector3(1, 0, 0), Y_AXIS = new THREE.Vector3(0, 1, 0);
@@ -40,12 +41,16 @@ function halfBeam(S, t) {
     : Math.pow(Math.max(Math.cos(((t - 0.38) / 0.62) * Math.PI / 2), 0), 0.52));
 }
 
+function railRise(S, t) {
+  return S.bul + S.rise * t ** 2.6 + 0.43 * S.bul * (1 - t) ** 2;
+}
+
 function hullSection(S, t) {
   const half = halfBeam(S, t);
-  const sheer = S.deck + S.bul + S.rise * Math.pow(t, 2.6) + 0.43 * S.bul * (1 - t) * (1 - t);
+  const sheer = S.deck + railRise(S, t);
   const keel = -S.draft * (1 - Math.pow(t, 5));
   // 半邊剖面，由龍骨到舷緣：[橫向, 高度]
-  return [[0, keel], [0.6 * half, keel * 0.9], [1.07 * half, keel * 0.12], [1.13 * half, 0.56 * sheer], [half * 1.03, sheer]];
+  return [[0, keel], [0.6 * half, keel * 0.9], [1.07 * half, keel * 0.12], [1.13 * half, 0.56 * sheer], [half * RAIL_WIDTH, sheer]];
 }
 
 // 把剖面的五個控制點連成圓滑的曲線（Catmull-Rom），回傳 n+1 個點
@@ -60,7 +65,7 @@ function smoothSection(pts, n) {
 }
 
 function buildHull(S) {
-  const NS = 34, NP = 9;   // 縱向分幾段、半邊剖面分幾段
+  const NS = HULL_SEGMENTS, NP = 9;   // 縱向分幾段、半邊剖面分幾段
   const rings = [], sheers = [];
   for (let s = 0; s <= NS; s++) {
     const t = s / NS, x = (t - 0.5) * S.len;
@@ -97,7 +102,7 @@ function buildHull(S) {
       if (col === WOOD) { const k = 0.86 + 0.28 * (((s >> 1) * 7 + strake * 3) % 4) / 3; col = [WOOD[0] * k, WOOD[1] * k, WOOD[2] * k]; }   // 木板一片深一片淺
       for (let n = 0; n < 6; n++) colr.push(col[0], col[1], col[2]);
     }
-    const d = (r) => [[r[0][0], S.deck, r[0][2] * 0.97], [r[M - 1][0], S.deck, r[M - 1][2] * 0.97]];
+    const d = (r) => [[r[0][0], S.deck, r[0][2] * DECK_WIDTH], [r[M - 1][0], S.deck, r[M - 1][2] * DECK_WIDTH]];
     const [a0, a1] = d(rings[s]), [b0, b1] = d(rings[s + 1]);
     deck.push(...a0, ...b0, ...a1, ...b0, ...b1, ...a1);
     // 舷緣蓋板：舷牆頂上一條深色的木條
@@ -814,11 +819,35 @@ export class Boat {
     return { x: this.x + fx * lx - fz * lz, z: this.z + fz * lx + fx * lz };
   }
 
-  // 船身座標 (lx, lz) 是否在甲板範圍內（船舷內側）
+  // 船身座標 (lx, lz) 是否在實際畫出的甲板內。甲板沿船殼各段的端點線性連接。
   deckContains(lx, lz) {
     const S = this.spec;
-    if (lx < -S.len / 2 + 0.4 || lx > S.len / 2 - 0.9) return false;
-    return Math.abs(lz) < halfBeam(S, (lx + S.len / 2) / S.len) * 0.97 - 0.15;
+    if (lx < -S.len / 2 || lx > S.len / 2) return false;
+    return Math.abs(lz) <= this.deckHalfWidth(lx);
+  }
+
+  deckHalfWidth(lx) {
+    const S = this.spec, t = clamp((lx + S.len / 2) / S.len, 0, 1), u = t * HULL_SEGMENTS, i = Math.min(HULL_SEGMENTS - 1, Math.floor(u)), f = u - i;
+    return (halfBeam(S, i / HULL_SEGMENTS) * (1 - f) + halfBeam(S, (i + 1) / HULL_SEGMENTS) * f) * RAIL_WIDTH * DECK_WIDTH;
+  }
+
+  // 到船首、船尾或舷邊的局部軸向距離；負值表示超出甲板。
+  deckClearance(lx, lz) {
+    return Math.min(lx + this.spec.len / 2, this.spec.len / 2 - lx, this.deckHalfWidth(lx) - Math.abs(lz));
+  }
+
+  // 舷牆頂離甲板多高（跟 hullSection 的外形使用同一公式）。
+  railHeightAt(lx) {
+    const S = this.spec, t = clamp((lx + S.len / 2) / S.len, 0, 1), u = t * HULL_SEGMENTS, i = Math.min(HULL_SEGMENTS - 1, Math.floor(u)), f = u - i;
+    return (railRise(S, i / HULL_SEGMENTS) * (1 - f) + railRise(S, (i + 1) / HULL_SEGMENTS) * f) / this.normal.y;
+  }
+
+  // 艙蓋是甲板上的實體箱蓋；人可以踩上它。
+  walkDeckY(x, z) {
+    const y = this.deckY(x, z), h = this.spec.hatch;
+    if (!h) return y;
+    const l = this.toLocal(x, z);
+    return Math.abs(l.x - h.x) <= h.s / 2 && Math.abs(l.z) <= h.s / 2 ? y + 0.28 / this.normal.y : y;
   }
 
   blockedLocal(lx, lz) {
