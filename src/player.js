@@ -102,8 +102,10 @@ export class Player {
   _surface(x, z, world) {
     let g = world.ground(x, z);
     const w = world.water(x, z) - SUBMERGE;
-    // 人已經在水裡：頭上是棧橋的話，從橋底下游過去
-    if (this.onWater && g > w + STEP) { const u = world.ground(x, z, true); if (u < w) g = u; }
+    // 水中或橋面下的人可以從橋底游過；跳得比橋面高時，橋仍是可落腳的面。
+    if (this.onWater && g > w + STEP && (this.h <= 0 || this.base + this.h < g)) {
+      const u = world.ground(x, z, true); if (u < w) g = u;
+    }
     if (g > 90) return null;
     return g < w ? { boat: null, y: w, swim: true } : { boat: null, y: g, swim: false };
   }
@@ -114,7 +116,10 @@ export class Player {
       if (b.sinking) continue;
       const l = b.toLocal(x, z);
       if (b.deckContains(l.x, l.z)) {
-        return b.blockedLocal(l.x, l.z) ? 'wall' : { boat: b, lx: l.x, lz: l.z, y: b.deckY(x, z), swim: false };
+        const y = b.deckY(x, z), ground = this._surface(x, z, world);
+        // 船停在橋下、兩者水平範圍重疊時，腳已高於橋面就應落在橋上。
+        if (ground && !ground.swim && ground.y > y && this.base + this.h >= ground.y) return ground;
+        return b.blockedLocal(l.x, l.z) ? 'wall' : { boat: b, lx: l.x, lz: l.z, y, swim: false };
       }
     }
     return this._surface(x, z, world) ?? 'wall';
@@ -223,8 +228,11 @@ export class Player {
       this.base = this.boat.deckY(this.x, this.z) + (seat ? seat.h - 0.38 : 0);
       this.onWater = false;
     } else {
+      const feet = this.base + this.h;
       const s = this._surface(this.x, this.z, world);
       this.base = s ? s.y : world.ground(this.x, this.z);
+      // 空中換支撐面時保持世界高度；不能把原本離水面的高度加到橋面上。
+      if (s && this.h > 0) this.h = Math.max(0, feet - this.base);
       this.onWater = !!(s && s.swim);
     }
     const swim = this.swim = this.onWater && this.h <= 0 && !(fly && rise > 0);

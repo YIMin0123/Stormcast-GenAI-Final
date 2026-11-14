@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import * as THREE from 'three';
-import { WALLS, inWall } from '../src/layout.js';
+import { WALLS, inWall, deckY, DECK_Y } from '../src/layout.js';
+import { toLocal, toWorld } from '../src/frame.js';
 import { SHOP } from '../src/lowpoly/harborPlan.js';
 import { BAY, PORT } from '../src/lowpoly/havenPlan.js';
 import { portFoundation, portWall } from '../src/lowpoly/havenShape.js';
@@ -24,7 +25,7 @@ test('商店開口兩側的牆與通道', () => {
 
 test('游泳時可從岸上障礙的下方經過，水下障礙仍會擋住', () => {
   const p = Object.create(Player.prototype);
-  p.onWater = true;
+  p.onWater = true; p.base = -0.95; p.h = 0;
   const world = { water: () => 0, ground: (_x, _z, under) => under ? -3 : 99 };
   assert.equal(p._surface(0, 0, world).swim, true);
   world.ground = () => 99;
@@ -32,6 +33,56 @@ test('游泳時可從岸上障礙的下方經過，水下障礙仍會擋住', ()
   p.onWater = false;
   world.ground = (_x, _z, under) => under ? -3 : 99;
   assert.equal(p._surface(0, 0, world), null);
+});
+
+test('從船飛過水面時仍可偵測腳下的橋，游泳時仍可從橋底通過', () => {
+  const p = new Player(0, 0, 0);
+  const world = { boats: [], water: () => 0, ground: (_x, _z, under) => under ? -3 : 1.3 };
+  p.onWater = true; p.base = -0.95; p.h = 2.5;
+  assert.deepEqual(p._surface(0, 0, world), { boat: null, y: 1.3, swim: false });
+  p.h = 0;
+  assert.equal(p._surface(0, 0, world).swim, true);
+});
+
+test('橋面高於重疊的船，跳過橋面後應站到橋上', () => {
+  const boat = { sinking: false, heading: 0, toLocal: (x, z) => ({ x, z }), toWorld: (x, z) => ({ x, z }),
+    deckContains: (x) => x < 0.8, blockedLocal: () => false, deckY: () => 0.6 };
+  const world = { boats: [boat], water: () => 0, ground: (x, _z, under) => !under && x >= 0 ? 1.3 : -3 };
+  const p = new Player(-0.4, 0, 0);
+  p.animate = () => {}; p.boat = boat; p.lx = p.x; p.lz = 0; p.base = p.y = 0.6;
+  p.h = 0.9;
+  assert.equal(p._probe(0.2, 0, world).boat, null, '腳高於橋面時應優先選橋');
+  p.h = 0;
+  p.update(0.05, 1, 0, false, true, world);
+  for (let i = 0; i < 15; i++) p.update(0.05, 1, 0, false, false, world);
+  assert.ok(p.x > 0 && p.boat === null && p.h === 0 && Math.abs(p.y - 1.3) < 1e-9,
+    `未落在橋面：x=${p.x}, y=${p.y}, h=${p.h}, boat=${!!p.boat}`);
+});
+
+test('空中切換水面與橋面時維持人物原有高度', () => {
+  const p = new Player(1, 0, 0);
+  p.animate = () => {}; p.onWater = true; p.base = -0.95; p.h = 2.5; p.y = 1.55;
+  const world = { boats: [], water: () => 0, ground: (_x, _z, under) => under ? -3 : 1.3 };
+  p.update(0.01, 0, 0, false, false, world);
+  assert.ok(p.y <= 1.55 && p.y > 1.5, `高度突變：y=${p.y}`);
+});
+
+test('沿真實母港座標從停靠的船跳上棧橋', () => {
+  const boat = {
+    sinking: false, heading: 0,
+    toLocal: (x, z) => { const [lx, lz] = toLocal(x, z); return { x: lx, z: lz }; },
+    toWorld: (x, z) => { const [wx, wz] = toWorld(x, z); return { x: wx, z: wz }; },
+    deckContains: (x, z) => x > 1.8 && x < 4.2 && z > 20 && z < 24,
+    blockedLocal: () => false, deckY: () => 0.7,
+  };
+  const [x, z] = toWorld(2.2, 22), [tx, tz] = toWorld(1.2, 22);
+  const world = { boats: [boat], water: () => 0, ground: (wx, wz, under) => under ? -3 : deckY(wx, wz) ?? -3 };
+  const p = new Player(x, z, 0);
+  p.animate = () => {}; p.boat = boat; p.lx = 2.2; p.lz = 22; p.base = p.y = 0.7;
+  p.update(0.05, tx - x, tz - z, false, true, world);
+  for (let i = 0; i < 14; i++) p.update(0.05, tx - x, tz - z, false, false, world);
+  assert.ok(p.boat === null && p.h === 0 && Math.abs(p.y - DECK_Y) < 1e-9,
+    `未落在棧橋：y=${p.y}, h=${p.h}, boat=${!!p.boat}`);
 });
 
 test('高速飛行不會在一幀內穿過薄牆', () => {
