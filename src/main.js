@@ -84,6 +84,17 @@ function fail(msg) {
 
 // ---- Renderer -------------------------------------------------------------
 const renderer = new THREE.WebGLRenderer({ antialias: false });   // 抗鋸齒由後製的 SMAA 負責；「高」畫質另外在場景緩衝區開多重取樣（MSAA）
+// 顯示晶片把畫面收走（WebGL 失效：驅動重開、顯示記憶體不夠……）時整個 3D 畫面會變成一片底色、救不回來：
+// 告訴玩家、重新載入（伺服器 30 秒內認得回來的人，會直接接回原本的房間，家當都在）
+renderer.domElement.addEventListener('webglcontextlost', (e) => {
+  e.preventDefault();
+  console.warn('[gl] 畫面失效（webglcontextlost），重新載入');
+  const n = document.createElement('div');
+  n.textContent = '畫面出錯了，正在重新載入…（按「進入大廳」就會回到原本的房間，家當都在）';
+  n.style.cssText = 'position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);z-index:99;padding:12px 22px;border-radius:16px;background:var(--paper);color:var(--ink);font:16px var(--font);box-shadow:0 4px 14px rgba(0,0,0,.3)';
+  document.body.appendChild(n);
+  window.setTimeout(() => window.location.reload(), 1500);
+});
 // 畫質由玩家自己在設定裡調，不會自動變，調過的記在瀏覽器裡（?test 分頁只記在那個分頁）：
 //   解析度：沒調過的話，電腦跟著螢幕的縮放比例走（筆電常見 1.25、1.5 倍，畫面才不會被放大而糊掉）；
 //           手機用 2 倍（螢幕原生的 2.6 倍太吃力；1 倍會糊。S22+「中」畫質實測 2 倍 57～60 fps）
@@ -3502,7 +3513,7 @@ function placeTabletDom() {
     tabHeld = held;
     tablet.root.classList.toggle('held', held);
     tablet.root.style.setProperty('--dw', `${TOUCH ? TABLET.domWTouch : TABLET.domW}px`);
-    if (!held) { tablet.dev.style.transform = tablet.dev.style.opacity = tablet.dev.style.pointerEvents = ''; }
+    if (!held) { tablet.dev.style.transform = tablet.dev.style.opacity = tablet.dev.style.pointerEvents = tablet.dev.style.visibility = ''; }
   }
   if (!held) return;
   const S = TABLET_SIZE, m = tabMesh.matrixWorld, W = window.innerWidth, H = window.innerHeight;
@@ -3511,10 +3522,14 @@ function placeTabletDom() {
   camera.updateMatrixWorld();
   const front = _tvK.copy(camera.position).sub(_tvC.set(0, S.t / 2, 0).applyMatrix4(m)).dot(_tvN.set(0, 1, 0).transformDirection(m)) > 0;
   const pts = _tvCorner.map((v) => { const p = v.clone().project(camera); return [(p.x * 0.5 + 0.5) * W, (-p.y * 0.5 + 0.5) * H, p.z]; });
-  const op = front && pts.every((p) => p[2] < 1) ? clamp((tabView - 0.55) / 0.35, 0, 1) : 0;
+  // 四個角都要在鏡頭前、離畫面不遠才貼：貼在快要平行於視線、或跑到鏡頭後面的平板上，透視變換會被拉到無限大，
+  // 瀏覽器要開一張超大的圖層，顯示記憶體一下就用光
+  const sane = front && pts.every((p) => p[2] > -1 && p[2] < 1 && Math.abs(p[0] - W / 2) < 2 * W && Math.abs(p[1] - H / 2) < 2 * H);
+  const op = sane ? clamp((tabView - 0.55) / 0.35, 0, 1) : 0;
   const dev = tablet.dev, dw = TOUCH ? TABLET.domWTouch : TABLET.domW;
   dev.style.opacity = op.toFixed(2);
   dev.style.pointerEvents = op > 0.9 ? '' : 'none';
+  dev.style.visibility = op > 0 ? '' : 'hidden';
   if (op > 0) dev.style.transform = quadMatrix(dw, dw / 1.42, pts);
 }
 // 把 w×h 的長方形對到四個點（左上、右上、右下、左下）的透視變換（Heckbert 的正方形→四邊形）
