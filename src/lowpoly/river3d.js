@@ -17,8 +17,8 @@ const smooth = (a, b, v) => { const t = clamp01((v - a) / (b - a)); return t * t
 export function buildRiver({ group, groundAt, water }) {
   const pts = riverPath(), falls = riverFalls(), W = RIVER.water, S = RIVER.spring;
   const pos = [], pat = [], dir = [], wv = [], idx = [];
-  // 一個頂點：p 紋路座標、f 紋路每秒流多遠、d 紋路 y 軸在地上的方向、w (水深, 種類, 白沫, 邊緣淡出)
-  const vert = (x, y, z, p, f, d, w) => { pos.push(x, y, z); pat.push(p[0], p[1], f[0], f[1]); dir.push(d[0], d[1]); wv.push(w[0], w[1], w[2], w[3]); return pos.length / 3 - 1; };
+  // 一個頂點：p 紋路座標、f 紋路每秒流多遠、d (紋路 y 軸在地上的方向 x, z, 暴漲時這一點跟著漲幾成)、w (水深, 種類, 白沫, 邊緣淡出)
+  const vert = (x, y, z, p, f, d, w) => { pos.push(x, y, z); pat.push(p[0], p[1], f[0], f[1]); dir.push(d[0], d[1], d[2]); wv.push(w[0], w[1], w[2], w[3]); return pos.length / 3 - 1; };
   // 一排一排的頂點（每排一樣多個）縫成一張面
   const sew = (rows) => {
     for (let i = 0; i < rows.length - 1; i++) for (let j = 0; j < rows[i].length - 1; j++) {
@@ -26,10 +26,13 @@ export function buildRiver({ group, groundAt, water }) {
       idx.push(a, c, b, b, c, d);
     }
   };
-  const depthAt = (x, y, z) => Math.max(-0.3, Math.min(1.5, y - groundAt(x, z)));   // 這一點的水有多深（水面在地面底下是負的）
+  const depthAt = (x, y, z) => Math.max(-1.5, Math.min(1.5, y - groundAt(x, z)));   // 這一點的水有多深（水面在地面底下是負的；暴漲時材質會把漲的高度加上去）
   // 從 (x, z) 往 (dx, dz) 走，高 y 的水面在幾公尺外碰到岸；max 公尺內都沒碰到（那一側沒有岸擋著）回傳 null
   const shore = (x, z, dx, dz, y, max) => { for (let d = 0.3; d <= max; d += 0.15) if (groundAt(x + dx * d, z + dz * d) > y) return d; return null; };
   const BANK = 0.3;   // 水面鋪到岸裡面多遠（水邊那條線由地面切出來）
+  // 岸量的是暴漲時的水面碰到的地方（平常多出來的那一截埋在岸裡看不到）；暴漲時那一側擋不住，就退回平常的岸再多鋪一點、最外面淡出
+  const RISE = RIVER.flood.rise;
+  const bank = (x, z, dx, dz, y, max) => { const hi = shore(x, z, dx, dz, y + RISE, max); if (hi !== null) return [hi + BANK, 1]; const lo = shore(x, z, dx, dz, y, max); return lo !== null ? [lo + BANK + 0.6, 0] : [null, 0]; };
 
   // 沿著河道一站一站鋪成一條連續的水面：湧泉池、河道、瀑布底下的水潭都是它（每一站左右各自量到岸多遠，池子的地方自然就寬），
   // 中間沒有另外接上去的水面，所以沒有接縫。只有瀑布把它切成上下兩段；流進天窗的地方停。
@@ -68,12 +71,12 @@ export function buildRiver({ group, groundAt, water }) {
       // 陡的地方翻白；快到瀑布口也是
       const steep = Math.max(0.85 * smooth(0.1, 0.5, st.slope), tail.fall ? 0.6 * Math.exp(-(tail.u - st.u) / 1.3) : 0);
       // 左岸、右岸。快到瀑布口的那幾站就在崖邊（兩旁的地面往下掉，量到的岸不準）：最寬只到水簾那麼寬
-      let sides = [shore(st.x, st.z, st.tz, -st.tx, st.y, st.reach), shore(st.x, st.z, -st.tz, st.tx, st.y, st.reach)];
-      if (tail.fall && tail.u - st.u < 3) sides = sides.map((v) => Math.min(v ?? 9, W.half * 1.1 - BANK + (tail.u - st.u) * 0.5));
+      let sides = [bank(st.x, st.z, st.tz, -st.tx, st.y, st.reach), bank(st.x, st.z, -st.tz, st.tx, st.y, st.reach)];
+      if (tail.fall && tail.u - st.u < 3) sides = sides.map(([v, e]) => [Math.min(v ?? 9, W.half * 1.1 + (tail.u - st.u) * 0.5), e]);
       return LANES.map((L) => {
-        const s = sides[L < 0 ? 0 : 1], lat = L * (s === null ? OPEN : s + BANK), x = st.x - st.tz * lat, z = st.z + st.tx * lat;
+        const [s, solid] = sides[L < 0 ? 0 : 1], lat = L * (s === null ? OPEN : s), x = st.x - st.tz * lat, z = st.z + st.tx * lat;
         const white = hit ? Math.max(steep, hit.k * Math.exp(-Math.hypot(x - hit.at[0], z - hit.at[1]) / 2.4)) : steep;
-        return vert(x, st.y, z, [lat, st.u], [0, speed], [st.tx, st.tz], [depthAt(x, st.y, z), -st.pond, white, s === null && Math.abs(L) === 1 ? 0 : 1]);
+        return vert(x, st.y, z, [lat, st.u], [0, speed], [st.tx, st.tz, 1], [depthAt(x, st.y, z), -st.pond, white, !solid && Math.abs(L) === 1 ? 0 : 1]);
       });
     }));
     last = tail;
@@ -86,7 +89,7 @@ export function buildRiver({ group, groundAt, water }) {
       const row = [];
       for (let j = 0; j <= SEG; j++) {
         const a = (j / SEG) * Math.PI * 2, c = Math.cos(a), sn = Math.sin(a), px = x + c * rad * k, pz = z + sn * rad * k;
-        row.push(vert(px, y, pz, [-px, pz], [-c * speed, sn * speed], [0, 1], [0.4, 3, white * Math.exp(-rad * k / 1.7), 1 - smooth(0.45, 1, k)]));
+        row.push(vert(px, y, pz, [-px, pz], [-c * speed, sn * speed], [0, 1, 0], [0.4, 3, white * Math.exp(-rad * k / 1.7), 1 - smooth(0.45, 1, k)]));
       }
       return row;
     }));
@@ -94,29 +97,30 @@ export function buildRiver({ group, groundAt, water }) {
 
   // 水簾：從 st 往前拋 thr 公尺、從 yTop 落到 yBot（拋物線），分 n 段；越往下掉越快。兩邊淡出
   const FALL = [-1.1, -0.8, -0.4, 0, 0.4, 0.8, 1.1];
-  const curtain = (st, yTop, yBot, thr, n) => {
+  // pin：底下是不是落在海面上（那一頭不跟著暴漲）
+  const curtain = (st, yTop, yBot, thr, n, pin) => {
     let arc = 0, py = yTop, pf = 0;
     const rows = [];
     for (let k = 0; k <= n; k++) {
       const t = k / n, y = yTop - (yTop - yBot) * t * t, fwd = thr * t, wide = 1 - 0.15 * t;
       arc += Math.hypot(py - y, fwd - pf); py = y; pf = fwd;
       rows.push(FALL.map((L, j) => vert(st.x + st.tx * fwd - st.tz * L * W.half * wide, y, st.z + st.tz * fwd + st.tx * L * W.half * wide,
-        [L * W.half, st.u + arc], [0, 3.5 + 7 * t], [st.tx, st.tz], [0.45, 1, 1, j === 0 || j === FALL.length - 1 ? 0 : 1])));
+        [L * W.half, st.u + arc], [0, 3.5 + 7 * t], [st.tx, st.tz, pin ? 1 - t * t : 1], [0.45, 1, 1, j === 0 || j === FALL.length - 1 ? 0 : 1])));
     }
     sew(rows);
   };
-  for (const run of runs) { const end = run[run.length - 1]; if (end && end.fall) curtain(end, end.y, end.fall.bottom + W.depth, RIVER.fall.throw, 7); }
+  for (const run of runs) { const end = run[run.length - 1]; if (end && end.fall) curtain(end, end.y, end.fall.bottom + W.depth, RIVER.fall.throw, 7, false); }
   // 最後從天窗的缺口沖下去，落在深潭上（落水的地方一圈白沫）
   if (last) {
     const T = RIVER.plunge.throw, hx = last.x + last.tx * T, hz = last.z + last.tz * T;
     splash(hx, hz, 0.34, 3.4, 1.3, 1.6);
-    curtain(last, last.y, 0.3, T, 14);
+    curtain(last, last.y, 0.3, T, 14, true);
   }
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('aPat', new THREE.Float32BufferAttribute(pat, 4));
-  geo.setAttribute('aDir', new THREE.Float32BufferAttribute(dir, 2));
+  geo.setAttribute('aDir', new THREE.Float32BufferAttribute(dir, 3));
   geo.setAttribute('aW', new THREE.Float32BufferAttribute(wv, 4));
   geo.setIndex(idx);
   geo.computeVertexNormals();

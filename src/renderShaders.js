@@ -2,6 +2,7 @@
 import { SEA_FLOOR, ISLANDS } from './terrain.js';
 import { homeGlsl } from './homeGl.js';
 import { TSU, CURL, EBB, VORTEX, SWELL_K, SEA_LV, TSU_H } from './weather.js';
+import { RIVER } from './lowpoly/havenPlan.js';
 
 // 遠景的薄霧：越遠越淡，約 800 公尺外就融進天色裡（更遠的樹和石頭乾脆不畫）
 export const HAZE = 1 / 480;
@@ -1908,18 +1909,23 @@ void main() {
 // 模型見 lowpoly/river3d.js。RIVER_LITE（手機）：倒影只映天空的漸層、波紋少一層
 export const riverVert = /* glsl */ `
 attribute vec4 aPat;   // (紋路座標 x, y（公尺）, 紋路每秒往哪邊流多遠 x, y)
-attribute vec2 aDir;   // 紋路座標的 y 軸在地上是哪個方向（模型座標的 x, z）
+attribute vec3 aDir;   // (紋路座標的 y 軸在地上是哪個方向：模型座標的 x, z; 下大雨暴漲時這一點跟著漲幾成)
 attribute vec4 aW;     // (水深, 種類：0 河面 … −1 池子（中間的值是河面和池子之間）／1 瀑布的水簾／3 落進深潭的那圈白沫, 白沫多不多 0–1, 邊緣淡出 0–1)
 varying vec3 vWorld;
 varying vec4 vPat;
 varying vec2 vDir;
 varying vec4 vW;
 varying vec3 vNrm;
+uniform float uFlood;   // 下大雨暴漲了幾成（0–1）
 void main() {
-  vec4 w = modelMatrix * vec4(position, 1.0);
+  // 暴漲：水面整個抬高、流得更快，瀑布的水簾變寬
+  float up = uFlood * ${RIVER.flood.rise.toFixed(2)} * aDir.z;
+  vec3 pos = position + vec3(0.0, up, 0.0);
+  if (aW.y > 0.5 && aW.y < 1.5) pos.xz += vec2(-aDir.y, aDir.x) * aPat.x * ${RIVER.flood.wide.toFixed(2)} * uFlood;
+  vec4 w = modelMatrix * vec4(pos, 1.0);
   vWorld = w.xyz;
-  vPat = aPat;
-  vW = aW;
+  vPat = vec4(aPat.xy, aPat.zw * (1.0 + ${RIVER.flood.flow.toFixed(2)} * uFlood));
+  vW = vec4(aW.x + up, aW.yzw);
   vDir = (modelMatrix * vec4(aDir.x, 0.0, aDir.y, 0.0)).xz;
   vNrm = mat3(modelMatrix) * normal;
   gl_Position = projectionMatrix * viewMatrix * w;
@@ -1932,6 +1938,7 @@ ${common}
 ${shadowRecv}
 uniform sampler2D uFoamTex;
 uniform float uPixelAngle;
+uniform float uFlood;
 varying vec3 vWorld;
 varying vec4 vPat;
 varying vec2 vDir;
@@ -1953,9 +1960,10 @@ vec2 rvSlope(vec2 p, vec2 sc) {
 }
 
 void main() {
-  float depth = vW.x, kind = vW.y, churn = vW.z;
+  float depth = vW.x, kind = vW.y;
   bool fall = kind > 0.5 && kind < 1.5, splash = kind > 2.5;
   float pond = splash ? 1.0 : clamp(-kind, 0.0, 1.0);   // 在池子裡幾成：水紋不拉長、沒有順流的白絲
+  float churn = min(vW.z + uFlood * (0.3 - 0.15 * pond), 1.0 + 0.4 * step(0.5, kind));     // 暴漲的水又急又亂，到處翻白
   vec3 toCam = cameraPosition - vWorld;
   float dist = length(toCam);
   vec3 V = toCam / dist;
@@ -1995,9 +2003,10 @@ void main() {
   // ---- 水體顏色：跟海邊的淺灘一樣，透亮的土耳其綠，深一點的地方偏青藍 ----
   vec3 shallow = mix(vec3(0.10, 0.74, 0.64), vec3(0.11, 0.36, 0.37), 0.8 * uGloom);
   vec3 midsea = mix(vec3(0.015, 0.42, 0.64), vec3(0.02, 0.17, 0.29), 0.8 * uGloom);
-  float dcol = max(depth, 0.0) * 1.9;   // 山澗的水帶著泡泡，比同樣深的海水不透一點
+  float dcol = max(depth, 0.0) * (1.9 + 1.6 * uFlood);   // 山澗的水帶著泡泡，比同樣深的海水不透一點
   float dz = 1.0 - exp(-dcol * (0.20 + 0.30 * uGloom));
   vec3 scatter = mix(shallow, midsea, smoothstep(0.0, 0.5, dz));
+  scatter = mix(scatter, vec3(0.30, 0.36, 0.30), 0.6 * uFlood);   // 暴漲的水夾著泥沙，濁濁的灰綠（跟巨浪沖上岸的水同一個意思）
   scatter *= (0.40 * uAmbient + 0.75 * sunUp * sunVis * mix(vec3(lv), uSunCol, 0.6)) * (1.0 - 0.40 * glow);
 
   // ---- 太陽的反光：一顆一顆清楚的亮點 ----

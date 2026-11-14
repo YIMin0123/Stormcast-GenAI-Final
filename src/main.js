@@ -571,7 +571,7 @@ const shared = {
   uHullSize: { value: Array.from({ length: 3 }, () => new THREE.Vector3(1, 1, 0)) },
   uDanger: { value: dangerTex }, uTsuK: { value: tsuKTex }, uStorm: { value: 0 }, uTsu: { value: new THREE.Vector4(0, 1, 0, 0) }, uTsu2: { value: new THREE.Vector2() }, uGloom: { value: 0 },
   uSunCol: { value: new THREE.Vector3(1, 0.93, 0.8) }, uAmbient: { value: new THREE.Vector3(1, 1, 1) },
-  uDay: { value: 1 }, uDusk: { value: 0 }, uFog: { value: 0 }, uHazeK: { value: 1 }, uFlash: { value: 0 }, uFlashDir: { value: new THREE.Vector3(0, 1, 0) }, uRain: { value: 0 }, uCloudMap: { value: null }, uPaint: { value: new THREE.Vector3(0, 1, 0) }, uCloudT: { value: new THREE.Vector2() }, uSwell: { value: 0 }, uSurge: { value: 0 },
+  uDay: { value: 1 }, uDusk: { value: 0 }, uFog: { value: 0 }, uHazeK: { value: 1 }, uFlash: { value: 0 }, uFlashDir: { value: new THREE.Vector3(0, 1, 0) }, uRain: { value: 0 }, uCloudMap: { value: null }, uPaint: { value: new THREE.Vector3(0, 1, 0) }, uCloudT: { value: new THREE.Vector2() }, uSwell: { value: 0 }, uSurge: { value: 0 }, uFlood: { value: 0 },
   uVortex: { value: Array.from({ length: 3 }, () => new THREE.Vector4()) },
   uLamp: { value: Array.from({ length: 8 }, () => new THREE.Vector3()) },
   uBlob: { value: new THREE.Vector3() }, uWet: { value: 0 }, uRainbow: { value: 0 },
@@ -1019,13 +1019,14 @@ function updateCave(dt) {
 
 // 山澗小河：人踩進河道就被水沖著往下滑——順著河道走、慢慢被帶回河中間，一路滑過瀑布，最後從天窗的缺口掉進深潭。
 // 已經在滑的人飛過瀑布、還在半空中的時候照樣往前帶（不然會直直掉在瀑布腳下）
-let riverOn = false;
+// 下大雨時小河暴漲（flood：漲了幾成）：水面抬高、流得更急更濁，沖人也更快；雨停了慢慢退。數字在 havenPlan.js 的 RIVER.flood
+let riverOn = false, flood = 0, floodTest = null;
 function riverRide(dt) {
   if (player.boat || drown) { riverOn = false; return; }
   const [vx, vz] = havenToLocal(player.x, player.z), q = riverAt(vx, vz), air = player.h > 0, R = RIVER.slide;
   riverOn = !!q && q.s > R.from && q.d < RIVER.flat + (riverOn && air ? 3 : 0.3) && player.y < q.y + (riverOn ? 14 : 0.9) && player.y > q.y - 2.5;
   if (!riverOn) return;
-  const lx = q.tx * R.speed + q.tz * q.lat * R.center, lz = q.tz * R.speed - q.tx * q.lat * R.center;
+  const sp = R.speed * (1 + RIVER.flood.push * flood), lx = q.tx * sp + q.tz * q.lat * R.center, lz = q.tz * sp - q.tx * q.lat * R.center;
   const [ax, az] = HAVEN.toWorld(vx, vz), [bx, bz] = HAVEN.toWorld(vx + lx, vz + lz);
   walker.feet = player.y; walker.air = air;
   player.drift((bx - ax) * dt, (bz - az) * dt, walkWorld);
@@ -1191,7 +1192,7 @@ const fish = new FishWorld({
 });
 // 釣魚：這裡只管手感和畫面。魚什麼時候咬、是哪條、多大、值多少、算不算釣起來，都由伺服器決定
 const fishing = new Fishing({
-  player, scene, isWater, surfaceY: (x, z) => riverLevel(x, z) ?? waterY(x, z), splash, toast,
+  player, scene, isWater, surfaceY: (x, z) => { const r = riverLevel(x, z); return r === null ? waterY(x, z) : r + RIVER.flood.rise * flood; }, splash, toast,
   net: {
     cast: (x, z) => net.send({ t: 'cast', x: r2(x), z: r2(z) }),
     hook: () => net.send({ t: 'hook' }),
@@ -2270,7 +2271,7 @@ function updatePrompt() {
 const audio = new OceanAudio();
 // 魚群熱點、漂流寶箱的畫面（什麼時候有、在哪裡，照伺服器說的）
 const havenFx = makeHavenFx({
-  scene, shade, splash, waterY, mist: (x, y, z, vx, vy, vz, life, size) => spray.emit(x, y, z, vx, vy, vz, life, size),
+  scene, shade, splash, waterY, flood: () => flood, mist: (x, y, z, vx, vy, vz, life, size) => spray.emit(x, y, z, vx, vy, vz, life, size),
   // 地面多高：大港灣島照畫出來的那張地面，其他地方照海床
   groundAt: (x, z) => { const [vx, vz] = havenToLocal(x, z), VG = HAVEN_GROUND, vh = VG.size / 2 - 2; return HAVEN_LAND.at && Math.abs(vx - VG.cx) < vh && Math.abs(vz - VG.cz) < vh ? HAVEN_LAND.at(vx, vz) : bedAt(x, z); },
   onHot: (h) => toast(`海上出現魚群（海鳥在上空盤旋），離你約 ${Math.round(Math.hypot(h.x - player.x, h.z - player.z) / 10) * 10} 公尺。按 M 看地圖`),
@@ -2665,6 +2666,11 @@ function updateWeather(dt) {
   tideNow = tideAt(climate.day, climate.hour);
   shared.uTide.value = tideNow; shared.uReflY.value = tideNow;
   rainNow = Math.max(sea.rain, climate.rain);
+  {
+    const FL = RIVER.flood, fk = clamp((rainNow - FL.from) / (FL.full - FL.from), 0, 1), want = floodTest ?? fk * fk * (3 - 2 * fk);
+    flood += (want - flood) * (1 - Math.exp(-dt / (want > flood ? FL.up : FL.down) * 3));   // 約 up（down）秒漲（退）到差不多
+    shared.uFlood.value = flood;
+  }
   // 下雨的時候天一定是陰的：雨一開始下，雲就蓋滿整片天（不然會是藍天白雲、晚上滿天星星卻在下雨）
   const rainSky = clamp((rainNow - 0.02) / 0.23, 0, 1) * (0.78 + 0.22 * clamp(rainNow / 0.6, 0, 1));
   gloom = Math.max(sea.gloom, climate.cloud, rainSky);
@@ -3854,7 +3860,7 @@ window.__sim = {
   updatePrompt, N, DX, L, ISLANDS, camera, scene, water, terrain, scenery, harbor, shared, spray, renderer,
   get mode() { return mode; }, NF, sun, placeSun, WIND, rays, bloom, aoPass, camBlockers, SIGHT, grass, SOLIDS, rockAt, composer, shallow, shallowNear, target, playerWater, updateSwim, toggleMap, drawMap,
   get stamina() { return stamina; }, set stamina(v) { stamina = v; }, get drown() { return drown; }, get mapOpen() { return mapOpen; },
-  set cam(v) { debugCam = v; }, tsuKAt, BOLLARDS, nearBollard, surgeAt, hullBlocked, boatGround,
+  set cam(v) { debugCam = v; }, get flood() { return flood; }, set flood(v) { floodTest = v; if (v !== null) flood = v; }, tsuKAt, BOLLARDS, nearBollard, surgeAt, hullBlocked, boatGround,
   // 量測實際每幀成本（毫秒）：連續算 n 幀並強制 GPU 完成
   bench(n = 20) {
     const gl = renderer.getContext(), px = new Uint8Array(4);

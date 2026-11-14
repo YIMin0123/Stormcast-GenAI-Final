@@ -6,12 +6,14 @@
 import * as THREE from 'three';
 import { CHEST_SPOTS_W, CHESTS } from './extrasPlan.js';
 import { riverHits } from './lowpoly/havenShape.js';
+import { RIVER } from './lowpoly/havenPlan.js';
 import { HAVEN } from './frame.js';
 import { TOUCH } from './touch.js';
 
 // scene 場景；shade(物件)：照遊戲的規則設定投影；splash(x, y, z, 幾滴)：水花；waterY(x, z)：海面高度；
-// groundAt(x, z)：地面（或海底）高度；mist(x, y, z, 往哪邊 vx, vy, vz, 活幾秒, 多大)：噴一顆水珠；onHot(熱點)：冒出新的魚群時呼叫
-export function makeHavenFx({ scene, shade, splash, mist, waterY, groundAt, onHot }) {
+// groundAt(x, z)：地面（或海底）高度；mist(x, y, z, 往哪邊 vx, vy, vz, 活幾秒, 多大)：噴一顆水珠；
+// flood()：小河暴漲了幾成（0–1）；onHot(熱點)：冒出新的魚群時呼叫
+export function makeHavenFx({ scene, shade, splash, mist, flood, waterY, groundAt, onHot }) {
   const group = new THREE.Group();
   scene.add(group);
   const lam = (c) => new THREE.MeshLambertMaterial({ color: c, flatShading: true });
@@ -95,10 +97,10 @@ export function makeHavenFx({ scene, shade, splash, mist, waterY, groundAt, onHo
       // 瀑布的水花：落水的那一點往四周、往上濺，沖進深潭的那一道濺得比較高、比較散
       for (const h of hits) {
         if ((cam.x - h.x) ** 2 + (cam.z - h.z) ** 2 > SPLASH_NEAR * SPLASH_NEAR) { h.acc = 0; continue; }
-        const k = h.big ? 1.5 : 1;
-        for (h.acc += Math.min(dt, 0.05) * RATE * k; h.acc >= 1; h.acc--) {
+        const fl = flood(), k = (h.big ? 1.5 : 1) * (1 + 0.5 * fl), hy = h.y + (h.big ? 0 : RIVER.flood.rise * fl);   // 暴漲時濺得更多、更高
+        for (h.acc += Math.min(dt, 0.05) * RATE * k * (1 + fl); h.acc >= 1; h.acc--) {
           const a = Math.random() * 6.28, r = Math.sqrt(Math.random()) * 1.5 * k, v = (0.6 + Math.random() * 1.8) * k;
-          mist(h.x + Math.cos(a) * r, h.y + 0.05, h.z + Math.sin(a) * r, Math.cos(a) * v, (1.6 + Math.random() * 2.6) * k, Math.sin(a) * v, 0.45 + Math.random() * 0.55, 0.22 + Math.random() * 0.4 * k);
+          mist(h.x + Math.cos(a) * r, hy + 0.05, h.z + Math.sin(a) * r, Math.cos(a) * v, (1.6 + Math.random() * 2.6) * k, Math.sin(a) * v, 0.45 + Math.random() * 0.55, 0.22 + Math.random() * 0.4 * k);
         }
       }
       for (const c of chests.values()) if (c.float) { c.g.position.y = waterY(c.x, c.z) - 0.22; c.g.rotation.z = Math.sin(time * 1.3 + c.k) * 0.08; }
