@@ -1023,18 +1023,18 @@ function updateCave(dt) {
 }
 
 // 山澗小河：人踩進河道就被水沖著往下滑——順著河道走、慢慢被帶回河中間，一路滑過瀑布，最後從天窗的缺口掉進深潭。
-// 已經在滑的人飛過瀑布、還在半空中的時候照樣往前帶（不然會直直掉在瀑布腳下）
+// 人離開河床後由 player.js 保留離開時的水平速度，不再每幀施加水流推力。
 // 下大雨時小河暴漲（flood：漲了幾成）：水面抬高、流得更急更濁，沖人也更快；雨停了慢慢退。數字在 havenPlan.js 的 RIVER.flood
 let riverOn = false, flood = 0, floodTest = null;
 function riverRide(dt) {
-  if (player.boat || drown) { riverOn = false; return; }
+  if (player.boat || drown || player.fly) { riverOn = false; player.flowVX = player.flowVZ = 0; return; }
   const [vx, vz] = havenToLocal(player.x, player.z), q = riverAt(vx, vz), air = player.h > 0, R = RIVER.slide;
   riverOn = !!q && q.s > R.from && q.d < RIVER.flat + (riverOn && air ? 3 : 0.3) && player.y < q.y + (riverOn ? 14 : 0.9) && player.y > q.y - 2.5;
-  if (!riverOn) return;
+  if (!riverOn || air) { player.flowVX = player.flowVZ = 0; return; }
   const sp = R.speed * (1 + RIVER.flood.push * flood), lx = q.tx * sp + q.tz * q.lat * R.center, lz = q.tz * sp - q.tx * q.lat * R.center;
   const [ax, az] = HAVEN.toWorld(vx, vz), [bx, bz] = HAVEN.toWorld(vx + lx, vz + lz);
   walker.feet = player.y; walker.air = air;
-  player.drift((bx - ax) * dt, (bz - az) * dt, walkWorld);
+  player.riverDrift(bx - ax, bz - az, dt, walkWorld);
   walker.feet = null;
 }
 

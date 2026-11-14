@@ -8,6 +8,7 @@ const WALK = 3.2, RUN = 6.0;
 const SWIM = 1.6, SWIM_FAST = 2.3;
 const GRAVITY = 18, JUMP = 6.0;   // 跳起來約 1 公尺高
 const JUMP_SWIM = 7.2;            // 從水裡跳：要先把泡在水裡的身體拔出來，所以要更用力
+const AIR_STEER = 2, AIR_DRAG = 0.08; // 空中能逐漸轉向；鬆開方向時只受少量空氣阻力
 const STEP = 0.6;                 // 走路能直接踏上去的高度
 const CLIMB = 1.5;                // 從岸邊攀上船舷的高度
 const CLIMB_SWIM = 2.7;           // 從水裡攀上船
@@ -26,6 +27,9 @@ export class Player {
     this.lx = 0; this.lz = 0;              // 在船上時的船身座標
     this.base = 0;                         // 腳下支撐面的高度（游泳時是水面下 SUBMERGE 的地方）
     this.h = 0; this.vy = 0;               // 離支撐面的高度與垂直速度（h > 0 = 在空中）
+    this.airVX = 0; this.airVZ = 0;        // 離地時保留的水平速度（世界座標）
+    this.groundVX = 0; this.groundVZ = 0;  // 這一幀人物自己在地面移動的速度
+    this.flowVX = 0; this.flowVZ = 0;      // 腳下河水的水平速度
     this.off = new THREE.Vector3();        // 跨步、踏階時用來平滑畫面的偏移
     this.pos = new THREE.Vector3();        // 畫面上的位置（鏡頭跟這個）
     this.phase = 0;
@@ -87,6 +91,7 @@ export class Player {
       this.onWater = !!(s && s.swim);
     }
     this.h = 0; this.vy = 0;
+    this.airVX = this.airVZ = this.groundVX = this.groundVZ = this.flowVX = this.flowVZ = 0;
     this.y = this.base;
     this.off.set(0, 0, 0);
     this.pos.set(this.x, this.y, this.z);
@@ -184,6 +189,19 @@ export class Player {
   // 被水流帶著走（漩渦、水龍捲）
   drift(dx, dz, world) { this._move(dx, dz, world); }
 
+  // 河水直接推動站在河床上的人；離開邊緣時把水流和走路速度帶進空中。
+  riverDrift(vx, vz, dt, world) {
+    this.flowVX = vx; this.flowVZ = vz;
+    const grounded = this.h <= 0;
+    this._move(vx * dt, vz * dt, world);
+    if (grounded && this.h > 0) this._launch();
+  }
+
+  _launch() {
+    this.airVX = this.groundVX + this.flowVX;
+    this.airVZ = this.groundVZ + this.flowVZ;
+  }
+
   // dirX/dirZ：想走的方向（世界座標，可為 0）
   // world.ground(x,z,under)：地面或棧板高度（很大的值 = 牆）；under = true 時不算棧板，只看底下的地面
   // world.water(x,z)：水面高度；world.boats：可以走上去的船
@@ -211,22 +229,48 @@ export class Player {
     }
     const swim = this.swim = this.onWater && this.h <= 0 && !(fly && rise > 0);
 
+    const airborne = this.h > 0 && !fly && !seat;
+    const startX = this.x, startZ = this.z;
+    this.groundVX = this.groundVZ = 0;
     const len = Math.hypot(dirX, dirZ);
     this.moving = len > 0.01;
-    if (this.moving) {
+    let dx = 0, dz = 0;
+    if (airborne) {
+      if (this.moving) {
+        const v = run ? RUN : WALK, steer = 1 - Math.exp(-AIR_STEER * dt);
+        this.airVX += (dirX / len * v - this.airVX) * steer;
+        this.airVZ += (dirZ / len * v - this.airVZ) * steer;
+      }
+      const drag = Math.exp(-AIR_DRAG * dt);
+      this.airVX *= drag; this.airVZ *= drag;
+      dx = this.airVX * dt; dz = this.airVZ * dt;
+    } else if (this.moving) {
       let v = fly ? (this.flyDash ? this.flyFast : this.flySpeed) : swim ? (run ? SWIM_FAST : SWIM) : (run ? RUN : WALK);
       if (fly) { /* 飛行：不管水、不管手上拿什麼 */ } else if (swim && this.carry) v *= 0.7;                                                        // 捧著東西游比較慢
       else if (!swim && !this.boat && this.base < world.water(this.x, this.z) - 0.45) v *= 0.6; // 涉水
-      const sp = v * dt, dx = (dirX / len) * sp, dz = (dirZ / len) * sp;
+      dx = (dirX / len) * v * dt; dz = (dirZ / len) * v * dt;
+    }
+    const sp = Math.hypot(dx, dz);
+    if (sp > 0) {
       // 高速飛行一幀可能跨越薄牆，分段檢查整條路徑。
       const steps = Math.max(1, Math.ceil(sp / 0.15)), sx = dx / steps, sz = dz / steps;
       for (let i = 0; i < steps; i++) if (!this._move(sx, sz, world)) {
         // 被擋住就沿著邊滑：在船上沿船的縱橫向分解，在陸地沿東西南北分解
         const ax = this.boat ? Math.cos(this.boat.heading) : 1, az = this.boat ? Math.sin(this.boat.heading) : 0;
         const a = sx * ax + sz * az, b = -sx * az + sz * ax;
-        this._move(a * ax, a * az, world);
-        this._move(-b * az, b * ax, world);
+        const along = this._move(a * ax, a * az, world), across = this._move(-b * az, b * ax, world);
+        if (airborne) {
+          const va = this.airVX * ax + this.airVZ * az, vb = -this.airVX * az + this.airVZ * ax;
+          this.airVX = (along ? va * ax : 0) - (across ? vb * az : 0);
+          this.airVZ = (along ? va * az : 0) + (across ? vb * ax : 0);
+        }
       }
+    }
+    if (!airborne && dt > 0 && !fly) {
+      this.groundVX = (this.x - startX) / dt; this.groundVZ = (this.z - startZ) / dt;
+      if (this.h > 0) this._launch();
+    }
+    if (this.moving) {
       // 身體平滑轉向行進方向
       let d = Math.atan2(dirZ, dirX) - this.yaw;
       d = Math.atan2(Math.sin(d), Math.cos(d));
@@ -237,6 +281,7 @@ export class Player {
     if (fly) {
       // 飛行：Shift 上升、Q 下降，放開就停在半空；往上碰到頭頂的東西（棧板底、洞頂）不管，往下碰到地面就站著
       this.vy = 0;
+      this.airVX = this.airVZ = 0;
       this.h = Math.min(Math.max(this.h + rise * this.flyVert * dt, 0), Math.max(0, this.flyMaxH - this.base));
       this.y = this.base + this.h;
       this.run = false;
@@ -245,12 +290,13 @@ export class Player {
     }
     // 跳躍與重力。游泳時也能跳：用力一蹬，整個人竄出水面（腳離水面約半公尺）
     if (jump && swim && !this.boat && world.ground(this.x, this.z) > this.base + 1.5) jump = false;   // 在棧橋底下游：頭上是棧板，跳不起來
-    if (jump && this.h <= 0) { this.vy = swim ? JUMP_SWIM : JUMP; this.h = 1e-3; }
+    if (jump && this.h <= 0) { this._launch(); this.vy = swim ? JUMP_SWIM : JUMP; this.h = 1e-3; }
     if (this.h > 0) {
       this.vy -= GRAVITY * dt;
       this.h += this.vy * dt;
       if (this.h <= 0) { this.h = 0; this.vy = 0; }
     }
+    if (this.h <= 0) this.airVX = this.airVZ = 0;
     this.y = this.base + this.h;
     this.run = run;
     this.animate(dt);

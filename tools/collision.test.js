@@ -44,6 +44,56 @@ test('高速飛行不會在一幀內穿過薄牆', () => {
   assert.ok(p.x < 1, `穿過牆壁：x=${p.x}`);
 });
 
+function fallingPlayer(x = -0.1) {
+  const p = new Player(x, 0, 0);
+  p.base = p.y = 10;
+  p.animate = () => {};
+  return p;
+}
+const cliff = { boats: [], water: () => -20, ground: (x) => x < 0 ? 10 : 0 };
+
+test('跑出斷崖後放開方向，人物仍帶著水平速度下落', () => {
+  const p = fallingPlayer();
+  p.update(0.05, 1, 0, true, false, cliff);
+  assert.ok(p.h > 0 && p.airVX > 5);
+  const x = p.x, y = p.y;
+  p.update(0.05, 0, 0, false, false, cliff);
+  assert.ok(p.x > x + 0.25 && p.y < y);
+});
+
+test('水流滑出瀑布後，不再受河道判定限制仍繼續向前', () => {
+  const p = fallingPlayer();
+  p.riverDrift(8.5, 0, 0.05, cliff);
+  assert.ok(p.h > 0 && p.airVX === 8.5);
+  p.flowVX = p.flowVZ = 0;
+  const x = p.x;
+  p.update(0.05, 0, 0, false, false, cliff);
+  assert.ok(p.x > x + 0.4);
+});
+
+test('跳起後可逐漸轉向，放開按鍵仍保有慣性', () => {
+  const p = fallingPlayer();
+  const floor = { boats: [], water: () => -20, ground: () => 10 };
+  p.update(0.05, 1, 0, true, true, floor);
+  assert.ok(p.h > 0 && p.airVX > 5);
+  p.update(0.05, 0, 1, true, false, floor);
+  assert.ok(p.airVX > 0 && p.airVZ > 0);
+  const x = p.x, z = p.z;
+  p.update(0.05, 0, 0, false, false, floor);
+  assert.ok(p.x > x && p.z > z);
+});
+
+test('空中慣性碰牆會停下，落地後不會繼續滑動', () => {
+  const p = fallingPlayer();
+  p.riverDrift(8.5, 0, 0.05, cliff);
+  const wall = { ...cliff, ground: (x) => x >= 0.8 && x < 1 ? 99 : cliff.ground(x) };
+  for (let i = 0; i < 30; i++) p.update(0.05, 0, 0, false, false, wall);
+  assert.ok(p.x < 0.8 && p.h === 0 && p.airVX === 0);
+  const x = p.x;
+  p.update(0.05, 0, 0, false, false, wall);
+  assert.equal(p.x, x);
+});
+
 test('大港每間小屋的門前平台有模型高度，平台外沒有碰撞', () => {
   const ground = (x, z) => x * 0.01 + z * 0.02;
   for (const [x, z, w, d, , turn] of PORT.houses) {
