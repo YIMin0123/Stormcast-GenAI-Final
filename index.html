@@ -14,16 +14,18 @@
   <style>
     /* ---- 介面風格：日系清爽海洋。水藍色的卡片與按鈕（不用白底）、深一點的海藍是「選中／開著」、珊瑚橘是最重要的那顆按鈕 ---- */
     :root {
-      --paper: rgba(191, 232, 248, 0.94);      /* 卡片底色：水藍 */
-      --paper-soft: rgba(191, 232, 248, 0.84); /* 浮在畫面上的小東西（聊天、按鍵提示） */
-      --btn: #d6f1fb;                          /* 卡片上的按鈕、輸入框：淺一點的水藍 */
+      --paper: rgba(191, 232, 248, 0.74);      /* 卡片底色：水藍，帶透明度，看得到後面的畫面 */
+      --paper-soft: rgba(191, 232, 248, 0.62); /* 浮在畫面上的小東西（聊天、按鍵提示） */
+      --btn: rgba(214, 241, 251, 0.6);         /* 卡片上的按鈕、輸入框：淺一點的水藍 */
       --edge: #8fd0ea;                         /* 卡片、按鈕的外框 */
       --ink: #1f3a50;                          /* 主要文字 */
       --ink-2: #3f6178;                        /* 次要文字、說明 */
       --line: rgba(29, 111, 159, 0.22);        /* 分隔線、按鈕外框 */
       --sea: #2c8fc9;                          /* 海藍：開著、選中、進度 */
       --sea-d: #1d6f9f;
-      --sea-l: #b3e2f5;                        /* 按鈕滑過去 */
+      --sea-l: rgba(179, 226, 245, 0.75);       /* 按鈕滑過去 */
+      --sea-a: rgba(44, 143, 201, 0.82);       /* 選中、開著的底色（帶透明度） */
+      --coral-a: rgba(255, 127, 92, 0.86);     /* 主要按鈕的底色（帶透明度） */
       --coral: #ff7f5c;                        /* 珊瑚橘：主要按鈕、警告 */
       --coral-d: #e2603d;
       --sun: #ffc23c;                          /* 陽光黃：對準了、蓄力 */
@@ -68,13 +70,13 @@
     select { padding: 5px 8px; border-radius: 999px; border: 2px solid var(--line); background: var(--btn); color: var(--ink); font: inherit; }
     /* 開關：亮起來（海藍）是開 */
     #sound, .sw { min-width: 54px; padding: 4px 12px; }
-    #sound.on, .sw.on { background: var(--sea); border-color: var(--sea); color: #fff; }
+    #sound.on, .sw.on { background: var(--sea-a); border-color: var(--sea); color: #fff; }
     /* 幾選一：亮起來的那格是現在選的 */
     .seg { display: flex; }
     .seg button { padding: 4px 13px; border-radius: 0; margin-left: -2px; }
     .seg button:first-child { border-radius: 999px 0 0 999px; margin-left: 0; }
     .seg button:last-child { border-radius: 0 999px 999px 0; }
-    .seg button.on { background: var(--sea); border-color: var(--sea); color: #fff; position: relative; }
+    .seg button.on { background: var(--sea-a); border-color: var(--sea); color: #fff; position: relative; }
     /* 設定裡的「畫質」頁：打開時蓋掉其他區塊 */
     #gfxPage { display: none; }
     #panel.gfx #gfxPage { display: block; }
@@ -118,7 +120,7 @@
     #hClock { color: var(--ink); }
     #hWind { color: var(--ink); }
     #hWind svg { width: 15px; height: 15px; color: var(--sea); }
-    #hMoneyBox { background: var(--sun); color: #5a3b00; border-radius: 999px; padding: 1px 10px 1px 6px; margin-right: -6px; }
+    #hMoneyBox { background: rgba(255, 194, 60, 0.85); color: #5a3b00; border-radius: 999px; padding: 1px 10px 1px 6px; margin-right: -6px; }
     #hMoneyBox i[data-ic] { color: #8a5a00; }
     #hBait[hidden] { display: none; }
     /* 人在船上時：左上角（設定鈕右邊）多一條船況：耐久、燃油、船速 */
@@ -159,7 +161,7 @@
     #mapCv { display: block; width: min(560px, 74vh); height: min(560px, 74vh); border-radius: 10px; }
     #mapNote { margin-top: 8px; text-align: center; font-size: 13px; color: var(--ink-2); }
     #mapX { position: absolute; top: -12px; right: -12px; width: 40px; height: 40px; padding: 0; font-size: 18px; line-height: 1;
-      background: var(--coral); border-color: var(--btn); color: #fff; box-shadow: var(--shadow); }
+      background: var(--coral-a); border-color: var(--btn); color: #fff; box-shadow: var(--shadow); }
     #mapX:hover { background: var(--coral-d); }
     /* 進遊戲前：填名字、挑房間。背景是半透明的，看得到後面的港口。卡片比畫面高時可以捲，不會被切掉 */
     #menu, #net { position: fixed; inset: 0; display: none; padding: 12px; box-sizing: border-box; overflow-y: auto;
@@ -176,8 +178,8 @@
       border: 2px solid var(--line); background: var(--btn); color: var(--ink); text-align: center; outline: none; }
     #nameInput:focus { border-color: var(--sea); }
     #nameGo { width: 100%; margin-top: 12px; padding: 10px; font-size: 17px; letter-spacing: 2px;
-      background: var(--coral); border-color: var(--coral); color: #fff; box-shadow: 0 4px 0 var(--coral-d); }
-    #nameGo:hover { background: #ff8f70; }
+      background: var(--coral-a); border-color: var(--coral); color: #fff; box-shadow: 0 4px 0 var(--coral-d); }
+    #nameGo:hover { background: rgba(255, 143, 112, 0.92); }
     #nameGo:active { transform: translateY(2px); box-shadow: 0 2px 0 var(--coral-d); }
     #nameGo:disabled { opacity: 0.6; cursor: default; }
     #nameMsg, #lobbyMsg { min-height: 18px; margin-top: 10px; font-size: 13px; color: var(--coral-d); }
@@ -190,7 +192,7 @@
     #lobbyBack { margin-top: 12px; padding: 4px 10px; font-size: 13px; color: var(--ink-2); background: none; border-color: transparent; text-decoration: underline; }
     #net { z-index: 50; }
     #netMsg { margin: 0; color: var(--ink); font-size: 15px; line-height: 1.7; }
-    #netRetry { display: none; margin-top: 14px; background: var(--sea); border-color: var(--sea); color: #fff; }
+    #netRetry { display: none; margin-top: 14px; background: var(--sea-a); border-color: var(--sea); color: #fff; }
     /* 聊天室：左下角。平常只有最近幾則，按 Enter 打開輸入框 */
     #chat { position: fixed; left: 12px; bottom: 12px; width: min(380px, calc(100vw - 24px)); font-size: 13px; z-index: 20; pointer-events: none; }
     #chatLog { max-height: 170px; overflow: hidden; display: flex; flex-direction: column; gap: 4px; }
@@ -219,9 +221,9 @@
     #touch button { pointer-events: auto; touch-action: none; }
     .tBtn { position: absolute; width: 66px; height: 66px; padding: 0; border-radius: 50%; color: var(--ink);
       display: flex; align-items: center; justify-content: center;
-      background: rgba(191, 232, 248, 0.88); border: 2.5px solid var(--edge); box-shadow: 0 3px 0 rgba(20, 60, 90, 0.2), 0 6px 14px rgba(10, 30, 50, 0.22); }
-    .tBtn:hover { background: rgba(191, 232, 248, 0.88); }
-    .tBtn.on { background: var(--sea); color: #fff; transform: translateY(2px); box-shadow: 0 1px 0 rgba(20, 60, 90, 0.2); }
+      background: rgba(191, 232, 248, 0.6); border: 2.5px solid var(--edge); box-shadow: 0 3px 0 rgba(20, 60, 90, 0.2), 0 6px 14px rgba(10, 30, 50, 0.22); }
+    .tBtn:hover { background: rgba(191, 232, 248, 0.6); }
+    .tBtn.on { background: var(--sea-a); color: #fff; transform: translateY(2px); box-shadow: 0 1px 0 rgba(20, 60, 90, 0.2); }
     #tAct { right: calc(18px + env(safe-area-inset-right)); bottom: 100px; }
     #tAct.hit { border-color: var(--sun); box-shadow: 0 0 0 4px rgba(255, 194, 60, 0.45), 0 6px 14px rgba(10, 30, 50, 0.22); }
     #tFish { right: calc(98px + env(safe-area-inset-right)); bottom: 30px; width: 76px; height: 76px; }
