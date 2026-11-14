@@ -61,6 +61,8 @@ export function makeSeascape(mat) {
   let tick = false;
   return {
     groups, rocks,
+    // 大港碼頭的繫纜樁（世界座標）
+    bollards: haven.bollards.map((b) => { const [x, z] = HAVEN.toWorld(b.x, b.z); return { x, z, y: b.y }; }),
     beaconLamp: (() => { const [x, z] = REEF_FRAMES.beacon.toWorld(beacon.lamp[0], beacon.lamp[2]); return { x, y: beacon.lamp[1], z }; })(),
     update(time, cam) {
       beacon.bulb.visible = (time % F.period) < F.on;

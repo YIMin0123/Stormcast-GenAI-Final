@@ -2,7 +2,8 @@
 // 這個檔案只有數字，不碰畫面：伺服器（分配停船格、檢查玩家是不是真的站在商店前）和瀏覽器（蓋模型、判斷互動）共用同一份。
 // 港口的設計圖在 lowpoly/harborPlan.js（木造漁港）：這裡的數字都從那份來，不另外寫死。
 import { BOAT_TYPES } from './boatdata.js';
-import { toWorld, toLocal, headingToWorld } from './frame.js';
+import { toWorld, toLocal, headingToWorld, HAVEN } from './frame.js';
+import { PORT } from './lowpoly/havenPlan.js';
 import * as H from './lowpoly/harborPlan.js';
 import { onBoards, pierDist } from './lowpoly/homeShape.js';
 
@@ -136,3 +137,7 @@ export const HARBOR_CENTER_W = homeW({ x: H.SEG1.cx, z: H.SEG1.cz });
 export const SHOP_FRONT_W = homeW({ x: (S.x0 + S.open.x1) / 2, z: S.z1 + 1.5 });
 // 停船位置牌：看板中心（世界座標）
 export const BERTH_BOARD_W = homeW({ x: BOARDS.berth.x, z: BOARD_Z });
+
+// 大港灣島：吊鉤大秤收購站、碼頭加油柱在世界的哪裡（伺服器檢查人有沒有站在旁邊用）
+const havenW = (p) => { const [x, z] = HAVEN.toWorld(p.x, p.z); return { x, z }; };
+export const HAVEN_SELL_W = havenW(PORT.sell), HAVEN_PUMP_W = havenW(PORT.pump);

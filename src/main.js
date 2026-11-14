@@ -12,8 +12,9 @@ import { WORLD, THROW } from './config.js';
 import { HOME_U, placeInHome } from './homeGl.js';
 import { HOME_YAW, toWorld, toLocal, headingToWorld, havenToLocal, HAVEN } from './frame.js';
 import { makeSeascape, HAVEN_LAND, HAVEN_GROUND } from './haven.js';
-import { caveUnder, caveCeil, caveFloor, caveRock, havenLow, nearCave, caveGate, CAVE_AXIS, skyEdge, havenDeck, riverAt } from './lowpoly/havenShape.js';
-import { CAVE, RIVER } from './lowpoly/havenPlan.js';
+import { caveUnder, caveCeil, caveFloor, caveRock, havenLow, nearCave, caveGate, CAVE_AXIS, skyEdge, havenDeck, riverAt, portWall, portPier } from './lowpoly/havenShape.js';
+import { CAVE, RIVER, PORT } from './lowpoly/havenPlan.js';
+import { HAVEN_SELL_W, HAVEN_PUMP_W } from './layout.js';
 import { HOME_GROUND, ZONE_LABEL } from './lowpoly/harborPlan.js';
 import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SWITCHES_W, ROOFS_W, underRoof, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
 import { fishLabel, FishWorld } from './fish.js';
@@ -336,7 +337,8 @@ function landAt(x, z, hx, hz) {
     const VG = HAVEN_GROUND, vh = VG.size / 2 - 2, [vx, vz] = havenToLocal(x, z);
     if (Math.abs(vx - VG.cx) < vh && Math.abs(vz - VG.cz) < vh) {
       // 透天洞穴是上下兩層：人比洞頂低（在洞裡游泳、從天窗掉下去）就照洞底，在洞頂上面走就照山坡
-      // 天窗邊的跳水台：前半截懸在洞口上面，踩在上面的人照台面
+      if (portWall(vx, vz)) return 99;   // 山城的小屋：牆擋著
+      // 天窗邊的跳水台、碼頭的棧板：踩在上面的人照板面
       const dk = havenDeck(vx, vz, walker.feet);
       if (dk !== null) return skyEdge(vx, vz) > 0 ? Math.max(dk, HAVEN_LAND.at(vx, vz)) : dk;
       const low = caveUnder(vx, vz, walker.feet);
@@ -376,7 +378,8 @@ const boatGround = (x, z) => {
   if (deckY(x, z, 0.4) !== null) return DECK_Y;
   const rk = rockAt(x, z);
   // 透天洞穴附近照精確的形狀算（暗門水道只有 4.2 公尺寬，2 公尺一格的海床圖太粗）
-  const [vx, vz] = havenToLocal(x, z), bed = nearCave(vx, vz) ? havenLow(vx, vz) : bedAt(x, z);
+  // 大港的棧橋底下都是樁，船過不去
+  const [vx, vz] = havenToLocal(x, z), bed = portPier(vx, vz) ? 1 : nearCave(vx, vz) ? havenLow(vx, vz) : bedAt(x, z);
   return rk === null ? bed : Math.max(bed, rk);
 };
 
@@ -994,6 +997,7 @@ shade(harbor);
 const seascape = makeSeascape(harbor.userData.lowpolyMat);
 for (const g of seascape.groups) { scene.add(g); g.updateMatrixWorld(true); g.traverse((o) => { o.matrixAutoUpdate = false; }); }
 addRocks(seascape.rocks);
+BOLLARDS.push(...seascape.bollards);   // 大港碼頭的繫纜樁接在母港的後面（編號不變）
 // 透天洞穴：海面的著色器要知道洞在哪（洞裡的水面壓暗、天窗底下亮一圈）
 {
   const [cx, cz] = HAVEN.toWorld(CAVE.x, CAVE.z), [ex, ez] = HAVEN.toWorld(CAVE.x + CAVE_AXIS[0], CAVE.z + CAVE_AXIS[1]);
@@ -1690,6 +1694,43 @@ function releaseHelm() {
   applyViewSettings();
 }
 
+// ---- 大港：吊鉤大秤收購站（收購價比母島多 15%）、碼頭加油柱 ----
+const boatWithin = (p, r) => !myBoat.sinking && !myBoat.stored && Math.hypot(myBoat.x - p.x, myBoat.z - p.z) < r;
+// 這一秤要賣哪些魚：手上那一條；手上沒東西就是停在碼頭的船上整箱
+const hookFish = () => (fish.held ? (fish.held.can ? [] : [fish.held]) : boatWithin(HAVEN_SELL_W, PORT.sell.range) ? myBoat.boxFish : []);
+const hookPrice = (list) => Math.round(list.reduce((s, it) => s + it.value, 0) * (1 + PORT.bonus));
+function hookText() {
+  const list = hookFish(), pct = Math.round(PORT.bonus * 100);
+  if (fish.held && fish.held.can) return `大港收購站（比母島多 ${pct}%）　油桶不能賣`;
+  if (!list.length) return `大港收購站（比母島多 ${pct}%）　手上拿一條魚過來，或把船停在碼頭整箱一起秤`;
+  return fish.held ? `按 E 把這條魚掛上大秤賣出（$${hookPrice(list)}，多 ${pct}%）` : `按 E 把船上整箱 ${list.length} 條魚吊上來賣出（$${hookPrice(list)}，多 ${pct}%）`;
+}
+function havenSell() {
+  const list = hookFish();
+  if (!list.length) return toast(fish.held ? '油桶不能賣' : '手上拿一條魚過來，或把船停在碼頭（整箱一起秤）');
+  if (!net.online) return toast('連線中斷，等接回去再賣');
+  net.send({ t: 'sell', at: 'haven', uids: list.map((it) => it.uid) });
+}
+// 加油柱：船停在旁邊，人站在柱子前面按 E，加到滿（錢不夠就加到錢用完）
+function pumpLiters() {
+  if (!boatWithin(HAVEN_PUMP_W, PORT.pump.range)) return -1;
+  return Math.max(0, Math.min(Math.floor(myBoat.spec.tank - myBoat.fuel), Math.floor(money / PORT.pump.price)));
+}
+function pumpText() {
+  const n = pumpLiters();
+  if (n < 0) return `碼頭加油柱（一公升 $${PORT.pump.price}）　先把船停到旁邊`;
+  if (myBoat.spec.tank - myBoat.fuel < 1) return `碼頭加油柱　油箱是滿的（${litres(myBoat.fuel)} / ${myBoat.spec.tank} 公升）`;
+  return n < 1 ? `碼頭加油柱（一公升 $${PORT.pump.price}）　錢不夠` : `按 E 加油 ${n} 公升　$${Math.ceil(n * PORT.pump.price)}`;
+}
+function havenPump() {
+  const n = pumpLiters();
+  if (n < 0) return toast('先把船停到加油柱旁邊');
+  if (myBoat.spec.tank - myBoat.fuel < 1) return toast('油箱是滿的');
+  if (n < 1) return toast('錢不夠');
+  if (!net.online) return toast('連線中斷，等接回去再加');
+  net.send({ t: 'pump', liters: n });
+}
+
 // 賣魚的籃子與按鈕
 const nearBasket = () => !player.boat && Math.hypot(player.x - SELL_W.basket.x, player.z - SELL_W.basket.z) < 2.0;
 const nearButton = () => !player.boat && Math.hypot(player.x - SELL_W.button.x, player.z - SELL_W.button.z) < 1.7;
@@ -1980,6 +2021,9 @@ function aimTarget() {
       if (m) add('bollard', new THREE.Vector3(p.x, p.y - 0.05, p.z), 0.36, { moor: m });
     });
     if (nearBasket()) add('basket', new THREE.Vector3(SELL_W.basket.x, DECK_Y + 0.3, SELL_W.basket.z), 0.5);
+    // 大港：吊鉤大秤、碼頭加油柱
+    if (Math.hypot(px - HAVEN_SELL_W.x, pz - HAVEN_SELL_W.z) < PORT.sell.reach) add('hook', new THREE.Vector3(HAVEN_SELL_W.x, PORT.sell.y, HAVEN_SELL_W.z), 0.7);
+    if (Math.hypot(px - HAVEN_PUMP_W.x, pz - HAVEN_PUMP_W.z) < PORT.pump.reach) add('pump', new THREE.Vector3(HAVEN_PUMP_W.x, PORT.deckY + 0.9, HAVEN_PUMP_W.z), 0.5);
     if (nearButton()) add('button', new THREE.Vector3(SELL_W.button.x, DECK_Y + 1.1, SELL_W.button.z), 0.26);
     for (const sw of SWITCHES_W) if (Math.hypot(px - sw.stand.x, pz - sw.stand.z) < 1.8) add('switch', new THREE.Vector3(sw.x, sw.y, sw.z), 0.3, { sw });
     // 店裡的商品：對準商品本身或它的價格牌都算
@@ -2022,6 +2066,8 @@ function interact() {
   if (mode === 'helm') return releaseHelm();
   if (player.swim || drown) return;   // 在水裡騰不出手
   const a = aimTarget(), kind = a ? a.kind : '';
+  if (kind === 'hook') return havenSell();
+  if (kind === 'pump') return havenPump();
   if (fish.held && fish.held.can) {
     // 提著油桶：對準油箱的加油口就倒進去，倒不完的留在桶裡；沒對準就放下
     const can = fish.held, b = kind === 'tank' ? a.boat : null, room = b ? b.spec.tank - b.fuel : 0;
@@ -2140,6 +2186,8 @@ function updatePrompt() {
     if (player.swim) {
       text = stamina < 0.3 ? '快沒力了！趕快上岸，或游到船邊爬上去'
         : fish.held ? `捧著${fish.held.sp.name}游：比較慢，也比較累` : '';
+    } else if (kind === 'hook' || kind === 'pump') {
+      text = kind === 'hook' ? hookText() : pumpText();
     } else if (fish.held && fish.held.can) {
       const b = kind === 'tank' ? ab : null;
       text = b && b.spec.tank - b.fuel >= 0.1 ? `按 E 把油倒進油箱（${litres(b.fuel)} / ${b.spec.tank} 公升）`
@@ -3147,10 +3195,25 @@ net.on('caught', (m) => {
 
 // ---- 買賣、換船 ----
 net.on('sold', (m) => {
+  if (m.at === 'haven') {
+    // 大港的大秤：賣掉的是手上那條、或船上魚箱裡的（不經過籃子）
+    const gone = new Set(m.uids);
+    if (fish.held && gone.has(fish.held.uid)) fish.discardHeld();
+    for (const b of boats) for (let i = b.boxFish.length - 1; i >= 0; i--) if (gone.has(b.boxFish[i].uid)) { b.boxFish[i].mesh.removeFromParent(); b.boxFish.splice(i, 1); }
+    applyKit(m.kit);
+    if (m.total > 0) { audio.play('coin'); toast(`大港收購價（多 ${Math.round(PORT.bonus * 100)}%）：賣出 ${m.uids.length} 條，得到 ${cash(m.total)}`); }
+    return;
+  }
   fish.sell();   // 籃子裡的都送去賣了：伺服器不認的（不該有）也一起清掉
   applyKit(m.kit);
   refreshBoard();
   if (m.total > 0) { audio.play('coin'); toast(`賣出，得到 ${cash(m.total)}`); }
+});
+net.on('pumped', (m) => {
+  applyKit(m.kit);
+  myBoat.fuel = Math.min(myBoat.spec.tank, myBoat.fuel + m.liters);
+  audio.play('pour');
+  toast(`加了 ${m.liters} 公升，花了 ${cash(m.price)}。油箱 ${litres(myBoat.fuel)} / ${myBoat.spec.tank} 公升`);
 });
 net.on('bought', (m) => {
   buying = false;

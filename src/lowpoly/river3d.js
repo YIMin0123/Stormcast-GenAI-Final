@@ -112,7 +112,7 @@ export function buildRiver({ mat, group }) {
 
 // ---- 天窗跳水台：木板平台，根在天窗邊的地上，前半截懸在洞口上面 ----
 // 一根方木：從 p0 到 p1，斷面寬 w（水平方向）、高 h
-function beam(fb, p0, p1, w, h, col) {
+export function beam(fb, p0, p1, w, h, col) {
   const d = new THREE.Vector3().subVectors(p1, p0).normalize();
   const side = Math.abs(d.y) > 0.95 ? V3(1, 0, 0) : new THREE.Vector3().crossVectors(d, V3(0, 1, 0)).normalize();
   const up = new THREE.Vector3().crossVectors(side, d).normalize();

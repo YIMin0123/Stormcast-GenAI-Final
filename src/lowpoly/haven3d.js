@@ -3,8 +3,9 @@
 import * as THREE from 'three';
 import { mirrored } from './kit.js';
 import { rockGeo, broadleafGeo, islandTerrain } from './shapes.js';
-import { havenHeight, caveCoords, skyEdge, CAVE_AXIS, riverBed, riverFalls, riverPath, coveFaceS, diveDeck } from './havenShape.js';
+import { havenHeight, caveCoords, skyEdge, CAVE_AXIS, riverBed, riverFalls, riverPath, coveFaceS, diveDeck, portWall } from './havenShape.js';
 import { buildRiver, buildDive, vineGeo } from './river3d.js';
+import { buildPort } from './port3d.js';
 import { buildCave, cavePatch } from './cave3d.js';
 import * as V from './havenPlan.js';
 
@@ -31,9 +32,13 @@ export function buildHaven({ P, r, place, mat, group, phone = false }) {
   // 天窗口、暗門洞口和它外面的海蝕溝不放石頭和樹（會擋住洞口，或浮在天窗上）
   // 小河和跳水台也一樣
   const DK = diveDeck(), onDeck = (x, z, pad) => { const a = (x - DK.x) * DK.ux + (z - DK.z) * DK.uz, b = -(x - DK.x) * DK.uz + (z - DK.z) * DK.ux; return a > -pad && a < DK.len && Math.abs(b) < DK.half + pad; };
-  const keepOut = (x, z) => { const [s, l] = caveCoords(x, z); return skyEdge(x, z) < 3 || (s > 0 && Math.abs(l) < 12) || riverBed(x, z, 2.2) || onDeck(x, z, 2); };
+  const keepOut = (x, z) => { const [s, l] = caveCoords(x, z); return skyEdge(x, z) < 3 || (s > 0 && Math.abs(l) < 12) || riverBed(x, z, 2.2) || onDeck(x, z, 2) || portWall(x, z, 2.5) || Math.hypot(x - V.PORT.lighthouse.x, z - V.PORT.lighthouse.z) < 7; };
   out.river = buildRiver({ mat, group });
   buildDive({ P, r, mat, group });
+  // 碼頭、山城、燈塔
+  const port = buildPort({ P, r, mat, group, groundAt: ground.at, bedAt: havenHeight });
+  out.bollards = port.bollards;
+  out.rocks.push(...port.rocks);
   const randPt = () => { for (;;) { const x = G.cx + (r() - 0.5) * 2 * half, z = G.cz + (r() - 0.5) * 2 * half; if (!keepOut(x, z)) return [x, z, ground.at(x, z)]; } };
 
   // ---- 岩塊：3 種形狀 × 原版／鏡像 = 6 份樣板 ----

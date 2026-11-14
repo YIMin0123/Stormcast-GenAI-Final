@@ -5,7 +5,8 @@
 //   釣魚：上鉤什麼魚、多大、值多少由這裡擲；收線太快、離落水點太遠、站在陸地卻說拋進深海，一律不認
 //   本房紀錄（看板）與聊天
 import { Sea, Climate, HOUR } from '../src/weather.js';
-import { BERTHS, berthPose, berthKinds, inHarbor, SELL_W, SELL_REACH, SHELF_W, BOARD_STAND_W, SPAWN_W, SWITCHES_W, LIGHT_ZONES } from '../src/layout.js';
+import { BERTHS, berthPose, berthKinds, inHarbor, SELL_W, SELL_REACH, SHELF_W, BOARD_STAND_W, SPAWN_W, SWITCHES_W, LIGHT_ZONES, HAVEN_SELL_W, HAVEN_PUMP_W } from '../src/layout.js';
+import { PORT } from '../src/lowpoly/havenPlan.js';
 import { BOAT_TYPES, BOAT_ORDER, newKit, shopItem } from '../src/boatdata.js';
 import { SPECIES, rollCatch, minFightTime, biteDelay, castRange, money } from '../src/fishdata.js';
 import { dangerAt, isWater, fishingSpot } from './world.js';
@@ -369,7 +370,9 @@ export class Room {
 
       // ---- 買賣 ----
       case 'sell': {
-        if (!Array.isArray(m.uids) || !this.near(p, SELL_W.button.x, SELL_W.button.z, SELL_REACH)) return this.send(p, { t: 'no', msg: '要站在籃子旁邊才能賣' });
+        // 大港的吊鉤大秤（m.at === 'haven'）：收購價多 15%；母島照舊
+        const haven = m.at === 'haven', spot = haven ? HAVEN_SELL_W : SELL_W.button;
+        if (!Array.isArray(m.uids) || !this.near(p, spot.x, spot.z, haven ? PORT.sell.reach + 2 : SELL_REACH)) return this.send(p, { t: 'no', msg: haven ? '要站在大秤旁邊才能賣' : '要站在籃子旁邊才能賣' });
         let total = 0, best = null;
         const sold = [];
         for (const u of new Set(m.uids.slice(0, 250))) {
@@ -378,11 +381,19 @@ export class Room {
           total += f.value; sold.push(u); p.fish.delete(u);
           if (!best || f.value > best.value) best = f;
         }
+        if (haven) total = Math.round(total * (1 + PORT.bonus));
         kit.money += total;
-        this.send(p, { t: 'sold', total, uids: sold, kit });
+        this.send(p, { t: 'sold', total, uids: sold, kit, at: haven ? 'haven' : undefined });
         // 真的賣出去才算紀錄；兩塊榜都是每人只留最好的一條，所以這次賣的裡面只拿最值錢那條去比
         if (best) this.record(p, best);
         return;
+      }
+      case 'pump': {   // 大港碼頭的加油柱：照公升數收錢，油加進停在旁邊的船（油量是瀏覽器那邊記的）
+        if (!p.boat || !this.near(p, HAVEN_PUMP_W.x, HAVEN_PUMP_W.z, PORT.pump.reach + 2.5)) return this.send(p, { t: 'no', msg: '要站在加油柱旁邊才能加油' });
+        const liters = Math.floor(Math.min(Number(m.liters) || 0, BOAT_TYPES[p.boat.type].tank)), price = Math.ceil(liters * PORT.pump.price);
+        if (liters < 1 || kit.money < price) return this.send(p, { t: 'no', msg: '錢不夠' });
+        kit.money -= price;
+        return this.send(p, { t: 'pumped', liters, price, kit });
       }
       case 'buy': {
         const it = SHELF_W.find((s) => s.id === m.id);

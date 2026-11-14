@@ -261,9 +261,48 @@ export function diveDeck() {
   };
   return DECK;
 }
-// 腳在高度 feet 的人在 (x, z)：踩在跳水台上的話回傳台面的高度，不是就回傳 null（在底下深潭裡游的人、沒有說高度的都不算）
+// 腳在高度 feet 的人在 (x, z)：踩在跳水台或碼頭的棧板上的話回傳板面的高度，不是就回傳 null
+// （腳比板面低很多的人——在底下游泳的——不算，從板子底下過去；沒有說高度的也不算）
 export function havenDeck(x, z, feet) {
   if (feet === null || feet === undefined) return null;
   const K = diveDeck(), dx = x - K.x, dz = z - K.z, a = dx * K.ux + dz * K.uz, b = -dx * K.uz + dz * K.ux;
-  return a > -0.2 && a < K.len && Math.abs(b) < K.half && feet > K.y - 0.7 ? K.y : null;
+  if (a > -0.2 && a < K.len && Math.abs(b) < K.half && feet > K.y - 0.7) return K.y;
+  const hit = deckAt(x, z);
+  if (!hit) return null;
+  const y = hit[0].y0 + (hit[0].y1 - hit[0].y0) * hit[1];
+  return feet > y - 0.9 ? y : null;
+}
+
+// ==== 大港的碼頭與山城 ====
+const PT = V.PORT;
+// 這一點在哪一塊棧板上：回傳 [棧板, 沿著它走到幾成]；不在就 null。grow：多算寬幾公尺（負的 = 往內縮）
+function deckAt(x, z, grow = 0) {
+  for (const d of PT.decks) {
+    const dx = x - d.x, dz = z - d.z, a = dx * d.ux + dz * d.uz, b = -dx * d.uz + dz * d.ux;
+    if (a > -grow && a < d.len + grow && Math.abs(b) < d.half + grow) return [d, Math.min(1, Math.max(0, a / d.len))];
+  }
+  return null;
+}
+// 船會不會撞上碼頭（棧橋、坡道底下都是樁，船過不去）
+export const portPier = (x, z) => deckAt(x, z, -0.15) !== null;
+// 這一點是不是在小屋裡（牆擋著，人進不去）。pad：多算寬幾公尺
+export function portWall(x, z, pad = 0.1) {
+  for (const [hx, hz, w, d, , turn] of PT.houses) {
+    if (Math.abs(x - hx) + Math.abs(z - hz) > w + d) continue;
+    const rot = Math.atan2(V.BAY.x - hx, V.BAY.z - hz) + turn * Math.PI / 180, c = Math.cos(rot), s = Math.sin(rot);
+    const a = (x - hx) * c - (z - hz) * s, b = (x - hx) * s + (z - hz) * c;
+    if (Math.abs(a) < w / 2 + pad && Math.abs(b) < d / 2 + pad) return true;
+  }
+  return false;
+}
+// 繫纜樁的位置 [{ x, z }]：長棧橋兩側、丁字碼頭朝海灣那一側
+export function portBollards() {
+  const list = [];
+  for (const d of PT.decks) {
+    if (d.id !== 'pier' && d.id !== 'head') continue;
+    for (let a = d.id === 'pier' ? 6 : 2; a <= d.len - 2; a += PT.bollardGap) {
+      for (const b of d.id === 'pier' ? [-d.half + 0.3, d.half - 0.3] : [d.half - 0.3]) list.push({ x: d.x + d.ux * a - d.uz * b, z: d.z + d.uz * a + d.ux * b });
+    }
+  }
+  return list;
 }
