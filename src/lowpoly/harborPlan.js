@@ -53,9 +53,12 @@ export const SHOP_IN = {
 // （櫃台的牌子要低到檯面突出的那一截擋不到：從站位看過去，牌子上緣離檯面至少 0.13）
 const onCounter = (id, x) => ({ id, x, z: (COUNTER.z0 + COUNTER.z1) / 2, y: DECK_Y + COUNTER.h, tag: { dy: -0.36, dz: 0.42, tilt: 0 } });
 const onPlinth = (id, i) => { const p = SHOP_IN.plinths[i]; return { id, x: (p.x0 + p.x1) / 2, z: (p.z0 + p.z1) / 2, y: DECK_Y + p.h, tag: { dy: -0.38, dz: 0.465, tilt: 0 } }; };
+// 餌擺在東半邊後牆的工作台上（客人站在台子南邊按 E）：四種餌，id 是 bait_ 加上餌種（見 fishdata.js 的 BAITS）
+const onBench = (id, x) => { const b = SHOP_IN.bench; return { id, x, z: (b.z0 + b.z1) / 2, y: DECK_Y + b.h, tag: { dy: -0.45, dz: 0.45, tilt: 0 } }; };
 export const GOODS = [   // 順序跟伺服器的商品清單一樣
   onCounter('fuel', -23.4), onCounter('wrench', -22.1), onCounter('rod', -26.0), onCounter('box', -24.7),
   onPlinth('engine', 0), onPlinth('fisher', 1), onPlinth('trawler', 2),
+  onBench('bait_shrimp', -18.5), onBench('bait_minnow', -17.3), onBench('bait_squid', -16.1), onBench('bait_lure', -14.9),
 ];
 // 魚市場（橋頭東邊）：開放的棚子，前排左右兩座鋪冰的展示台；中間那根柱子是收購站——
 // 柱子上掛電子價格板，左邊是放在磅秤上的漁獲籃，緊靠著籃子右邊是賣出的按鈕。棚子裡有處理魚的長桌、冰櫃和魚箱、東邊一排活魚水槽

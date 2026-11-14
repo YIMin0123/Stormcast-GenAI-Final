@@ -3,7 +3,7 @@ import { makeTerrain, computeShelter, computeShoreDist, ISLANDS } from './terrai
 import { waterVert, waterFrag, liteWaterVert, liteWaterFrag, terrainVert, terrainFrag, grassVert, grassFrag, skyVert, skyFrag, diagVert, diagFrag, diagPtFrag, HAZE, RAIN_HAZE } from './renderShaders.js';
 import { FftOcean, makeFoamTexture } from './ocean.js';
 import { Boat, BOAT_TYPES, BOX_CAP } from './boat.js';
-import { BOAT_ORDER, CAN, newKit, shopItem } from './boatdata.js';
+import { BOAT_ORDER, CAN, newKit, shopItem, baitCount } from './boatdata.js';
 import { Player } from './player.js';
 import { ShallowWater, SWE } from './shallow.js';
 import { makeSwimFx } from './swimfx.js';
@@ -21,7 +21,7 @@ import { makeHavenFx } from './havenFx.js';
 import { HOME_GROUND, ZONE_LABEL } from './lowpoly/harborPlan.js';
 import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SWITCHES_W, ROOFS_W, underRoof, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
 import { fishLabel, FishWorld } from './fish.js';
-import { money as cash, rarityOf } from './fishdata.js';
+import { money as cash, rarityOf, BAITS } from './fishdata.js';
 import { Fishing } from './fishing.js';
 import { EmoteWheel } from './emotes.js';
 import { TOUCH, TouchUI, touchText, touchSet, canFullscreen, isFullscreen, setFullscreen } from './touch.js';
@@ -1925,6 +1925,11 @@ function offer(id) {
     if (o.price === null) return { name: '魚箱', lines: ['魚箱', `${bn}已是最大`, '售完'], price: null };
     return { name: `${bn}的魚箱（${BOX_CAP[cur.boxLv + 1]} 條）`, lines: [`魚箱 ${BOX_CAP[cur.boxLv + 1]}條`, `放在${bn}，魚不跑`, `$${o.price}`], price: o.price };
   }
+  if (id.startsWith('bait_')) {
+    const B = BAITS[id.slice(5)];
+    if (o.price === null) return { name: B.name, lines: [B.name, '已經囤滿了', '售完'], price: null };
+    return { name: `${B.name}（${B.pack} 個）`, lines: [`${B.name} ${B.pack}個`, B.desc, `$${o.price}`], price: o.price };
+  }
   const S = BOAT_TYPES[id];
   if (o.price === null) return { name: S.name, lines: [S.name, '已經買了', kit.active === id ? '停在港裡' : '收在倉庫'], price: null };
   return { name: S.name, lines: [S.name, id === 'fisher' ? '有駕駛艙，快又穩' : '最大、最快、最穩', `$${S.price}`], price: S.price };
@@ -1942,8 +1947,25 @@ function nearShelf() {
   return best;
 }
 // 伺服器說家當變了（進房、買賣之後）：照著更新畫面
+// 餌：畫面右上角顯示掛的是哪種、還剩幾個；按 B（手機是右上角的鉤子）輪流換。基本餌不花錢也不加成
+function showBait() {
+  const b = kit.bait, n = baitCount(kit, b), owned = Object.keys(BAITS).some((t) => baitCount(kit, t) > 0), el = $('hBait');
+  el.hidden = !owned;
+  el.textContent = b && n > 0 ? `${BAITS[b].name} ×${n}` : '基本餌';
+}
+function cycleBait() {
+  if (!inGame) return;
+  const list = ['', ...Object.keys(BAITS).filter((t) => baitCount(kit, t) > 0)];
+  if (list.length === 1) return toast('身上沒有餌。商店東邊的工作台有賣');
+  const next = list[(Math.max(0, list.indexOf(kit.bait)) + 1) % list.length];
+  net.send({ t: 'baitSel', id: next });
+  toast(next ? `換上${BAITS[next].name}（剩 ${baitCount(kit, next)} 個）：${BAITS[next].desc}` : '換回基本餌（不加成，也不花錢）');
+}
 function applyKit(k) {
+  const was = baitCount(kit, kit.bait), wasBait = kit.bait;
   kit = k;
+  if (was > 0 && kit.bait === wasBait && BAITS[wasBait] && !baitCount(kit, wasBait)) toast(`${BAITS[wasBait].name}用完了，改用基本餌`);
+  showBait();
   money = k.money; rodLv = k.rodLv; rodBroken = k.rodBroken; wrench = k.wrench;
   $('hMoney').textContent = cash(money);
   const cur = k.boats[k.active];
@@ -2564,6 +2586,7 @@ const touch = new TouchUI({
   chat: () => chat.open(),
   emote() { if (wheel.isOpen) closeWheel(false); else if (inGame && mode === 'walk' && !mapOpen) wheel.open(); },
   view: () => { if (inGame) toggleFp(); },
+  bait: () => cycleBait(),
 });
 if (TOUCH) {
   // 表情輪盤：直接點那一格就播放，點在外面是取消
@@ -2592,6 +2615,7 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.code === 'KeyC') toggleFp();
   if (e.code === 'KeyM') toggleMap();
+  if (e.code === 'KeyB') cycleBait();
   if (e.code === 'Escape' && mapOpen) toggleMap();
   if (e.code === 'KeyE') interact();
   if (e.code === 'KeyF') fishing.press();

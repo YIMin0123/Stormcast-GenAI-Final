@@ -388,10 +388,33 @@ export function buildShopMarket({ fb, fd, P, box, obox, gableRoof, boatGeo, out,
     for (const x of [b.x0 + 0.08, b.x1 - 0.08]) for (const z of [b.z0 + 0.08, b.z1 - 0.08]) box(fb, x - 0.05, x + 0.05, D, y - 0.07, z - 0.05, z + 0.05, P.woodDark, P.woodDark, r);
     box(fb, b.x0 + 0.05, b.x1 - 0.05, D + 0.18, D + 0.23, b.z0 + 0.05, b.z1 - 0.05, P.wood, P.wood, r);   // 下層板
     box(fb, b.x0 + 0.3, b.x0 + 0.9, D + 0.23, D + 0.5, b.z0 + 0.15, b.z1 - 0.15, Q.red, Q.redDark, r);   // 工具箱
-    box(fd, b.x0 + 1.4, b.x0 + 1.75, y, y + 0.16, b.z0 + 0.2, b.z0 + 0.45, Q.dark, Q.dark, r);   // 虎鉗
-    box(fd, b.x0 + 1.45, b.x0 + 1.7, y + 0.16, y + 0.22, b.z0 + 0.1, b.z0 + 0.55, Q.steel, Q.steel, r);
-    for (let i = 0; i < 4; i++) cyl(fd, b.x0 + 2.4 + i * 0.22, y, b.z0 + 0.35, 0.06, 0.06, 0.16, 8, [Q.plBlue, Q.red, Q.plYellow, Q.steel][i], r);   // 機油罐
-    { const px = b.x1 - 0.7, py = y + 0.05; for (let i = 0; i < 3; i++) { const a = i * 2.1; obox(fd, px + Math.cos(a) * 0.12, py + 0.02, b.z0 + 0.35 + Math.sin(a) * 0.12, Math.cos(a), Math.sin(a), 0.2, 0.1, 0.03, Q.brass, Q.brass, r); } cyl(fd, px, py, b.z0 + 0.35, 0.05, 0.05, 0.06, 6, Q.brass, r); }   // 一個備用螺旋槳
+    // 工具都收在下層板上（檯面讓給賣的餌；只改高度，亂數的用量不變）
+    const ly = D + 0.23;
+    box(fd, b.x0 + 1.4, b.x0 + 1.75, ly, ly + 0.16, b.z0 + 0.2, b.z0 + 0.45, Q.dark, Q.dark, r);   // 虎鉗
+    box(fd, b.x0 + 1.45, b.x0 + 1.7, ly + 0.16, ly + 0.22, b.z0 + 0.1, b.z0 + 0.55, Q.steel, Q.steel, r);
+    for (let i = 0; i < 4; i++) cyl(fd, b.x0 + 2.4 + i * 0.22, ly, b.z0 + 0.35, 0.06, 0.06, 0.16, 8, [Q.plBlue, Q.red, Q.plYellow, Q.steel][i], r);   // 機油罐
+    { const px = b.x1 - 0.7, py = ly + 0.05; for (let i = 0; i < 3; i++) { const a = i * 2.1; obox(fd, px + Math.cos(a) * 0.12, py + 0.02, b.z0 + 0.35 + Math.sin(a) * 0.12, Math.cos(a), Math.sin(a), 0.2, 0.1, 0.03, Q.brass, Q.brass, r); } cyl(fd, px, py, b.z0 + 0.35, 0.05, 0.05, 0.06, 6, Q.brass, r); }   // 一個備用螺旋槳
+    // 檯面上賣的餌（商品位置見 harborPlan.js 的 GOODS；用自己的亂數，不影響別處）
+    {
+      const rb = rng(5521), g = Object.fromEntries(H.GOODS.filter((o) => o.id.startsWith('bait_')).map((o) => [o.id, o]));
+      const pink = new THREE.Color('#e7a9a2'), silver = new THREE.Color('#c9d3d8');
+      { const o = g.bait_shrimp;   // 蝦餌：藍色的小水桶，裡面堆著蝦
+        cyl(fb, o.x, y, o.z, 0.16, 0.13, 0.24, 10, Q.plBlue, rb);
+        for (let i = 0; i < 5; i++) { const a = i * 1.3; box(fd, o.x + Math.cos(a) * 0.07 - 0.05, o.x + Math.cos(a) * 0.07 + 0.05, y + 0.24, y + 0.29, o.z + Math.sin(a) * 0.07 - 0.02, o.z + Math.sin(a) * 0.07 + 0.02, Q.plOrange, Q.red, rb, 0.02); }
+        box(fd, o.x - 0.2, o.x + 0.2, y, y + 0.012, o.z - 0.17, o.z + 0.17, P.woodDark, P.woodDark, rb); }
+      { const o = g.bait_minnow;   // 小魚餌：淺盤裡躺著幾條小魚
+        box(fb, o.x - 0.24, o.x + 0.24, y, y + 0.07, o.z - 0.17, o.z + 0.17, Q.steel, Q.steel, rb, 0.02);
+        for (let i = 0; i < 4; i++) put(fb, fishGeo(0.2, silver, new THREE.Color('#eef3f4'), new THREE.Color('#8fa0a8'), 120 + i), mat4(o.x - 0.12 + (i % 2) * 0.2, y + 0.09, o.z - 0.07 + Math.floor(i / 2) * 0.13, 0, i * 0.5, 0)); }
+      { const o = g.bait_squid;   // 花枝餌：白色保冷盒，蓋子半開，裡面是粉紅色的花枝
+        box(fb, o.x - 0.24, o.x + 0.24, y, y + 0.2, o.z - 0.17, o.z + 0.17, Q.plWhite, Q.plWhite, rb, 0.02);
+        box(fb, o.x - 0.25, o.x + 0.25, y + 0.2, y + 0.23, o.z - 0.02, o.z + 0.19, Q.plWhite, Q.plWhite, rb, 0.02);
+        for (let i = 0; i < 3; i++) cyl(fd, o.x - 0.1 + i * 0.1, y + 0.2, o.z - 0.1, 0.035, 0.025, 0.2, 6, pink, rb, 0, Math.PI / 2); }
+      { const o = g.bait_lure;   // 亮片假餌：一張卡紙上夾著三個亮晶晶的假餌
+        box(fb, o.x - 0.17, o.x + 0.17, y, y + 0.4, o.z - 0.02, o.z, Q.paper, Q.paper, rb, 0.02);
+        box(fb, o.x - 0.12, o.x + 0.12, y + 0.34, y + 0.37, o.z, o.z + 0.012, Q.red, Q.red, rb, 0.02);
+        for (let i = 0; i < 3; i++) { const lx = o.x - 0.1 + i * 0.1; cyl(fd, lx, y + 0.08, o.z + 0.02, 0.012, 0.03, 0.2, 6, [Q.brass, Q.steel, Q.plYellow][i], rb); box(fd, lx - 0.008, lx + 0.008, y + 0.28, y + 0.31, o.z + 0.01, o.z + 0.03, Q.steel, Q.steel, rb, 0.01); }
+        box(fb, o.x - 0.17, o.x + 0.17, y, y + 0.012, o.z - 0.1, o.z + 0.12, P.woodDark, P.woodDark, rb); }
+    }
     // 洞洞板＋工具的影子
     const pz = S.z0 + t + 0.02;
     box(fb, b.x0 + 0.2, b.x1 - 0.6, y + 0.3, y + 1.5, pz, pz + 0.03, Q.peg, Q.peg, r, 0.03);

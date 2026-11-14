@@ -9,8 +9,8 @@ import { BERTHS, berthPose, berthKinds, inHarbor, SELL_W, SELL_REACH, SHELF_W, B
 import { PORT } from '../src/lowpoly/havenPlan.js';
 import { HOTSPOT, CHESTS } from '../src/extrasPlan.js';
 import { Extras } from './extras.js';
-import { BOAT_TYPES, BOAT_ORDER, newKit, shopItem } from '../src/boatdata.js';
-import { SPECIES, isJunk, rollCatch, minFightTime, biteDelay, castRange, money } from '../src/fishdata.js';
+import { BOAT_TYPES, BOAT_ORDER, newKit, shopItem, baitCount } from '../src/boatdata.js';
+import { SPECIES, BAITS, isJunk, rollCatch, minFightTime, biteDelay, castRange, money } from '../src/fishdata.js';
 import { dangerAt, isWater, fishingSpot } from './world.js';
 import { mask } from './words.js';
 import { SERVER } from '../src/config.js';
@@ -338,8 +338,16 @@ export class Room {
         p.fishing = null;
         if (!nums([m.x, m.z], 2) || !p.pos || kit.rodBroken || now < p.suspect) return this.send(p, { t: 'fishNo' });
         if (dist(m.x, m.z, p.pos[0], p.pos[2]) > castRange(kit.rodLv) + 8 || !isWater(m.x, m.z)) return this.send(p, { t: 'fishNo' });
-        p.fishing = { x: m.x, z: m.z, state: 'wait' };
+        // 掛了餌就用掉一個（餌用完了就是基本餌，不加成）
+        const used = kit.bait && baitCount(kit, kit.bait) > 0 ? kit.bait : '';
+        if (used) { kit.baits = { ...kit.baits, [used]: kit.baits[used] - 1 }; this.send(p, { t: 'kit', kit }); }
+        p.fishing = { x: m.x, z: m.z, state: 'wait', baitUsed: used };
         return this.bait(p, now);
+      }
+      case 'baitSel': {   // 換餌（只能換成自己有的，或基本餌 ''）
+        if (m.id !== '' && !(BAITS[m.id] && baitCount(kit, m.id) > 0)) return;
+        kit.bait = m.id;
+        return this.send(p, { t: 'kit', kit });
       }
       case 'hook': {
         const f = p.fishing;
@@ -469,8 +477,8 @@ export class Room {
     const f = p.fishing, c = this.climate;
     // 魚群熱點裡：咬得快、個頭大；洞穴的深潭下雨時咬得特別快
     const spot = fishingSpot(f.x, f.z, c, this.sea), hot = this.extras.inHot(f.x, f.z);
-    f.fish = rollCatch({ ...spot, hot });
-    f.biteAt = now + 1000 * biteDelay(p.kit.rodLv, Math.max(this.sea.rain, c.rain)) * (hot ? HOTSPOT.biteK : 1) * (spot.zone === 'cave' && spot.rain > 0.2 ? 0.5 : 1);
+    f.fish = rollCatch({ ...spot, hot, bait: f.baitUsed });
+    f.biteAt = now + 1000 * biteDelay(p.kit.rodLv, Math.max(this.sea.rain, c.rain), f.baitUsed) * (hot ? HOTSPOT.biteK : 1) * (spot.zone === 'cave' && spot.rain > 0.2 ? 0.5 : 1);
   }
 
   // 定時刷新：家當回到新玩家的樣子（錢、船、裝備、魚都清掉），人送回港口

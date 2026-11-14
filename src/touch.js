@@ -64,7 +64,7 @@ const el = (tag, id, text) => { const e = document.createElement(tag); if (id) e
 //   canvas
 //   look(dx, dy)：手指滑了這麼多像素，轉視角；zoom(k)：鏡頭遠近乘上 k
 //   interact()、fishDown()、fishUp()、jump(on)、throwDown()、throwUp()（拿著東西時按住「丟」蓄力、放開丟出去）
-//   map()、chat()、emote()、view()：右上角四顆按鈕
+//   map()、chat()、emote()、view()、bait()：右上角的小按鈕（bait 換餌）
 export class TouchUI {
   constructor(env) {
     this.env = env;
@@ -107,7 +107,7 @@ export class TouchUI {
       bar.appendChild(b);
       return b;
     };
-    tap('map', '地圖', () => env.map()); tap('chat', '聊天', () => env.chat()); this.bEmote = tap('emote', '表情', () => env.emote()); tap('view', '視角', () => env.view());
+    tap('map', '地圖', () => env.map()); tap('chat', '聊天', () => env.chat()); this.bEmote = tap('emote', '表情', () => env.emote()); tap('view', '視角', () => env.view()); tap('bait', '換餌', () => env.bait());
     if (canFullscreen) tap('full', '全螢幕', () => setFullscreen(!isFullscreen()));
     root.append(this.base, this.bAct, this.bFish, this.bJump, this.bThrow, bar);
     // 直著拿的時候蓋住整個畫面
