@@ -227,12 +227,13 @@ const CALM = { storm: 0, gloom: 0, lull: 1, rumble: 0, rain: 0, surge: 0, thunde
 // 海上的事件。平常是 calm，偶爾隨機發生一種：
 //   storm 風暴、thunder 雷暴雨、omen → waves 巨浪、whirl 漩渦、brew → typhoon 颱風
 // 風暴、雷暴雨、颱風時外海還可能出現水龍捲
+export const SEA_GAP = 1800;    // 兩次海上事件之間平靜多久（秒）：30 分鐘（事件結束後開始算；颱風另外累計 `typhoonIn`）
 export const SEA_AFTER = 600;   // 風暴過後「剛過去」的期間（秒，約遊戲裡八小時）
 export class Sea {
   constructor() {
     this.phase = 'calm';
     this.t = 0;                      // 這個階段已經過了多久
-    this.next = rand(480, 840);      // 平靜多久之後發生下一次（8–14 分鐘）
+    this.next = SEA_GAP;             // 平靜多久之後發生下一次（SEA_GAP）
     this.typhoonIn = rand(5400, 9000); // 颱風好幾個遊戲日才來一次（這裡是累計的平靜秒數）
     // 這些值都是慢慢變的，海才會「漸漸」不對勁
     this.storm = 0;                  // 外海的浪放大 (1 + storm) 倍
@@ -376,7 +377,7 @@ export class Sea {
   _calm() {
     if (['storm', 'thunder', 'typhoon', 'waves'].includes(this.phase)) this.after = SEA_AFTER;
     this.phase = 'calm'; this.t = 0; this.slow = 1;
-    this.next = rand(480, 840);
+    this.next = SEA_GAP;
     this.goal = { ...CALM };
     this.spoutLeft = 0;
   }
