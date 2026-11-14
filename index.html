@@ -81,6 +81,7 @@
     #gfxPage { display: none; }
     #panel.gfx #gfxPage { display: block; }
     #panel.gfx .sec.main { display: none !important; }
+    body.playing #panel:not(.inTab) { display: none; }   /* 進房之後設定搬進平板（平板的「設定」app），左上角不放 */
     #gfxPage .back { padding: 4px 12px; }
     #gfxPage .row { margin-top: 8px; }
     #gfxPage .row label { display: block; margin-bottom: 4px; }
@@ -308,6 +309,7 @@
     </div>
     <div class="sec main"><h4>聲音</h4>
       <div class="line"><span>遊戲音效</span><button id="sound">關</button></div>
+      <div class="row" style="margin-top: 9px"><label>音量 <b id="vVol"></b></label><input id="vol" type="range" min="0" max="1" step="0.05" value="1" /></div>
     </div>
     <details id="keys" class="sec main">
       <summary>操作說明 ›</summary>

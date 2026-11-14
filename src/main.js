@@ -12,7 +12,7 @@ import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_RO
 import { WORLD, THROW, DEVMODE, SHORE_WIND, CLOUDS, FISHBOX, TABLET } from './config.js';
 import { Tablet } from './tablet.js';
 import { makeApps } from './tabletApps.js';
-import { makeTabletMesh } from './tabletMesh.js';
+import { makeTabletMesh, holdTablet, poseTablet, setTabletScreen } from './tabletMesh.js';
 import { fishThumbs } from './fishThumbs.js';
 import { placeAt } from './places.js';
 import { bearing, dirName, whereFrom, beaufort, windWord, clockOf, skyOf, tideText, tideShort, forecast, signsOf } from './tabletData.js';
@@ -2746,12 +2746,29 @@ $('reset').addEventListener('click', () => {
   window.setTimeout(() => window.location.reload(), 200);
 });
 
+// 音效預設開著（?test 測試分頁除外）：瀏覽器要等玩家第一次點擊或按鍵後才准出聲，所以那時才真的打開；玩家自己關掉的話記住（stormcast.sound）
+const soundBtn = () => { $('sound').textContent = audio.on ? '開' : '關'; $('sound').classList.toggle('on', audio.on); };
+// 音量（0–1，記在 stormcast.vol）：乘在總音量上
+let soundVol = clamp(parseFloat(getPref('stormcast.vol') ?? '1') || 0, 0, 1);
+const applyVol = () => { if (audio.on && audio.master) audio.master.gain.value = 0.9 * soundVol; $('vVol').textContent = `${Math.round(soundVol * 100)}%`; };
+const soundStart = () => { audio.start(); applyVol(); };
+$('vol').value = soundVol;
+applyVol();
+$('vol').addEventListener('input', () => { soundVol = +$('vol').value; setPref('stormcast.vol', soundVol); applyVol(); });
 $('sound').addEventListener('click', () => {
-  if (audio.on) audio.stop(); else audio.start();
-  $('sound').textContent = audio.on ? '開' : '關';
-  $('sound').classList.toggle('on', audio.on);
+  if (audio.on) audio.stop(); else soundStart();
+  setPref('stormcast.sound', audio.on ? 'on' : 'off');
+  soundBtn();
   $('sound').blur();
 });
+if (!TEST && getPref('stormcast.sound') !== 'off') {   // 內部測試（?test）不自動開
+  const wake = (e) => {
+    if (e.target && e.target.id === 'sound') return;   // 按的就是音效鈕：交給上面
+    for (const ev of ['pointerdown', 'keydown']) window.removeEventListener(ev, wake, true);
+    if (!audio.on && getPref('stormcast.sound') !== 'off') { soundStart(); soundBtn(); }
+  };
+  for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, wake, true);
+}
 
 // 用實體按鍵位置（e.code）判斷，開著注音輸入法也能操作
 const KEYMAP = { KeyW: 'w', KeyA: 'a', KeyS: 's', KeyD: 'd', ShiftLeft: 'shift', ShiftRight: 'shift', KeyQ: 'q', KeyR: 'r', Space: 'space', KeyF: 'f' };
@@ -3423,7 +3440,8 @@ function drawMap(cv, filt) {
 }
 // ---- 平板（Tab；仿 iPad：主畫面兩塊小工具＋app 圖示，見 tablet.js、tabletApps.js） ------------
 // 這裡把遊戲裡的資料交給平板：時間天氣、自己的船、圖鑑、背包、同房的人；按鈕按下去要做的事也在這裡
-let tabHand = false, tabMesh = null;   // 手上拿著平板（給自己和別人看的 3D 模型）
+let tabHand = false, tabMesh = null, tabScreen = 0;   // 手上拿著平板（給自己和別人看的 3D 模型）、螢幕上是哪個畫面（tabletMesh.js 的 SCREENS）
+const tabletScreen = () => (tablet.cur ? tablet.apps.findIndex((a) => a.id === tablet.cur) + 1 : 0);
 let storedInfo = {};                   // 伺服器說倉庫裡的船：船種 → { fuel, hp 0–1 }
 let dexBook = {};                      // 圖鑑（伺服器存的）：魚種 → { n, len, kg, at }
 const dexNew = new Set();              // 這次新釣到、還沒在圖鑑裡看過的魚種
@@ -3443,7 +3461,7 @@ function boatWhere(b) {
   if (b.sinking) return '沉了';
   if (onMyBoat()) return '你在船上';
   const me = meAt(), parked = Math.hypot(b.x - berth.x, b.z - berth.z) < 4;
-  return `${parked ? `停在 ${berth.label}` : inHarbor(b.x, b.z) ? '在港裡' : placeHere(b.x, b.z)}・${whereFrom(b.x - me.x, b.z - me.z)}`;
+  return `${parked ? '停在港口' : inHarbor(b.x, b.z) ? '在港裡' : placeHere(b.x, b.z)}・${whereFrom(b.x - me.x, b.z - me.z)}`;
 }
 // 現在能不能叫船、換船（伺服器也會再檢查一次：見 server/boatCall.js）
 function boatBlock() {
@@ -3523,6 +3541,12 @@ const tabEnv = {
     if (name === 'pick') { app.sel = arg; tablet.update(); }
   },
 };
+// 平板的「設定」app：把原本的設定整塊（#panel）搬進去，離開時搬回原位
+const panelHome = $('panel').parentNode, panelNext = $('panel').nextSibling;
+tabEnv.settings = {
+  mount(el) { const pn = $('panel'); pn.classList.add('inTab'); pn.open = true; el.appendChild(pn); },
+  unmount() { const pn = $('panel'); pn.classList.remove('inTab', 'gfx'); pn.open = false; panelHome.insertBefore(pn, panelNext); },
+};
 tablet = new Tablet(makeApps(tabEnv), {
   status() {
     const c = clockOf(climate.hour);
@@ -3543,17 +3567,28 @@ tablet = new Tablet(makeApps(tabEnv), {
     if (open) { closeWheel(false); throwCancel(); }
   },
 });
+tablet.root.style.setProperty('--lift', `${TABLET.lift}s`);   // 拿起／收起平板的動畫秒數
 
-// 畫面上指向自己的船：離船超過 TABLET.markFar 公尺（而且不在船上）時，看得到就標在船上方，看不到就貼在畫面邊上
+// 畫面上指向自己的船：離船超過 TABLET.markFar 公尺（而且不在船上）時，看得到就標在船上方，看不到就貼在畫面邊上。
+// 叫船、換船之後不管多近都標 TABLET.markSec 秒（亮珊瑚色、會跳），讓人知道船停在哪（不講第幾號船位）
 const boatMarkEl = document.createElement('div');
 boatMarkEl.style.cssText = 'position:fixed;z-index:6;pointer-events:none;transform:translate(-50%,-50%);padding:3px 10px 3px 7px;border-radius:12px;display:none;align-items:center;gap:4px;'
   + 'font:600 13px var(--font);white-space:nowrap;background:var(--paper);color:var(--ink);border:2px solid var(--sea);box-shadow:0 2px 6px rgba(0,0,0,.25)';
 document.body.appendChild(boatMarkEl);
+{
+  const st = document.createElement('style');
+  st.textContent = `.boatMark.flash { background: var(--coral) !important; color: #fff !important; border-color: #fff !important; font-size: 15px !important; animation: boatHop 0.8s ease-in-out infinite; }
+@keyframes boatHop { 0%, 100% { translate: 0 0; } 50% { translate: 0 -8px; } }`;
+  document.head.appendChild(st);
+  boatMarkEl.className = 'boatMark';
+}
 const _bm = new THREE.Vector3();
-let boatMarkText = '';
+let boatMarkText = '', boatMarkUntil = 0;
+const flashMyBoat = () => { boatMarkUntil = performance.now() + TABLET.markSec * 1000; };
 function markMyBoat() {
-  const b = myBoat, me = meAt(), d = Math.hypot(b.x - me.x, b.z - me.z);
-  const on = inGame && !tabOpen() && mode === 'walk' && !b.sinking && player.boat !== b && d > TABLET.markFar;
+  const b = myBoat, me = meAt(), d = Math.hypot(b.x - me.x, b.z - me.z), flash = performance.now() < boatMarkUntil;
+  const on = inGame && !tabOpen() && mode === 'walk' && !b.sinking && player.boat !== b && (d > TABLET.markFar || flash);
+  boatMarkEl.classList.toggle('flash', on && flash);
   boatMarkEl.style.display = on ? 'flex' : 'none';
   if (!on) return;
   _bm.set(b.x, b.y + 3, b.z).project(camera);
@@ -3563,7 +3598,7 @@ function markMyBoat() {
   if (behind || edge > 0.9) { const k = 0.9 / Math.max(edge, 1e-3); sx *= k; sy *= k; }
   boatMarkEl.style.left = `${(sx * 0.5 + 0.5) * window.innerWidth}px`;
   boatMarkEl.style.top = `${(-sy * 0.5 + 0.5) * window.innerHeight}px`;
-  const t = `你的${b.spec.name} ${Math.round(d / 10) * 10}m`;
+  const t = flash && d <= TABLET.markFar ? `你的${b.spec.name}在這` : `你的${b.spec.name} ${Math.round(d / 10) * 10}m`;
   if (t !== boatMarkText) { boatMarkText = t; boatMarkEl.innerHTML = `${ICON.boat}${t}`; }
 }
 
@@ -3575,7 +3610,8 @@ net.on('called', (m) => {
   b.x = m.berth.x; b.z = m.berth.z; b.heading = m.berth.heading; b.speed = 0; b.throttle = 0; b.rudder = 0;
   lastBoatMsg = lastBoatDetail = '';
   audio.play('rope');
-  toast(`${b.spec.name}停到 ${m.berth.label} 了`);
+  toast(`${b.spec.name}停到你附近了`);
+  flashMyBoat();
   tablet.update(true);
 });
 
@@ -3671,8 +3707,8 @@ function sendState(dt) {
   let msg = JSON.stringify(st);
   if (msg !== lastPosMsg || now - lastPosAt > 1000) { lastPosMsg = msg; lastPosAt = now; net.send({ t: 'p', s: st }); }
   // 手上拿著什麼、釣線另一頭的浮標在哪：給別人看的，有變才送
-  const h = fish.held, hk = h ? `${h.id}:${r2(h.len)}` : tabHand ? 'tablet' : '';
-  if (hk !== lastHold) { lastHold = hk; net.send({ t: 'h', id: h ? h.id : tabHand ? 'tablet' : '', len: h ? r2(h.len) : 0 }); }
+  const h = fish.held, hk = h ? `${h.id}:${r2(h.len)}` : tabHand ? `tablet:${tabScreen}` : '';
+  if (hk !== lastHold) { lastHold = hk; net.send({ t: 'h', id: h ? h.id : tabHand ? 'tablet' : '', len: h ? r2(h.len) : tabHand ? tabScreen : 0 }); }   // 平板：len 是哪個畫面
   const bp = fishing.bob.position, fs = fishing.state;
   const ln = fishing.bob.visible && mode === 'walk' ? [r2(bp.x), r2(bp.y), r2(bp.z), fs === 'fly' ? 1 : fs === 'fight' ? 3 : 2] : null;
   const lk = ln ? ln.join() : '';
@@ -3870,10 +3906,11 @@ net.on('swapped', (m) => {
   berth = m.berth;
   useBoat(m.kit.active, m.berth);
   applyKit(m.kit);
-  const where = `${myBoat.spec.name}停在 ${berth.label}`;
+  flashMyBoat();
+  const where = `${myBoat.spec.name}停在港口（畫面上標出來了）`;
   if (!m.wreck) { audio.play('rope'); return toast(`換好了：${where}`); }
   if (w) wreck = null;
-  const text = m.gift ? `港口留了一艘小舢舨給你，停在 ${berth.label}` : `倉庫裡的${where}`;
+  const text = m.gift ? '港口留了一艘小舢舨給你（畫面上標出來了）' : `倉庫裡的${where}`;
   if ((w && w.aboard) || wasLost) rescue(`你被救回港口。${text}`); else toast(text);
 });
 
@@ -3927,7 +3964,8 @@ net.on('merged', (m) => {
   boxes.apply(m.boxes);
   lastPosMsg = lastBoatMsg = lastBoatDetail = '';
   if (!wreck && !drown) fadeIn = 1.6;
-  chat.sys(`已經合併到${room.name}${m.repark ? `，你的船移到 ${berth.label}` : ''}`, 'merge');
+  if (m.repark) flashMyBoat();
+  chat.sys(`已經合併到${room.name}${m.repark ? '，你的船移到港口另一個船位（畫面上標出來了）' : ''}`, 'merge');
 });
 
 // ---- 連線狀態 ----
@@ -3940,6 +3978,7 @@ net.on('status', (st) => {
     msg.textContent = st === 'expired' ? '斷線太久，已經離開房間了（錢、船、裝備和魚都存著，重新進房就好）' : st.startsWith('kicked:') ? st.slice(7) : '和伺服器斷線了';
     btn.style.display = 'inline-block';
     inGame = false;
+    document.body.classList.remove('playing');
   }
   for (const k in keys) keys[k] = false;
   box.style.display = 'flex';
@@ -4027,6 +4066,7 @@ function enterRoom(j) {
   chat.sys(back ? (pos ? `回到${room.name}了` : `歡迎回到${room.name}，錢、船和還沒賣的魚都還在`) : touchText(`歡迎來到${room.name}。按 Enter 可以聊天`), 'info');
   $('net').style.display = 'none';
   inGame = true;
+  document.body.classList.add('playing');   // 設定搬進平板（左上角的設定鈕收起來）
   fadeIn = 1.2;
 }
 
@@ -4131,9 +4171,16 @@ function advance(dt) {
   const hbx = heldBox();
   // 拿著平板（空手、走路、沒在游泳時才拿在手上；別人也看得到）
   tabHand = tabOpen() && !fish.held && !hbx && mode === 'walk' && !player.swim && !player.seat;
-  if (tabHand !== !!(tabMesh && tabMesh.parent)) {
-    if (tabHand) { tabMesh = tabMesh || makeTabletMesh(); tabMesh.position.set(0.4, 1.12, 0); player.mesh.add(tabMesh); } else tabMesh.removeFromParent();
+  tabScreen = tabHand ? tabletScreen() : 0;
+  tablet.setFp(mode === 'walk' && view.walk.fp);
+  // 拿起來：平板跟著手從腰邊抬到胸前；收起來：等手放下去才拿掉（手上要拿別的東西就馬上拿掉）
+  if (tabHand && !(tabMesh && tabMesh.parent)) { tabMesh = tabMesh || makeTabletMesh(); holdTablet(player.mesh, tabMesh); }
+  if (tabMesh && tabMesh.parent) {
+    const k = poseTablet(tabMesh);
+    if (!tabHand && (k < 0.3 || fish.held || hbx || mode !== 'walk' || player.swim || player.seat)) tabMesh.removeFromParent();
+    tabMesh.visible = !view.walk.fp;   // 第一人稱：自己手上的平板就是畫面上那塊（tablet.js 畫雙手），3D 的不畫
   }
+  if (tabHand) setTabletScreen(tabMesh, tabScreen);   // 螢幕上畫的是現在開著的畫面（別人看到的也是）
   player.carry = !!fish.held || !!hbx || tabHand;
   player.load = hbx ? boxes.speed(hbx) : 1;
   if (hbx && player.swim && performance.now() - boxSent > 700) { putBoxDown(hbx, true); toast('抱著魚箱不能游泳，箱子先浮在水面上（從岸上、甲板上伸手拿得回來）'); }

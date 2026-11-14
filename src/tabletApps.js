@@ -1,4 +1,4 @@
-// 平板上的 app：地圖、船、天氣、圖鑑、背包、房間。資料都跟 main.js 要（env），這裡只排版面。
+// 平板上的 app：地圖、船、天氣、圖鑑、背包、房間、設定。資料都跟 main.js 要（env），這裡只排版面。
 // 版面用 html 字串畫，有變才換（按鈕用 data-act，點了交給 env.act）
 import { ICON } from './icons.js';
 import { RARITY } from './fishdata.js';
@@ -28,6 +28,14 @@ const CSS = `
 .tbList { margin: 4px 0 0; padding-left: 18px; }
 .tbList li { margin: 2px 0; }
 .tbMap { display: flex; gap: 14px; height: 100%; }
+/* 設定：進房後原本左上角的設定整塊搬進來（main.js 的 env.settings），一區一張卡、排兩欄 */
+#panel.inTab { position: static; width: auto !important; max-height: none; overflow: visible; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none;
+  column-count: 2; column-gap: 12px; }
+#panel.inTab > summary { display: none; }
+#panel.inTab .sec { break-inside: avoid; background: rgba(240, 250, 254, 0.9); border: 2px solid var(--edge); border-radius: 16px; margin: 0 0 10px; }
+#panel.inTab #gfxPage { column-span: all; }
+#panel.inTab.gfx { column-count: 1; }
+body.touch #panel.inTab { column-count: 1; }
 .tbMap canvas { height: 100%; aspect-ratio: 1; border-radius: 14px; border: 2px solid var(--edge); cursor: pointer; display: block; }
 .tbMapSide { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
 .tbChip { padding: 4px 12px; font-size: 13px; }
@@ -193,5 +201,13 @@ export function makeApps(env) {
       <p class="tbNote">${esc(r.name)}・${r.list.length} 人（最多 ${r.max} 人）。灰點是斷線中，一陣子沒回來就會離開</p>`;
   }, env);
 
-  return [map, boat, weather, dex, bag, room];
+  // ---- 設定：畫質、角色、聲音（開關、音量）、操作說明——就是原本的設定，搬進平板 ----
+  const set = {
+    id: 'set', name: '設定', icon: 'gear', color: '#6f8394',
+    mount(el) { env.settings.mount(el); },
+    update() {},
+    leave() { env.settings.unmount(); },
+  };
+
+  return [map, boat, weather, dex, bag, room, set];
 }

@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { Player } from './player.js';
 import { ACTION_BY_ID } from './emotes.js';
 import { SPECIES, makeFishMesh, makeCanMesh } from './fish.js';
-import { makeTabletMesh } from './tabletMesh.js';
+import { makeTabletMesh, holdTablet, poseTablet } from './tabletMesh.js';
 import { restyle } from './figure.js';
 
 // 頭上的名牌：一張畫著名字的小圖，永遠面向鏡頭、遠近都一樣大
@@ -100,13 +100,12 @@ export class Others {
   setHold(id, s) {
     const o = this.map.get(id);
     if (!o || !o.fig) return;
-    if (o.held) { o.held.removeFromParent(); dispose(o.held); o.held = null; }
+    if (o.held) { o.held.removeFromParent(); if (!o.held.userData.tablet) dispose(o.held); o.held = null; }   // 平板的畫面是大家共用的，不丟掉
     o.hold = s && (s[0] === 'can' || s[0] === 'tablet' || SPECIES[s[0]]) ? s : null;
     if (!o.hold) return;
-    if (o.hold[0] === 'tablet') {
-      o.held = makeTabletMesh();
-      o.held.position.set(0.4, 1.12, 0);
-      o.fig.mesh.add(o.held);
+    if (o.hold[0] === 'tablet') {   // 平板：雙手捧著，螢幕是他正在看的畫面（[1] 是第幾個畫面）
+      o.held = makeTabletMesh(Math.round(o.hold[1]) || 0);
+      holdTablet(o.fig.mesh, o.held);
       return;
     }
     o.held = o.hold[0] === 'can' ? makeCanMesh() : makeFishMesh(SPECIES[o.hold[0]], o.hold[1]);
@@ -205,6 +204,7 @@ export class Others {
       f.look(s[6], s[7]);
       f.off.set(0, 0, 0);
       f.puppet(dt, { moving: !!(flags & 1), run: !!(flags & 2), swim: !!(flags & 4), carry: !!(flags & 8), rod: !!(flags & 16), seated: !!(flags & 64), h: s[5] });
+      if (o.held && o.held.userData.tablet) poseTablet(o.held);   // 平板跟著手抬起來
       // 釣竿握在右手；線放出去之後竿子的角度跟著變（拋出去時往前倒、拉魚時往後扳）
       const rod = o.rod, ln = o.ln;
       rod.visible = !!(flags & 16) && !helm;

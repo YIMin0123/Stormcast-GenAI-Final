@@ -364,6 +364,10 @@ export class Player {
     const swing = air ? 0.65 * this.airSide : this.moving ? stroke * (swim ? 0.45 : run ? 1.1 : 0.78) : 0;
     const { legs, arms, head } = this.mesh.userData;
     const ease = 1 - Math.exp(-dt * 14);
+    // 剛開始捧東西或剛放下時，手臂抬起／放下慢一點（拿起平板、把魚抱起來的動作看得到）
+    if (this.carry !== this.wasCarry) { this.wasCarry = this.carry; this.liftT = 0.6; }
+    this.liftT = Math.max(0, (this.liftT || 0) - dt);
+    const armE = this.liftT > 0 ? 1 - Math.exp(-dt * 7) : ease;
     const shift = idle ? 0.06 * Math.sin(T * 1.3) : 0;
     // 游泳：往前游時兩腿快速交替打水；停著踩水時兩腿慢慢一前一後地踩
     const kick = swim ? (this.moving ? 0.42 * Math.sin(T * 13) : 0.32 * Math.sin(T * 3.2)) : 0;
@@ -376,13 +380,13 @@ export class Player {
     const scull = 0.15 * Math.sin(T * 3.2);
     const armL = this.carry ? 1.15 : tread ? 1.25 + scull : paddle ? 2.3 + stroke * 0.9 : -swing * 1.05 + loose;
     const armR = this.carry ? 1.15 : tread ? 1.25 - scull : paddle ? 2.3 - stroke * 0.9 : this.rod ? 0.95 : swing * 1.05 - loose;
-    arms[0].rotation.z += (armL - arms[0].rotation.z) * ease;
-    arms[1].rotation.z += (armR - arms[1].rotation.z) * ease;
+    arms[0].rotation.z += (armL - arms[0].rotation.z) * armE;
+    arms[1].rotation.z += (armR - arms[1].rotation.z) * armE;
     // 手臂往兩旁張開多少：平常張成 A 字（手才不會插進裙子，也比較像設定圖），走路時多一點，跳起來時舉高
     for (const arm of arms) {
       const side = arm.userData.side, busy = this.carry || (paddle && !tread) || (this.rod && side > 0);
       const out = tread ? 0.55 + 0.35 * Math.sin(T * 3.2) : busy ? 0 : 0.48 + (air ? 0.8 : this.moving ? 0.08 : 0.04 * Math.sin(T * 1.7 + side));
-      arm.rotation.x += (-side * out - arm.rotation.x) * ease;
+      arm.rotation.x += (-side * out - arm.rotation.x) * armE;
     }
     if (swim && !this.moving) this.phase += dt * 2.5;   // 停在水裡時踩水
     const walking = this.moving && !swim && !air;
