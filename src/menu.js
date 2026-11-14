@@ -2,6 +2,7 @@
 // 背景照常畫著港口，只是人還不能動。
 import { TEST, QUERY } from './net.js';
 import { startLookPick } from './lookPick.js';
+import { NOTICE, nextRefreshAt, countdownText, refreshLabel } from './announce.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -14,8 +15,16 @@ export function runMenu(net, onLook) {
     let busy = false, finished = false;
     const stopPick = startLookPick(onLook);
 
+    // 公告與「距離下次刷新」倒數（每秒更新，進了房間就停）
+    $('noticeTitle').textContent = NOTICE.title;
+    $('noticeList').replaceChildren(...NOTICE.items.map((t) => Object.assign(document.createElement('li'), { textContent: t })));
+    const tick = () => { const at = nextRefreshAt(); $('refreshLeft').textContent = countdownText(at - Date.now()); $('refreshAt').textContent = `${refreshLabel(at)}（台灣時間）`; };
+    tick();
+    const timer = setInterval(tick, 1000);
+
     const finish = (joined) => {
       finished = true;
+      clearInterval(timer);
       stopPick();
       box.style.display = 'none';
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();

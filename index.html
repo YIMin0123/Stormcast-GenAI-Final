@@ -167,6 +167,16 @@
     #menu, #net { position: fixed; inset: 0; display: none; padding: 12px; box-sizing: border-box; overflow-y: auto;
       background: rgba(14, 53, 80, 0.38); z-index: 40; }
     #menu .card, #net .card { position: static; margin: auto; padding: 24px 30px 22px; width: min(380px, calc(100vw - 32px)); box-sizing: border-box; text-align: center; user-select: auto; }
+    #menu { flex-wrap: wrap; gap: 16px; justify-content: center; align-content: center; }   /* 名字卡片旁邊放公告；窄的畫面公告掉到下面 */
+    #menu #notice { width: min(330px, calc(100vw - 32px)); text-align: left; margin: auto 0; }
+    #menu #notice h2 { text-align: center; }
+    #noticeList { margin: 0 0 12px; padding-left: 20px; font-size: 14px; line-height: 1.6; color: var(--ink); }
+    #noticeList li { margin-bottom: 6px; }
+    #refreshBox { text-align: center; padding: 10px 8px 8px; border-radius: 14px; background: var(--btn); border: 2px solid var(--line); }
+    #refreshBox span { display: block; font-size: 13px; color: var(--ink-2); }
+    #refreshBox b { display: block; margin: 2px 0; font-size: 22px; font-weight: 400; letter-spacing: 1px; color: var(--sea-d); font-variant-numeric: tabular-nums; }
+    #refreshBox small { font-size: 12px; color: var(--ink-2); }
+    body.touch #notice { display: none; }   /* 手機橫著畫面太矮，公告不顯示 */
     #menu h1 { margin: 0 0 4px; font-size: 34px; font-weight: 400; letter-spacing: 3px; color: var(--sea); text-shadow: 0 2px 0 var(--btn), 0 4px 0 rgba(29, 111, 159, 0.2); }
     #menu h2 { margin: 0 0 4px; font-size: 22px; font-weight: 400; letter-spacing: 2px; color: var(--sea-d); }
     #menu p { margin: 0 0 16px; color: var(--ink-2); font-size: 14px; }
@@ -387,6 +397,11 @@
       <div id="roomList"></div>
       <div id="lobbyMsg"></div>
       <button id="lobbyBack">換個名字</button>
+    </div>
+    <div id="notice" class="card">
+      <h2 id="noticeTitle"></h2>
+      <ul id="noticeList"></ul>
+      <div id="refreshBox"><span>距離下次全服刷新</span><b id="refreshLeft"></b><small id="refreshAt"></small></div>
     </div>
   </div>
   <div id="net"><div class="card"><p id="netMsg"></p><button id="netRetry">回到大廳</button></div></div>
