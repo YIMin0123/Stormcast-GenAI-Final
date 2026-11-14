@@ -2,8 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import * as THREE from 'three';
-import { WALLS, inWall, deckY, DECK_Y } from '../src/layout.js';
+import { WALLS, inWall, deckY, DECK_Y, BERTHS, berthPose } from '../src/layout.js';
 import { toLocal, toWorld } from '../src/frame.js';
+import { BOAT_TYPES } from '../src/boatdata.js';
 import { SHOP } from '../src/lowpoly/harborPlan.js';
 import { BAY, PORT } from '../src/lowpoly/havenPlan.js';
 import { portFoundation, portWall } from '../src/lowpoly/havenShape.js';
@@ -12,9 +13,11 @@ import { portFoundation, portWall } from '../src/lowpoly/havenShape.js';
 registerHooks({ resolve(specifier, context, nextResolve) {
   if (context.parentURL?.endsWith('/src/player.js') && specifier === './boat.js') return { url: 'data:text/javascript,export const buildFigure = () => ({})', shortCircuit: true };
   if (context.parentURL?.endsWith('/src/player.js') && specifier === './emotes.js') return { url: 'data:text/javascript,export const ACTION_BY_ID = {}; export const MOOD_TIME = 0', shortCircuit: true };
+  if (context.parentURL?.endsWith('/src/boat.js') && specifier === './figure.js') return { url: 'data:text/javascript,export const buildFigure = () => ({})', shortCircuit: true };
   return nextResolve(specifier, context);
 } });
 const { Player } = await import('../src/player.js');
+const { Boat } = await import('../src/boat.js');
 
 test('商店開口兩側的牆與通道', () => {
   const blocked = (x, z) => WALLS.some((wall) => inWall(wall, x, z));
@@ -83,6 +86,49 @@ test('沿真實母港座標從停靠的船跳上棧橋', () => {
   for (let i = 0; i < 14; i++) p.update(0.05, tx - x, tz - z, false, false, world);
   assert.ok(p.boat === null && p.h === 0 && Math.abs(p.y - DECK_Y) < 1e-9,
     `未落在棧橋：y=${p.y}, h=${p.h}, boat=${!!p.boat}`);
+});
+
+test('從棧橋跨過水面上船時，跨步不能轉成彈飛的速度', () => {
+  for (const dt of [1 / 20, 1 / 60, 1 / 120]) {
+    const boat = { sinking: false, heading: 0, toLocal: (x, z) => ({ x, z }), toWorld: (x, z) => ({ x, z }),
+      deckContains: (x) => x > 0.6 && x < 4, blockedLocal: () => false, deckY: () => 0.32 };
+    const world = { boats: [boat], water: () => 0, ground: (x, _z, under) => !under && x <= 0 ? 1.3 : -3 };
+    const p = new Player(-0.01, 0, 0);
+    p.animate = () => {}; p.base = p.y = 1.3;
+    p.update(dt, 1, 0, false, false, world);
+    assert.equal(p.boat, boat, `dt=${dt} 時沒有跨上船`);
+    assert.ok(p.airVX <= 3.2 + 1e-6, `dt=${dt} 的跨步速度異常：${p.airVX}`);
+    const x = p.x;
+    for (let t = 0; t < 0.2; t += dt) p.update(dt, 0, 0, false, false, world);
+    assert.ok(p.x - x < 1, `dt=${dt} 時上船後彈飛了 ${p.x - x} 公尺`);
+  }
+});
+
+test('從船跨上橋並跳起時，也不能把跨步距離當成慣性', () => {
+  const boat = { sinking: false, heading: 0, toLocal: (x, z) => ({ x, z }), toWorld: (x, z) => ({ x, z }),
+    deckContains: (x) => x > 0.6 && x < 4, blockedLocal: () => false, deckY: () => 0.32 };
+  const world = { boats: [boat], water: () => 0, ground: (x, _z, under) => !under && x <= 0 ? 1.3 : -3 };
+  const p = new Player(0.61, 0, 0);
+  p.animate = () => {}; p.boat = boat; p.lx = p.x; p.lz = 0; p.base = p.y = 0.32;
+  p.update(1 / 60, -1, 0, false, true, world);
+  assert.equal(p.boat, null);
+  assert.ok(p.h > 0 && p.airVX < 0 && p.airVX >= -3.2 - 1e-6, `跳起速度異常：${p.airVX}`);
+});
+
+test('母港實際泊位的三種船，從橋上跨船不會產生異常速度', () => {
+  for (const berth of [BERTHS[0], BERTHS[1], BERTHS[16], BERTHS[17]]) {
+    for (const type of ['skiff', 'fisher', 'trawler']) {
+      const boat = Object.create(Boat.prototype), pose = berthPose(berth, type);
+      Object.assign(boat, pose, { spec: BOAT_TYPES[type], y: 0, normal: new THREE.Vector3(0, 1, 0), blocks: [], sinking: false });
+      const [x, z] = toWorld(berth.ex - berth.nx * 0.01, berth.ez - berth.nz * 0.01);
+      const world = { boats: [boat], water: () => 0, ground: (wx, wz, under) => under ? -3 : deckY(wx, wz) ?? -3 };
+      const p = new Player(x, z, 0);
+      p.animate = () => {}; p.base = p.y = DECK_Y;
+      p.update(1 / 60, Math.cos(pose.heading), Math.sin(pose.heading), false, false, world);
+      assert.equal(p.boat, boat, `${berth.label} ${type} 未能跨上船`);
+      assert.ok(Math.hypot(p.airVX, p.airVZ) <= 3.2 + 1e-6, `${berth.label} ${type} 速度異常`);
+    }
+  }
 });
 
 test('高速飛行不會在一幀內穿過薄牆', () => {

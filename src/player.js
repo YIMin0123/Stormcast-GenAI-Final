@@ -30,6 +30,7 @@ export class Player {
     this.airVX = 0; this.airVZ = 0;        // 離地時保留的水平速度（世界座標）
     this.groundVX = 0; this.groundVZ = 0;  // 這一幀人物自己在地面移動的速度
     this.flowVX = 0; this.flowVZ = 0;      // 腳下河水的水平速度
+    this.hopExtraX = 0; this.hopExtraZ = 0; // 跨過船與碼頭間隙的額外補位，不算作速度
     this.off = new THREE.Vector3();        // 跨步、踏階時用來平滑畫面的偏移
     this.pos = new THREE.Vector3();        // 畫面上的位置（鏡頭跟這個）
     this.phase = 0;
@@ -169,6 +170,7 @@ export class Player {
         if (t === 'wall') break;
         if (t.swim) continue;
         if (t.boat === this.boat || !this._reach(t)) break;
+        this.hopExtraX += hx - this.x - dx; this.hopExtraZ += hz - this.z - dz;
         this.off.x += this.x - hx; this.off.z += this.z - hz;
         this._enter(t, hx, hz);
         return true;
@@ -239,6 +241,7 @@ export class Player {
 
     const airborne = this.h > 0 && !fly && !seat;
     const startX = this.x, startZ = this.z;
+    this.hopExtraX = this.hopExtraZ = 0;
     this.groundVX = this.groundVZ = 0;
     const len = Math.hypot(dirX, dirZ);
     this.moving = len > 0.01;
@@ -275,7 +278,8 @@ export class Player {
       }
     }
     if (!airborne && dt > 0 && !fly) {
-      this.groundVX = (this.x - startX) / dt; this.groundVZ = (this.z - startZ) / dt;
+      this.groundVX = (this.x - startX - this.hopExtraX) / dt;
+      this.groundVZ = (this.z - startZ - this.hopExtraZ) / dt;
       if (this.h > 0) this._launch();
     }
     if (this.moving) {
