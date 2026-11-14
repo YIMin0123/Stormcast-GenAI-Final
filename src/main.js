@@ -12,7 +12,7 @@ import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_RO
 import { WORLD, THROW, DEVMODE, SHORE_WIND, CLOUDS, FISHBOX, TABLET } from './config.js';
 import { Tablet } from './tablet.js';
 import { makeApps } from './tabletApps.js';
-import { makeTabletMesh, holdTablet, poseTablet, setTabletScreen } from './tabletMesh.js';
+import { makeTabletMesh, holdTablet, poseTablet, setTabletScreen, TABLET_SIZE } from './tabletMesh.js';
 import { fishThumbs } from './fishThumbs.js';
 import { placeAt } from './places.js';
 import { bearing, dirName, whereFrom, beaufort, windWord, clockOf, skyOf, tideText, tideShort, forecast, signsOf } from './tabletData.js';
@@ -1825,6 +1825,7 @@ function updateCamera(dt) {
     orbit(camHeading + v.yaw, v.pitch, v.dist);
     setNear(1);
   }
+  tabletCam(dt);   // 拿著平板：鏡頭拉過去對著它（見「平板」那段）
 }
 
 // ---- 掌舵 -----------------------------------------------------------------
@@ -3442,6 +3443,90 @@ function drawMap(cv, filt) {
 // 這裡把遊戲裡的資料交給平板：時間天氣、自己的船、圖鑑、背包、同房的人；按鈕按下去要做的事也在這裡
 let tabHand = false, tabMesh = null, tabScreen = 0;   // 手上拿著平板（給自己和別人看的 3D 模型）、螢幕上是哪個畫面（tabletMesh.js 的 SCREENS）
 const tabletScreen = () => (tablet.cur ? tablet.apps.findIndex((a) => a.id === tablet.cur) + 1 : 0);
+// 看手上的平板：拿出來時鏡頭（第一、第三人稱都一樣）沿著平板正面往後退到剛好框住它（佔畫面 TABLET.fill），
+// 收起來再回原本的位置；平板介面（網頁）照 3D 平板四個角的位置貼上去，點得到。沒辦法拿在手上時（抱著魚、掌舵、游泳）照舊是大螢幕
+let tabView = 0;   // 0 平常的鏡頭 → 1 對著手上的平板
+const _tvC = new THREE.Vector3(), _tvN = new THREE.Vector3(), _tvU = new THREE.Vector3(), _tvP = new THREE.Vector3(), _tvM = new THREE.Matrix4(), _tvQ = new THREE.Quaternion();
+const _tvK = new THREE.Vector3(), _tvPlane = new THREE.Plane();
+let ownHidden = false;
+const easeIO = (t) => t * t * (3 - 2 * t);
+function tabletCam(dt) {
+  const want = tabHand && tabMesh && tabMesh.parent;
+  tabView = clamp(tabView + (want ? dt : -dt) / TABLET.viewSec, 0, 1);
+  const k = easeIO(tabView);
+  if (k <= 0 || !tabMesh || !tabMesh.parent) { ownBody(false); return; }
+  tabMesh.updateWorldMatrix(true, false);
+  const m = tabMesh.matrixWorld, S = TABLET_SIZE;
+  _tvC.set(0, S.t / 2, 0).applyMatrix4(m);
+  _tvN.set(0, 1, 0).transformDirection(m);   // 螢幕正面朝的方向
+  _tvU.set(1, 0, 0).transformDirection(m);   // 螢幕的「上」
+  const th = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2), fill = TOUCH ? TABLET.fillTouch : TABLET.fill;
+  const d = Math.max(S.w / (2 * th * camera.aspect * fill), S.h / (2 * th * fill));
+  _tvP.copy(_tvC).addScaledVector(_tvN, d);
+  _tvQ.setFromRotationMatrix(_tvM.lookAt(_tvP, _tvC, _tvU));
+  camera.position.lerp(_tvP, k);
+  camera.quaternion.slerp(_tvQ, k);
+  setNear(0.05);
+  // 自己的身體：鏡頭靠近頭的時候只留手臂，而且離鏡頭太近的那段（肩膀、上臂）切掉，免得擋住
+  ownBody(k > 0.3, d);
+}
+function ownBody(on, d = 0) {
+  const u = player.mesh.userData, mat = u.mats[0];
+  if (on) {
+    camera.getWorldDirection(_tvK);
+    _tvPlane.set(_tvK, -(_tvK.dot(camera.position) + d * 0.7));   // 比平板近 3 成以內的都切掉
+    if (!ownHidden) {
+      ownHidden = true;
+      renderer.localClippingEnabled = true;
+      for (const x of u.mats) { x.colorWrite = x.depthWrite = true; }
+      for (const x of u.fpHide) x.visible = false;
+      for (const x of u.fpShow) x.visible = true;
+      player.mesh.traverse((x) => { if (x.userData.hull && x.parent.userData.figure) x.visible = false; });
+      mat.clippingPlanes = [_tvPlane];
+    }
+  } else if (ownHidden) {
+    ownHidden = false;
+    mat.clippingPlanes = null;
+    for (const x of u.fpHide) x.visible = true;
+    for (const x of u.fpShow) x.visible = false;
+    player.setFirstPerson(mode === 'walk' && view.walk.fp);
+  }
+}
+// 平板介面貼到手上那台的螢幕：四個角投影到畫面上，算一個透視變換（matrix3d）
+const _tvCorner = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+let tabHeld = false;
+function placeTabletDom() {
+  // 收起來時（tablet.open 已經是 false）也照樣貼著，跟著手放下去、淡掉，等平板整個藏起來（#tab 沒有 on）才放掉
+  const held = tabView > 0 && !!tabMesh && !!tabMesh.parent && tablet.root.classList.contains('on');
+  if (held !== tabHeld) {
+    tabHeld = held;
+    tablet.root.classList.toggle('held', held);
+    tablet.root.style.setProperty('--dw', `${TOUCH ? TABLET.domWTouch : TABLET.domW}px`);
+    if (!held) { tablet.dev.style.transform = tablet.dev.style.opacity = tablet.dev.style.pointerEvents = ''; }
+  }
+  if (!held) return;
+  const S = TABLET_SIZE, m = tabMesh.matrixWorld, W = window.innerWidth, H = window.innerHeight;
+  // 左上、右上、右下、左下（螢幕的上是平板本身的 +X、右是 +Z）
+  [[S.h / 2, -S.w / 2], [S.h / 2, S.w / 2], [-S.h / 2, S.w / 2], [-S.h / 2, -S.w / 2]].forEach(([x, z], i) => _tvCorner[i].set(x, S.t / 2 + 0.001, z).applyMatrix4(m));
+  camera.updateMatrixWorld();
+  const front = _tvK.copy(camera.position).sub(_tvC.set(0, S.t / 2, 0).applyMatrix4(m)).dot(_tvN.set(0, 1, 0).transformDirection(m)) > 0;
+  const pts = _tvCorner.map((v) => { const p = v.clone().project(camera); return [(p.x * 0.5 + 0.5) * W, (-p.y * 0.5 + 0.5) * H, p.z]; });
+  const op = front && pts.every((p) => p[2] < 1) ? clamp((tabView - 0.55) / 0.35, 0, 1) : 0;
+  const dev = tablet.dev, dw = TOUCH ? TABLET.domWTouch : TABLET.domW;
+  dev.style.opacity = op.toFixed(2);
+  dev.style.pointerEvents = op > 0.9 ? '' : 'none';
+  if (op > 0) dev.style.transform = quadMatrix(dw, dw / 1.42, pts);
+}
+// 把 w×h 的長方形對到四個點（左上、右上、右下、左下）的透視變換（Heckbert 的正方形→四邊形）
+function quadMatrix(w, h, q) {
+  const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = q;
+  const dx1 = x1 - x2, dx2 = x3 - x2, dx3 = x0 - x1 + x2 - x3, dy1 = y1 - y2, dy2 = y3 - y2, dy3 = y0 - y1 + y2 - y3;
+  const den = dx1 * dy2 - dx2 * dy1 || 1e-9;
+  const g = (dx3 * dy2 - dx2 * dy3) / den, hh = (dx1 * dy3 - dx3 * dy1) / den;
+  const a = x1 - x0 + g * x1, b = x3 - x0 + hh * x3, c = x0, d = y1 - y0 + g * y1, e = y3 - y0 + hh * y3, f = y0;
+  const n = [a / w, d / w, 0, g / w, b / h, e / h, 0, hh / h, 0, 0, 1, 0, c, f, 0, 1];
+  return `matrix3d(${n.map((v) => +v.toFixed(8)).join(',')})`;
+}
 let storedInfo = {};                   // 伺服器說倉庫裡的船：船種 → { fuel, hp 0–1 }
 let dexBook = {};                      // 圖鑑（伺服器存的）：魚種 → { n, len, kg, at }
 const dexNew = new Set();              // 這次新釣到、還沒在圖鑑裡看過的魚種
@@ -3556,7 +3641,7 @@ tablet = new Tablet(makeApps(tabEnv), {
     const w = weatherNow(), b = myBoat, S = b.spec;
     const clock = `<div class="sub">${w.part}</div><div class="big">${w.hm}</div><div>${ICON[w.skyIcon]} ${w.skyText}・${w.windFrom}風 ${w.windLv} 級</div><div class="sub">浪約 ${w.waveOpen.toFixed(1)} 公尺・${w.tideShort}</div>`;
     const lowF = b.fuel < S.tank * TABLET.lowFuel, lowH = b.hp < S.hp * TABLET.lowHp;
-    const boatW = `<div style="display:flex;gap:8px;align-items:baseline"><span>${ICON.boat} ${S.name}</span><span class="sub" style="margin-left:auto;text-align:right">${boatWhere(b)}</span></div>`
+    const boatW = `<div style="display:flex;gap:8px;align-items:baseline"><span style="white-space:nowrap">${ICON.boat} ${S.name}</span><span class="sub" style="margin-left:auto;text-align:right">${boatWhere(b)}</span></div>`
       + (b.sinking ? '<div class="sub" style="color:var(--coral-d)">沉了：港口會補一艘給你</div>'
         : `<div class="tbRows" style="margin:6px 0 0"><span>耐久</span><div class="tbMeter"><i style="width:${Math.round(b.hp / S.hp * 100)}%"${lowH ? ' class="low"' : ''}></i></div><span>${Math.round(b.hp / S.hp * 100)}%</span>`
         + `<span>燃油</span><div class="tbMeter"><i style="width:${Math.round(b.fuel / S.tank * 100)}%"${lowF ? ' class="low"' : ''}></i></div><span>${Math.floor(b.fuel)} 公升</span></div>`);
@@ -4172,13 +4257,11 @@ function advance(dt) {
   // 拿著平板（空手、走路、沒在游泳時才拿在手上；別人也看得到）
   tabHand = tabOpen() && !fish.held && !hbx && mode === 'walk' && !player.swim && !player.seat;
   tabScreen = tabHand ? tabletScreen() : 0;
-  tablet.setFp(mode === 'walk' && view.walk.fp);
   // 拿起來：平板跟著手從腰邊抬到胸前；收起來：等手放下去才拿掉（手上要拿別的東西就馬上拿掉）
   if (tabHand && !(tabMesh && tabMesh.parent)) { tabMesh = tabMesh || makeTabletMesh(); holdTablet(player.mesh, tabMesh); }
   if (tabMesh && tabMesh.parent) {
     const k = poseTablet(tabMesh);
     if (!tabHand && (k < 0.3 || fish.held || hbx || mode !== 'walk' || player.swim || player.seat)) tabMesh.removeFromParent();
-    tabMesh.visible = !view.walk.fp;   // 第一人稱：自己手上的平板就是畫面上那塊（tablet.js 畫雙手），3D 的不畫
   }
   if (tabHand) setTabletScreen(tabMesh, tabScreen);   // 螢幕上畫的是現在開著的畫面（別人看到的也是）
   player.carry = !!fish.held || !!hbx || tabHand;
@@ -4235,6 +4318,7 @@ function advance(dt) {
 
 function drawFrame(dt) {
   updateCamera(dt);
+  placeTabletDom();
   lpUniforms.uTime.value = time;   // 低面模型（樹、草）隨風搖
   seascape.update(time, camera.position);   // 燈標閃光；太遠、被霧蓋掉的島不畫
   havenFx.update(dt, time, camera.position);

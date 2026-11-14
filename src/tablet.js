@@ -15,18 +15,26 @@ const CSS = `
   transform: translateY(78vh) rotateX(38deg) scale(0.8); transform-origin: 50% 100%; opacity: 0.4;
   transition: transform var(--lift) cubic-bezier(0.22, 0.8, 0.3, 1), opacity calc(var(--lift) * 0.6); }
 #tab.show .tbDev { transform: none; opacity: 1; }
-/* 第一人稱：看得到自己的雙手捧著平板（兩隻大拇指壓在邊框上、手掌包住兩側、前臂往畫面下方伸出去） */
-.tbHand { display: none; position: absolute; top: 56%; width: 15%; height: 120vh; z-index: 8; pointer-events: none; }
-#tab.fp .tbHand { display: block; }
-.tbHand.l { left: -7.5%; } .tbHand.r { right: -7.5%; transform: scaleX(-1); }
-.tbHand .arm { position: absolute; left: 6%; top: 18%; width: 62%; height: 100%; border-radius: 40% 40% 0 0; transform: rotate(16deg); transform-origin: 50% 0;
-  background: linear-gradient(90deg, #e9b28e, #f7cfb0 45%, #efbf9c); box-shadow: inset -3px 0 0 rgba(160, 90, 60, 0.25); }
-.tbHand .palm { position: absolute; left: 4%; top: 0; width: 66%; height: 27vh; max-height: 46%; border-radius: 48% 44% 40% 46%;
-  background: radial-gradient(ellipse at 60% 35%, #fbd9bd, #f2c29f 60%, #e3a985); box-shadow: 0 6px 14px rgba(5, 20, 35, 0.28), inset -4px -6px 0 rgba(170, 100, 70, 0.18); }
-.tbHand .thumb { position: absolute; left: 52%; top: 6%; width: 30%; height: 13vh; max-height: 24%; border-radius: 999px; transform: rotate(-24deg); transform-origin: 50% 90%;
-  background: linear-gradient(90deg, #f7cfb0, #fbdcc3 50%, #eebd9a); box-shadow: 2px 3px 6px rgba(5, 20, 35, 0.3), inset 0 -4px 0 rgba(170, 100, 70, 0.15); }
-.tbHand .thumb::after { content: ''; position: absolute; left: 22%; top: 7%; width: 56%; height: 22%; border-radius: 45%; background: rgba(255, 238, 228, 0.85); }
-body.touch .tbHand { display: none !important; }   /* 手機的平板幾乎佔滿畫面，手會擋到按鈕：不畫 */
+/* 拿在手上：介面貼在手上那台平板的螢幕上（main.js 每幀照 3D 平板四個角算好透視，寫進 transform）；大螢幕不出現 */
+#tab.held { background: transparent; perspective: none; }
+#tab.held .tbDev { position: fixed; left: 0; top: 0; width: var(--dw, 900px); height: calc(var(--dw, 900px) / 1.42); aspect-ratio: auto; transform-origin: 0 0;
+  transition: opacity 0.12s; box-shadow: inset 0 0 0 2px #3b4b59; border-radius: 12px; padding: 12px; }   /* 圓角小一點，貼齊 3D 平板的方角 */
+#tab.held .tbScr { border-radius: 9px; }
+/* 拿在手上時主畫面的小工具和 app 圖示大一號，填滿螢幕 */
+#tab.held .tbHome { padding: 16px 28px 30px; gap: 26px; }
+#tab.held .tbW { min-height: 132px; padding: 14px 18px; font-size: 15px; }
+#tab.held .tbW .big { font-size: 42px; }
+#tab.held .tbGrid { grid-template-columns: repeat(4, 1fr); gap: 26px 10px; }
+#tab.held .tbIco { font-size: 15px; gap: 8px; }
+#tab.held .tbIco b { width: 84px; height: 84px; border-radius: 22px; }
+#tab.held .tbIco b .ic { width: 46px; height: 46px; }
+body.touch #tab.held .tbHome { padding: 8px 18px 22px; gap: 12px; }
+body.touch #tab.held .tbW { min-height: 104px; padding: 9px 14px; font-size: 13px; }
+body.touch #tab.held .tbW .big { font-size: 34px; }
+body.touch #tab.held .tbGrid { grid-template-columns: repeat(4, 1fr); gap: 8px 6px; }   /* 手機也兩排（四個＋三個），圖示小一點才放得下 */
+body.touch #tab.held .tbIco { font-size: 13px; }
+body.touch #tab.held .tbIco b { width: 54px; height: 54px; border-radius: 15px; }
+body.touch #tab.held .tbIco b .ic { width: 30px; height: 30px; }
 .tbScr { position: relative; width: 100%; height: 100%; border-radius: 22px; overflow: hidden; font-family: var(--font); color: var(--ink); user-select: none;
   background: linear-gradient(180deg, #6fc1ec 0%, #a9def5 40%, #ffe2b4 49.5%, #4aa3d6 50.5%, #2c8fc9 64%, #1d6f9f 100%); }
 .tbScr.night { background: linear-gradient(180deg, #0f2440 0%, #1f3f66 42%, #3b5f86 49.5%, #17406a 50.5%, #123556 70%, #0b2440 100%); }
@@ -99,9 +107,9 @@ export class Tablet {
     const root = this.root = document.createElement('div');
     root.id = 'tab';
     root.innerHTML = `<div class="tbDev"><div class="tbScr"><div class="tbSun"></div><div class="tbBar"></div><div class="tbHome"><div class="tbWid"></div><div class="tbGrid"></div></div>
-      <button class="tbHomeBar" aria-label="回主畫面"></button></div>
-      <i class="tbHand l"><b class="arm"></b><b class="palm"></b><b class="thumb"></b></i><i class="tbHand r"><b class="arm"></b><b class="palm"></b><b class="thumb"></b></i></div>`;
+      <button class="tbHomeBar" aria-label="回主畫面"></button></div></div>`;
     document.body.appendChild(root);
+    this.dev = root.querySelector('.tbDev');   // 外框（拿在手上時 main.js 把它貼到 3D 平板的螢幕上）
     this.scr = root.querySelector('.tbScr');
     this.bar = root.querySelector('.tbBar');
     this.home = root.querySelector('.tbHome');
@@ -149,8 +157,6 @@ export class Tablet {
   }
   // Esc：app 裡回主畫面，主畫面就收起來
   back() { if (this.cur) this.go(null); else this.hide(); }
-  // 第一人稱時畫出自己的雙手（main.js 每幀告訴它）
-  setFp(on) { if (on !== this._fp) { this._fp = on; this.root.classList.toggle('fp', on); } }
 
   // 切換：null = 主畫面
   go(id, from = null) {

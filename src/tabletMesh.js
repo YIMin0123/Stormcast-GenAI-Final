@@ -2,8 +2,10 @@
 // 螢幕上畫的是他正在看的畫面（主畫面或哪個 app，簡化過的樣子，每種畫一次重複用）
 import * as THREE from 'three';
 
-// 平板的大小（公尺）：寬（左右，兩隻手握在兩側）、高（螢幕上下）
-const W = 0.38, H = 0.26, T = 0.014, BEZEL = 0.014;
+// 平板的大小（公尺）：寬（左右）、高（螢幕上下，寬高比跟網頁上的平板一樣 1.42）。兩手在背後托著，從正面看不到手
+const W = 0.72, H = W / 1.42, T = 0.02, BEZEL = 0.024;
+const FRONT = 0.07;   // 平板比兩手心往螢幕那面推出去多少：手在平板背後，不會擋到螢幕
+export const TABLET_SIZE = { w: W, h: H, t: T };
 const CARRY = 1.15;   // 捧東西時手臂往前抬的角度（跟 player.js 的 carry 一樣）
 const TILT = 1.0;     // 螢幕往人臉那邊斜的角度
 // 螢幕畫面的順序：0 主畫面，之後照平板上 app 的順序（tabletApps.js）
@@ -110,7 +112,8 @@ export function poseTablet(tab) {
   const u = tab.userData.fig.userData, up = u.upper;
   const [l, r] = u.arms.map((a, i) => up.worldToLocal(a.userData.grip.getWorldPosition(i ? _b : _a)));
   const k = Math.min(1, Math.max(0, (u.arms[0].rotation.z + u.arms[1].rotation.z) / (2 * CARRY)));
-  tab.position.set((l.x + r.x) / 2 + 0.01, (l.y + r.y) / 2 + 0.03, (l.z + r.z) / 2);
   tab.rotation.z = TILT + (1 - k) * 0.55;   // 剛拿起來時比較直立，抬到胸前才斜成看得到螢幕
+  const a = tab.rotation.z;   // 平板的正面（本身的 +Y）在上半身裡朝 (-sin a, cos a)：往那邊推出去
+  tab.position.set((l.x + r.x) / 2 - Math.sin(a) * FRONT, (l.y + r.y) / 2 + Math.cos(a) * FRONT, (l.z + r.z) / 2);
   return k;
 }
