@@ -63,6 +63,7 @@ body.touch #tab.held .tbIco b .ic { width: 30px; height: 30px; }
 .tbIco:active b { transform: scale(0.92); }
 .tbBadge { position: absolute; top: -6px; right: 6px; min-width: 21px; height: 21px; padding: 0 6px; box-sizing: border-box; border-radius: 999px; background: var(--bad);
   color: #fff; font-size: 12px; line-height: 21px; text-align: center; text-shadow: none; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3); }
+.tbBadge.dot { min-width: 0; width: 15px; height: 15px; padding: 0; top: -3px; right: 12px; border: 2px solid #fff; }
 .tbApp { position: absolute; inset: 0; z-index: 2; padding-top: 28px; box-sizing: border-box; display: flex; flex-direction: column; background: #cdedf9; }
 .tbApp.zoom { animation: tbZoom 0.2s ease-out; }
 @keyframes tbZoom { from { transform: scale(0.35); opacity: 0; } to { transform: none; opacity: 1; } }
@@ -196,7 +197,9 @@ export class Tablet {
       if (wk !== this._wKey || force) { this._wKey = wk; this.wid.innerHTML = wk; }
       for (const a of this.apps) {
         const el = this.badges.get(a.id), v = a.badge ? a.badge() : '';
-        if (el.textContent !== String(v)) el.textContent = v;
+        const dot = v === '•';   // 小紅點（不寫數字）：只有「有」跟「沒有」
+        el.classList.toggle('dot', dot);
+        if (el.textContent !== (dot ? '' : String(v))) el.textContent = dot ? '' : v;
         el.hidden = !v;
       }
     } else {

@@ -161,6 +161,7 @@
       box-shadow: 0 2px 10px rgba(10, 30, 50, 0.18); pointer-events: none; user-select: none; z-index: 14; }
     #keybar > span { white-space: nowrap; }
     #keybar kbd { margin-right: 4px; }
+    #keybar .kdot { display: inline-block; width: 9px; height: 9px; margin-left: 4px; border-radius: 50%; background: var(--bad); vertical-align: middle; }   /* 「Tab 平板」旁的小紅點 */
     /* 進遊戲前：填名字、挑房間。背景是半透明的，看得到後面的港口。卡片比畫面高時可以捲，不會被切掉 */
     #menu, #net { position: fixed; inset: 0; display: none; padding: 12px; box-sizing: border-box; overflow-y: auto;
       background: rgba(14, 53, 80, 0.38); z-index: 40; }
@@ -172,6 +173,13 @@
     #menu #notice h2 { text-align: center; }
     #noticeList { margin: 0 0 12px; padding-left: 20px; font-size: 14px; line-height: 1.6; color: var(--ink); }
     #noticeList li { margin-bottom: 6px; }
+    #updTitle { margin: 4px 0 6px; font-size: 15px; font-weight: 400; letter-spacing: 1px; color: var(--sea-d); }
+    #updList { margin: 0 0 12px; font-size: 13px; line-height: 1.55; color: var(--ink); }
+    #updList section { margin-bottom: 8px; padding: 6px 10px 4px; border-radius: 12px; background: var(--btn); border: 2px solid var(--line); }
+    #updList h4 { margin: 0 0 2px; font-size: 14px; font-weight: 400; color: var(--sea-d); display: flex; justify-content: space-between; gap: 8px; }
+    #updList h4 small { font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+    #updList ul { margin: 0 0 4px; padding-left: 18px; }
+    #updList li { margin-bottom: 2px; }
     #refreshBox { text-align: center; padding: 10px 8px 8px; border-radius: 14px; background: var(--btn); border: 2px solid var(--line); }
     #refreshBox span { display: block; font-size: 13px; color: var(--ink-2); }
     #refreshBox b { display: block; margin: 2px 0; font-size: 22px; font-weight: 400; letter-spacing: 1px; color: var(--sea-d); font-variant-numeric: tabular-nums; }
@@ -243,6 +251,8 @@
     #tBar button { width: 44px; height: 44px; padding: 0; line-height: 0; display: flex; align-items: center; justify-content: center;
       background: var(--paper); border: 2px solid var(--edge); color: var(--ink); box-shadow: 0 2px 0 rgba(20, 60, 90, 0.16), 0 4px 10px rgba(10, 30, 50, 0.2); }
     #tBar .ic { width: 24px; height: 24px; }
+    #tBar button { position: relative; }
+    #tBar button.hasNew::after { content: ''; position: absolute; top: 3px; right: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--bad); border: 2px solid var(--paper); }   /* 平板鈕上的小紅點：有沒看過的更新資訊 */
     .tBtn .ic { width: 32px; height: 32px; }
     #tFish .ic { width: 40px; height: 40px; }
     #tBase { display: none; position: absolute; width: 124px; height: 124px; margin: -62px 0 0 -62px; border-radius: 50%;
@@ -344,7 +354,7 @@
         <dt><kbd>滑鼠</kbd></dt><dd>第三人稱：按住拖曳轉視角；第一人稱：直接移動就轉</dd>
         <dt><kbd>滾輪</kbd></dt><dd>鏡頭遠近</dd>
         <dt><kbd>Esc</kbd></dt><dd>第一人稱時放開滑鼠（再點一下畫面就回去）</dd>
-        <dt><kbd>Tab</kbd></dt><dd>拿出／收起平板：地圖、船（叫船、換船）、天氣、圖鑑、背包、房間。Esc 回主畫面</dd>
+        <dt><kbd>Tab</kbd></dt><dd>拿出／收起平板：地圖、船（叫船、換船）、天氣、圖鑑、背包、房間、公告（更新資訊，有沒看過的會亮小紅點）。Esc 回主畫面</dd>
         <dt><kbd>M</kbd></dt><dd>直接打開平板的地圖</dd>
       </dl>
     </details>
@@ -355,7 +365,7 @@
       <p class="note"><i data-ic="throw"></i> 丟：拿著魚或油桶時出現，按住蓄力、放開丟出去</p>
       <p class="note"><i data-ic="fish"></i> 釣魚：按住蓄力、放開拋竿；魚咬了按一下；收線時按住／放開控制力道</p>
       <p class="note"><i data-ic="jump"></i> 跳</p>
-      <p class="note">右上角：<i data-ic="tablet"></i> 平板（地圖、船、天氣、圖鑑、背包、房間）　<i data-ic="chat"></i> 聊天　<i data-ic="emote"></i> 表情（點一格就播放）　<i data-ic="view"></i> 切換第一／第三人稱　<i data-ic="bait"></i> 換餌　<i data-ic="full"></i> 全螢幕</p>
+      <p class="note">右上角：<i data-ic="tablet"></i> 平板（地圖、船、天氣、圖鑑、背包、房間、公告）　<i data-ic="chat"></i> 聊天　<i data-ic="emote"></i> 表情（點一格就播放）　<i data-ic="view"></i> 切換第一／第三人稱　<i data-ic="bait"></i> 換餌　<i data-ic="full"></i> 全螢幕</p>
     </details>
     <details id="devSec" class="sec main" hidden><summary>開發者模式（只有測試環境）›</summary>
       <div class="line"><span>飛行</span><button id="devFly" class="sw">關</button></div>
@@ -400,6 +410,8 @@
     <div id="notice" class="card">
       <h2 id="noticeTitle"></h2>
       <ul id="noticeList"></ul>
+      <h3 id="updTitle">更新資訊</h3>
+      <div id="updList"></div>
       <div id="refreshBox"><span>距離下次全服刷新</span><b id="refreshLeft"></b><small id="refreshAt"></small></div>
     </div>
   </div>

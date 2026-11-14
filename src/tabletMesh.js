@@ -9,9 +9,9 @@ export const TABLET_SIZE = { w: W, h: H, t: T };
 const CARRY = 1.15;   // 捧東西時手臂往前抬的角度（跟 player.js 的 carry 一樣）
 const TILT = 1.0;     // 螢幕往人臉那邊斜的角度
 // 螢幕畫面的順序：0 主畫面，之後照平板上 app 的順序（tabletApps.js）
-export const SCREENS = ['home', 'map', 'boat', 'weather', 'dex', 'bag', 'room', 'set'];
-const ICON_COL = ['#2c8fc9', '#ff7f5c', '#5fb3dd', '#1d6f9f', '#e2a03d', '#3dbb7a', '#6f8394'];
-const APP_NAME = { map: '地圖', boat: '船', weather: '天氣', dex: '圖鑑', bag: '背包', room: '房間', set: '設定' };
+export const SCREENS = ['home', 'map', 'boat', 'weather', 'dex', 'bag', 'room', 'notice', 'set'];
+const ICON_COL = ['#2c8fc9', '#ff7f5c', '#5fb3dd', '#1d6f9f', '#e2a03d', '#3dbb7a', '#ff7f5c', '#6f8394'];
+const APP_NAME = { map: '地圖', boat: '船', weather: '天氣', dex: '圖鑑', bag: '背包', room: '房間', notice: '公告', set: '設定' };
 const FONT = '"Huninn", "Microsoft JhengHei", "PingFang TC", sans-serif';
 
 const tex = new Map();

@@ -14,6 +14,7 @@ bash deploy/push.sh all origin/main  # 指定版本（任何 git 版本都可以
 bash deploy/push.sh --notice "新版本更新" --count 60   # 完整上線＋跑馬燈倒數（見下面）
 ```
 
+- 上線前先在 `src/announce.js` 的 `UPDATES` 最上面加一條玩家看得懂的更新資訊（主頁公告和平板「公告」app 會顯示，沒看過的人會亮小紅點）。
 - 只會上線**已經提交**的內容（用 `git archive` 取出、在暫存資料夾打包），沒提交的改動不會被帶上去。
 - 打包在自己電腦上做，不吃伺服器的記憶體。
 - 只改畫面用 `web`；改到 `server/` 或兩邊共用的檔（`src/fishdata.js`、`boatdata.js`、`layout.js`、`terrain.js`、`weather.js`、`config.js` 等）要用完整的。

@@ -2,7 +2,7 @@
 // 背景照常畫著港口，只是人還不能動。
 import { TEST, QUERY } from './net.js';
 import { startLookPick } from './lookPick.js';
-import { NOTICE, nextRefreshAt, countdownText, refreshLabel } from './announce.js';
+import { NOTICE, UPDATES, nextRefreshAt, countdownText, refreshLabel } from './announce.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -18,6 +18,15 @@ export function runMenu(net, onLook) {
     // 公告與「距離下次刷新」倒數（每秒更新，進了房間就停）
     $('noticeTitle').textContent = NOTICE.title;
     $('noticeList').replaceChildren(...NOTICE.items.map((t) => Object.assign(document.createElement('li'), { textContent: t })));
+    // 更新資訊：最近 3 條（全部在進遊戲後平板的「公告」app 裡；看過沒、小紅點見 updates.js）
+    const mk = (tag, text) => Object.assign(document.createElement(tag), { textContent: text });
+    $('updList').replaceChildren(...UPDATES.slice(0, 3).map((u) => {
+      const sec = document.createElement('section'), h = mk('h4', u.title), ul = document.createElement('ul');
+      h.append(mk('small', u.date));
+      ul.append(...u.items.map((t) => mk('li', t)));
+      sec.append(h, ul);
+      return sec;
+    }));
     const tick = () => { const at = nextRefreshAt(); $('refreshLeft').textContent = countdownText(at - Date.now()); $('refreshAt').textContent = `${refreshLabel(at)}（台灣時間）`; };
     tick();
     const timer = setInterval(tick, 1000);

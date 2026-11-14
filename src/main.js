@@ -12,6 +12,7 @@ import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_RO
 import { WORLD, THROW, DEVMODE, SHORE_WIND, CLOUDS, FISHBOX, TABLET } from './config.js';
 import { Tablet } from './tablet.js';
 import { makeApps } from './tabletApps.js';
+import { unreadCount } from './updates.js';
 import { makeTabletMesh, holdTablet, poseTablet, setTabletScreen, TABLET_SIZE } from './tabletMesh.js';
 import { fishThumbs } from './fishThumbs.js';
 import { placeAt } from './places.js';
@@ -2509,6 +2510,7 @@ function updatePrompt() {
     $('prompt').style.display = text ? 'block' : 'none';
   }
   updateKeybar();
+  touch.bTab?.classList.toggle('hasNew', inGame && unreadCount() > 0);   // 手機右上角平板鈕的小紅點（有沒看過的更新資訊）
 }
 
 // 電腦版右下角的按鍵提示：走路、開船各一組，拿著東西時多一個「右鍵 丟」
@@ -2521,11 +2523,12 @@ let keybarSet = '';
 function updateKeybar() {
   const set = TOUCH || !inGame || tabOpen() || chat.isOpen || wheel.isOpen || mode === 'sink' ? ''
     : mode === 'helm' ? 'helm' : fish.held && !player.swim ? 'held' : 'walk';
-  if (set === keybarSet) return;
-  keybarSet = set;
+  const dot = set && unreadCount() > 0 ? '!' : '';   // 「Tab 平板」旁的小紅點：有沒看過的更新資訊
+  if (set + dot === keybarSet) return;
+  keybarSet = set + dot;
   const el = $('keybar');
   el.style.display = set ? 'flex' : 'none';
-  el.innerHTML = set ? KEYBAR[set].map(([k, t]) => `<span>${k.split(' ').map((x) => `<kbd>${x}</kbd>`).join('')}${t}</span>`).join('') : '';
+  el.innerHTML = set ? KEYBAR[set].map(([k, t]) => `<span>${k.split(' ').map((x) => `<kbd>${x}</kbd>`).join('')}${t}${dot && k === 'Tab' ? '<i class="kdot"></i>' : ''}</span>`).join('') : '';
 }
 
 // ---- 介面 -----------------------------------------------------------------

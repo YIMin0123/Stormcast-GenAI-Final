@@ -2,6 +2,8 @@
 // 版面用 html 字串畫，有變才換（按鈕用 data-act，點了交給 env.act）
 import { ICON } from './icons.js';
 import { RARITY } from './fishdata.js';
+import { NOTICE, UPDATES, nextRefreshAt, countdownText, refreshLabel } from './announce.js';
+import { unreadCount, isUnread, markRead } from './updates.js';
 
 const CSS = `
 .tbc { background: rgba(240, 250, 254, 0.9); border: 2px solid var(--edge); border-radius: 16px; padding: 10px 14px; margin: 0 0 10px; }
@@ -201,6 +203,24 @@ export function makeApps(env) {
       <p class="tbNote">${esc(r.name)}・${r.list.length} 人（最多 ${r.max} 人）。灰點是斷線中，一陣子沒回來就會離開</p>`;
   }, env);
 
+  // ---- 公告：固定的說明、下次全服刷新的倒數、更新資訊（沒看過的標「新」，打開就算看過、小紅點消失） ----
+  const notice = htmlApp({
+    id: 'notice', name: '公告', icon: 'bell', color: '#ff7f5c',
+    badge() { return unreadCount() ? '•' : ''; },
+  }, function () {
+    const at = nextRefreshAt();
+    const top = `<div class="tbTwo"><div class="tbc"><h4>${esc(NOTICE.title)}</h4><ul class="tbList">${NOTICE.items.map((t) => `<li>${esc(t)}</li>`).join('')}</ul></div>
+      <div class="tbc" style="text-align:center"><p class="tbNote" style="margin:0">距離下次全服刷新</p><div class="tbBig" style="margin:4px 0">${esc(countdownText(at - Date.now()))}</div><p class="tbNote" style="margin:0">${esc(refreshLabel(at))}（台灣時間）</p></div></div>`;
+    const ups = UPDATES.map((u) => `<div class="tbc${this.fresh.has(u.id) ? ' on' : ''}"><h4>${esc(u.title)}${this.fresh.has(u.id) ? '<span class="tbTag c">新</span>' : ''}<span class="r">${esc(u.date)}</span></h4><ul class="tbList">${u.items.map((t) => `<li>${esc(t)}</li>`).join('')}</ul></div>`).join('');
+    return `${top}<div class="tbSec">更新資訊</div>${ups}`;
+  }, env);
+  const noticeMount = notice.mount;
+  notice.mount = function (el, tab) {
+    this.fresh = new Set(UPDATES.filter(isUnread).map((u) => u.id));   // 這一次打開前沒看過的：標「新」
+    markRead();
+    noticeMount.call(this, el, tab);
+  };
+
   // ---- 設定：畫質、角色、聲音（開關、音量）、操作說明——就是原本的設定，搬進平板 ----
   const set = {
     id: 'set', name: '設定', icon: 'gear', color: '#6f8394',
@@ -209,5 +229,5 @@ export function makeApps(env) {
     leave() { env.settings.unmount(); },
   };
 
-  return [map, boat, weather, dex, bag, room, set];
+  return [map, boat, weather, dex, bag, room, notice, set];
 }

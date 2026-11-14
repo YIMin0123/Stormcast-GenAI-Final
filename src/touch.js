@@ -110,7 +110,7 @@ export class TouchUI {
       bar.appendChild(b);
       return b;
     };
-    tap('tablet', '平板', () => env.tablet()); tap('chat', '聊天', () => env.chat()); this.bEmote = tap('emote', '表情', () => env.emote()); tap('view', '視角', () => env.view()); tap('bait', '換餌', () => env.bait());
+    this.bTab = tap('tablet', '平板', () => env.tablet()); tap('chat', '聊天', () => env.chat()); this.bEmote = tap('emote', '表情', () => env.emote()); tap('view', '視角', () => env.view()); tap('bait', '換餌', () => env.bait());
     if (canFullscreen) tap('full', '全螢幕', () => setFullscreen(!isFullscreen()));
     root.append(this.base, this.bAct, this.bFish, this.bJump, this.bThrow, bar);
     // 直著拿的時候蓋住整個畫面
