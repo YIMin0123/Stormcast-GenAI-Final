@@ -6,6 +6,8 @@ const params = new URLSearchParams(window.location.search);
 export const TEST = params.has('test');
 export const QUERY = params;
 const RETRY_FOR = 30000;   // 斷線後試著接回去多久（伺服器只幫忙留 30 秒）
+const PING_EVERY = 2000;   // 多久量一次延遲（毫秒）
+const PING_STALE = 7000;   // 超過這麼久沒收到回覆，就不顯示延遲
 
 function serverUrl() {
   if (params.get('server')) return params.get('server');
@@ -34,6 +36,12 @@ export class Net {
     this.online = false;      // 現在連線正常
     this.lostAt = 0;          // 從什麼時候開始斷線
     this._want = null;        // 正在等伺服器回話的那件事：{ resolve, reject }
+    this.ping = null;         // 跟伺服器一來一回要幾毫秒（還沒量到、或伺服器沒回就是 null）
+    this._pongAt = 0;
+    setInterval(() => {
+      if (this.ws && this.ws.readyState === 1) this._raw({ t: 'ping', k: performance.now() });
+      if (this.ping !== null && performance.now() - this._pongAt > PING_STALE) this.ping = null;
+    }, PING_EVERY);
   }
 
   on(type, fn) { (this.handlers[type] ??= []).push(fn); return this; }
@@ -95,6 +103,9 @@ export class Net {
           return;
         case 'kicked':
           this.kicked = m.msg;
+          return;
+        case 'pong':
+          if (typeof m.k === 'number') { this.ping = Math.max(1, Math.round(performance.now() - m.k)); this._pongAt = performance.now(); }
           return;
         default:
           this.emit(m.t, m);

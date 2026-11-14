@@ -193,6 +193,7 @@ wss.on('connection', (ws) => {
     let m;
     try { m = JSON.parse(raw); } catch { return; }
     if (!m || typeof m.t !== 'string') return;
+    if (m.t === 'ping') return send(ws, { t: 'pong', k: m.k });   // 量延遲用：原樣丟回去（大廳和房間裡都一樣）
 
     if (me) {
       if (m.t === 'leave') { const r = me.room; r.quit(me); me = null; ws.close(); tidyRooms(); return; }

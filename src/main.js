@@ -4085,6 +4085,7 @@ renderer.setAnimationLoop((ms) => {
   if (++fpsN && ms - fpsT >= 1000) {
     const span = ms - fpsT;
     fpsEl.textContent = `${Math.round(fpsN * 1000 / span)} fps　${(span / fpsN).toFixed(1)} ms`
+      + (net.ping !== null ? `　ping ${net.ping} ms` : '')
       + (fpsMore ? `　${pixelRatio.toFixed(1)}×　${canvas.width}×${canvas.height}　畫質${gfx.name}　${TOUCH ? '手機' : '電腦'}　${gpuName}` : '');
     fpsN = 0; fpsT = ms;
   }
