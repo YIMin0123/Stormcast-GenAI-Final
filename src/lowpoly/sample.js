@@ -16,6 +16,13 @@ import { buildHarbor, harborHeight, onPlatform } from './harbor3d.js';
 import { makeRealSea } from './realSea.js';
 import * as HP from './harborPlan.js';
 import { rockGeo, broadleafGeo, tuftGeo, terrainGeo, waterGeo, heightAt, groundKind } from './shapes.js';
+import { buildHaven } from './haven3d.js';
+import { buildArch, buildAtoll, buildBeacon } from './reefs3d.js';
+import { archBed, atollBed, beaconBed } from './reefShape.js';
+import { havenHeight } from './havenShape.js';
+import * as HV from './havenPlan.js';
+import { WORLD } from '../config.js';
+import { HAVEN, HOME_YAW } from '../frame.js';
 
 const $ = (id) => document.getElementById(id);
 const isPhone = matchMedia('(pointer: coarse)').matches && Math.min(innerWidth, innerHeight) < 820;
@@ -98,7 +105,11 @@ let sea = null;
 function seaFor(scn) {
   const lite = state.sea === 'lite', key = scn + (lite ? '-lite' : '');
   if (!seas[key]) {
-    seas[key] = scn === 'harbor'
+    // 大港灣島：浪向跟遊戲一樣（世界的浪向轉成大港座標）
+    const waveAngle = HAVEN.headingToLocal(Math.PI / 2 + WORLD.waveFromHarborBackDeg * Math.PI / 180 - HOME_YAW);
+    seas[key] = scn === 'haven' ? makeRealSea(renderer, { heightAt: havenHeight, waveAngle, fft16: isPhone, lite })
+      : scn === 'reefs' ? makeRealSea(renderer, { heightAt: reefsHeight, fft16: isPhone, lite })
+      : scn === 'harbor'
       ? makeRealSea(renderer, { heightAt: (x, z) => (onPlatform(x, z) ? HP.DECK_Y : harborHeight(x, z)), quays: [[-48, -14, 48, 0], [-52.5, 0, -48, 44.5], [48, 0, 52.5, 44.5]], fft16: isPhone, lite })
       : makeRealSea(renderer, { heightAt, fft16: isPhone, lite });
     if (state.hour != null) seas[key].setHour(state.hour, sun.position.clone().normalize());
@@ -125,11 +136,38 @@ function build() {
     group.add(water);
   }
   if (state.scene === 'harbor') buildHarbor({ P, r, place, mat, group, templates });
+  else if (state.scene === 'haven') havenOut = buildHaven({ P, r, place, mat, group, phone: isPhone });
+  else if (state.scene === 'reefs') buildReefs(P, r);
   else buildIsland(P, r);
+  applyView();
   addFigure(P);
   scene.add(group);
   applyReuse();
   mat.wireframe = state.wire;
+}
+
+// 海上的礁石：三組排成一排（中間石拱門、左邊環礁、右邊燈標岩嶼），只是擺在一起看，遊戲裡的位置見 config.js
+const REEF_AT = { arch: 0, atoll: -190, beacon: 150 };
+const reefsHeight = (x, z) => Math.max(archBed(x - REEF_AT.arch, z), atollBed(x - REEF_AT.atoll, z), beaconBed(x - REEF_AT.beacon, z));
+function buildReefs(P, r) {
+  const sub = (x, f) => { const g = new THREE.Group(); g.position.x = x; const root = group; group = g; f({ P, r, place, mat, group: g, phone: isPhone }); group = root; group.add(g); };
+  sub(REEF_AT.arch, buildArch); sub(REEF_AT.atoll, buildAtoll); sub(REEF_AT.beacon, buildBeacon);
+}
+
+// 看得多遠：大港灣島有四百多公尺寬，鏡頭、霧、天空、陰影的範圍都要跟著放大
+let havenOut = null;
+const big = () => state.scene === 'haven' || state.scene === 'reefs';
+function applyView() {
+  const k = big() ? 5 : 1;
+  camera.far = 1200 * k; camera.updateProjectionMatrix();
+  controls.maxDistance = big() ? 900 : 220;
+  sky.scale.setScalar(k);
+  const s = big() ? 290 : 85;
+  Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: big() ? 1300 : 320 });
+  sun.shadow.camera.updateProjectionMatrix();
+  scene.fog.near = (state.hi ? 90 : 60) * (big() ? 4 : 1);
+  scene.fog.far = (state.hi ? 380 : 260) * (big() ? 5 : 1);
+  if (state.hour != null) sun.position.copy(sun.position).normalize().multiplyScalar(big() ? 600 : 150);
 }
 
 // 樣品島：不規則三角形地形、岩塊、樹、草
@@ -221,7 +259,9 @@ function addFigure(P) {
   fig.position.copy(figAt());
   group.add(fig);
 }
-const figAt = () => (state.scene === 'harbor' ? new THREE.Vector3(HP.SPAWN.x, HP.DECK_Y, HP.SPAWN.z) : figPos);
+const figAt = () => (state.scene === 'harbor' ? new THREE.Vector3(HP.SPAWN.x, HP.DECK_Y, HP.SPAWN.z) : state.scene === 'reefs' ? new THREE.Vector3(REEF_AT.beacon + 2.5, beaconBed(2.5, 0), 0) : big() ? HAVEN_FIG() : figPos);
+// 大港灣島的人：站在灣底整平的那一片（之後的碼頭）
+const HAVEN_FIG = () => { const z = -72; return new THREE.Vector3(0, havenOut ? havenOut.groundAt(0, z) : havenHeight(0, z), z); };
 
 // 人物站的地方：島的南岸，高度約 1.3 公尺的沙灘
 let fig = null;
@@ -261,7 +301,7 @@ function setHour(h) {
     ? new THREE.Vector3(Math.cos(ang) * 0.85, Math.max(elev, 0.05), 0.45)
     : new THREE.Vector3(-0.4, 0.75, -0.5);
   dir.normalize();
-  sun.position.copy(dir).multiplyScalar(150);
+  sun.position.copy(dir).multiplyScalar(big() ? 600 : 150);
   sun.target.position.set(0, 0, 0);
   const sunCol = C('#ff9d5c').lerp(C('#fff1da'), high);
   sun.color.copy(day > 0.02 ? sunCol : C('#9fb4e6'));
@@ -322,7 +362,27 @@ const ISLAND_CAMS = {
   斷崖: () => { camera.position.set(14, 12, 10); controls.target.set(0, 9, -14); },
   俯瞰: () => { camera.position.set(70, 95, 110); controls.target.set(0, 0, 0); },
 };
-const CAMS = () => (state.scene === 'harbor' ? HARBOR_CAMS : ISLAND_CAMS);
+// 大港灣島（大港座標：+z 是灣口）
+const HAVEN_CAMS = {
+  鳥瞰: () => { camera.position.set(-150, 330, 420); controls.target.set(0, 10, 0); },
+  從海上看灣口: () => { camera.position.set(-20, 9, 330); controls.target.set(0, 22, 60); },
+  進港: () => { camera.position.set(0, 5, 150); controls.target.set(0, 14, 0); },
+  灣底看出去: () => { const f = HAVEN_FIG(); camera.position.set(f.x + 6, f.y + 2.4, f.z - 6); controls.target.set(0, 12, 110); },
+  灣底看山: () => { camera.position.set(0, 4, 0); controls.target.set(30, 34, -110); },
+  外海看背面: () => { camera.position.set(140, 30, -360); controls.target.set(20, 26, -100); },
+  海岬: () => { camera.position.set(-170, 16, 190); controls.target.set(-95, 30, 95); },
+  山頂俯瞰: () => { camera.position.set(70, 84, -128); controls.target.set(0, 0, 60); },
+};
+const REEF_CAMS = {
+  石拱門: () => { camera.position.set(-6, 5, 70); controls.target.set(0, 12, 0); },
+  拱門側面: () => { camera.position.set(-62, 14, 34); controls.target.set(0, 12, 0); },
+  拱門底下: () => { camera.position.set(0, 3, 14); controls.target.set(2, 16, -6); },
+  環礁: () => { camera.position.set(REEF_AT.atoll - 30, 26, 95); controls.target.set(REEF_AT.atoll, 0, 0); },
+  沉船: () => { camera.position.set(REEF_AT.atoll + 38, 5, 16); controls.target.set(REEF_AT.atoll + 20, 1.5, -2); },
+  燈標: () => { camera.position.set(REEF_AT.beacon + 26, 7, 30); controls.target.set(REEF_AT.beacon, 4, 0); },
+  全部: () => { camera.position.set(-20, 150, 300); controls.target.set(-20, 0, 0); },
+};
+const CAMS = () => (state.scene === 'harbor' ? HARBOR_CAMS : state.scene === 'reefs' ? REEF_CAMS : big() ? HAVEN_CAMS : ISLAND_CAMS);
 function makeCamButtons() {
   $('cams').innerHTML = '';
   segment('cams', Object.keys(CAMS()).map((k) => [k, k]), () => null, (k) => CAMS()[k]());
@@ -342,7 +402,7 @@ function segment(id, items, get, set) {
   sync();
   return sync;
 }
-segment('scene', [['harbor', '港口島'], ['island', '樣品島']], () => state.scene, (v) => { state.scene = v; build(); makeCamButtons(); Object.values(CAMS())[0](); });
+segment('scene', [['harbor', '港口島'], ['haven', '大港灣島'], ['reefs', '海上礁石'], ['island', '樣品島']], () => state.scene, (v) => { state.scene = v; build(); makeCamButtons(); Object.values(CAMS())[0](); });
 segment('sea', [['real', '電腦版的海'], ['lite', '手機輕量版'], ['flat', '平塗']], () => state.sea, (v) => { state.sea = v; build(); setHour(state.hour); });
 segment('refl', [[true, '開'], [false, '關']], () => state.refl, (v) => { state.refl = v; });
 segment('pal', PALETTE_KEYS.map((k) => [k, palette(k).name]), () => state.pal, (v) => { state.pal = v; build(); });
@@ -366,8 +426,8 @@ function applyHi() {
   lpUniforms.uRim.value = state.hi ? 0.9 : 0;
   lpUniforms.uGrassNear.value = state.hi ? 46 : 22;
   lpUniforms.uGrassFar.value = state.hi ? 64 : 34;
-  scene.fog.near = state.hi ? 90 : 60;
-  scene.fog.far = state.hi ? 380 : 260;
+  scene.fog.near = (state.hi ? 90 : 60) * (big() ? 4 : 1);
+  scene.fog.far = (state.hi ? 380 : 260) * (big() ? 5 : 1);
   const ms = state.hi ? 3072 : 2048;
   if (sun.shadow.mapSize.x !== ms) { sun.shadow.mapSize.set(ms, ms); sun.shadow.map?.dispose(); sun.shadow.map = null; }
   buildComposer();
@@ -432,7 +492,7 @@ function frame() {
   requestAnimationFrame(frame);
 }
 frame();
-window.__lp = { scene, camera, controls, renderer, state, setHour, build, seas };
+window.__lp = { scene, camera, controls, renderer, state, setHour, build, seas, cams: CAMS };
 // 量測實際每幀成本（毫秒）：連續畫 n 幀、每幀等顯示晶片畫完（跟遊戲的 __sim.bench 一樣的量法，不受螢幕更新率限制）
 window.__lp.bench = (n = 20) => {
   const gl = renderer.getContext(), px = new Uint8Array(4), t0 = performance.now();

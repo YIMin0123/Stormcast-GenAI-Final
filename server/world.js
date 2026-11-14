@@ -7,11 +7,12 @@ import { BOAT_TYPES } from '../src/boatdata.js';
 
 import { WORLD } from '../src/config.js';
 const N = 512, NF = 1024, L = WORLD.size;
-const bed = makeTerrain(NF, L).bed;
+const { bed, main } = makeTerrain(NF, L);
+// 粗一半的版本只拿兩座大島（不含海上的礁石）：離岸多遠、算不算外海看的是離大島多遠
 const coarse = new Float32Array(N * N);
 for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
   const k = 2 * j * NF + 2 * i;
-  coarse[j * N + i] = (bed[k] + bed[k + 1] + bed[k + NF] + bed[k + NF + 1]) / 4;
+  coarse[j * N + i] = (main[k] + main[k + 1] + main[k + NF] + main[k + NF + 1]) / 4;
 }
 const danger = computeDanger(coarse, N, L), offshore = computeOffshore(coarse, N, L);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));

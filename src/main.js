@@ -10,7 +10,8 @@ import { makeSwimFx } from './swimfx.js';
 import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SELL, setBoard, BOLLARDS, MoorLine, SHELF, setTag, LAMPS, UNLIT, WET, ROOM_LIGHTS, ROOM_LAMPS, setRoomLights, GLOW_KEEP, lightBulbs, updateFlags, updateScale, PORCHES, HOME_LAND } from './harbor.js';
 import { WORLD, THROW } from './config.js';
 import { HOME_U, placeInHome } from './homeGl.js';
-import { HOME_YAW, toWorld, toLocal, headingToWorld } from './frame.js';
+import { HOME_YAW, toWorld, toLocal, headingToWorld, havenToLocal } from './frame.js';
+import { makeSeascape, HAVEN_LAND, HAVEN_GROUND } from './haven.js';
 import { HOME_GROUND, ZONE_LABEL } from './lowpoly/harborPlan.js';
 import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SWITCHES_W, ROOFS_W, underRoof, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W, BERTH_BOARD_W, BOARD_STAND_W } from './layout.js';
 import { fishLabel, FishWorld } from './fish.js';
@@ -172,13 +173,15 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 90000);
 
 // ---- 地圖 -----------------------------------------------------------------
-const bedData = makeTerrain(NF, L).bed;
-// 粗一半的版本（每 2×2 格取平均），給避浪、危險度、種樹用
-const bedCoarse = new Float32Array(N * N);
+const { bed: bedData, main: bedMain } = makeTerrain(NF, L);
+// 粗一半的版本（每 2×2 格取平均），給避浪、危險度、種樹用。
+// bedCoarse 含海上的礁石（避浪用：礁石後面也有一小片靜水）；mainCoarse 只有兩座大島（離岸多遠、危險度、巨浪剩幾成：礁石不算陸地）
+const bedCoarse = new Float32Array(N * N), mainCoarse = new Float32Array(N * N);
 for (let j = 0; j < N; j++) {
   for (let i = 0; i < N; i++) {
     const k = 2 * j * NF + 2 * i;
     bedCoarse[j * N + i] = (bedData[k] + bedData[k + 1] + bedData[k + NF] + bedData[k + NF + 1]) / 4;
+    mainCoarse[j * N + i] = (bedMain[k] + bedMain[k + 1] + bedMain[k + NF] + bedMain[k + NF + 1]) / 4;
   }
 }
 const shelterData = computeShelter(bedCoarse, N, L, WAVE_ANGLE);
@@ -204,14 +207,14 @@ function turnShelter(turn) {
 }
 
 // 離陸地越遠越危險：風暴與巨浪只在外海發威，島的周圍與港口不受影響
-const dangerData = computeDanger(bedCoarse, N, L);
-const offData = computeOffshore(bedCoarse, N, L);   // 每一格離最近的陸地幾公尺
+const dangerData = computeDanger(mainCoarse, N, L);
+const offData = computeOffshore(mainCoarse, N, L);   // 每一格離最近的陸地幾公尺
 const dangerTex = new THREE.DataTexture(dangerData, N, N, THREE.RedFormat, THREE.UnsignedByteType);
 dangerTex.minFilter = dangerTex.magFilter = THREE.LinearFilter;
 dangerTex.needsUpdate = true;
 
 // 巨浪到了每個地方還剩幾成高：外海十成，岸邊剩一成多，沖上岸之後往內陸遞減
-const tsuKData = computeTsuK(bedCoarse, dangerData, N, L);
+const tsuKData = computeTsuK(mainCoarse, dangerData, N, L);
 const tsuKTex = new THREE.DataTexture(tsuKData, N, N, THREE.RedFormat, THREE.UnsignedByteType);
 tsuKTex.minFilter = tsuKTex.magFilter = THREE.LinearFilter;
 tsuKTex.needsUpdate = true;
@@ -326,6 +329,11 @@ function walkGround(x, z, under = false) {
 function landAt(x, z, hx, hz) {
   const HG = HOME_GROUND, half = HG.size / 2 - 1;
   if (HOME_LAND.at && Math.abs(hx - HG.cx) < half && Math.abs(hz - HG.cz) < half) return HOME_LAND.at(hx, hz);
+  // 大港灣島也一樣照畫出來的那張地面（大港座標）
+  if (HAVEN_LAND.at) {
+    const VG = HAVEN_GROUND, vh = VG.size / 2 - 2, [vx, vz] = havenToLocal(x, z);
+    if (Math.abs(vx - VG.cx) < vh && Math.abs(vz - VG.cz) < vh) return HAVEN_LAND.at(vx, vz);
+  }
   return bedAt(x, z);
 }
 // 正在走的那個人的腳在多高（只有玩家自己移動的那一下有值；其他地方問地面高度時是 null，石頭照「比地面高半公尺就擋」）
@@ -970,6 +978,11 @@ worldizeHarborLists();   // 樁、消波塊、繫纜樁、路燈的清單轉成�
 scene.add(harbor);
 addRocks(HARBOR_ROCKS);   // 消波塊
 shade(harbor);
+
+// 探險大港灣島和海上的礁石群（石拱門、環礁、燈標岩嶼）：跟港口用同一個低面材質
+const seascape = makeSeascape(harbor.userData.lowpolyMat);
+for (const g of seascape.groups) { scene.add(g); g.updateMatrixWorld(true); g.traverse((o) => { o.matrixAutoUpdate = false; }); }
+addRocks(seascape.rocks);
 
 // 岸邊的淺水模擬：鏡頭附近一塊範圍，浪真的沖上沙灘再退回去，也會繞過木樁與礁石
 const shallow = new ShallowWater(renderer);
@@ -3376,6 +3389,7 @@ function advance(dt) {
 function drawFrame(dt) {
   updateCamera(dt);
   lpUniforms.uTime.value = time;   // 低面模型（樹、草）隨風搖
+  seascape.update(time, camera.position);   // 燈標閃光；太遠、被霧蓋掉的島不畫
   const cp = camera.position;
 
   // 最近的水龍捲：呼嘯聲的大小與方向；靠得很近時鏡頭被風吹得發抖

@@ -1,42 +1,62 @@
-import { toWorld, toLocal } from './frame.js';
+import { toWorld, toLocal, havenToWorld, havenToLocal } from './frame.js';
 import { WORLD } from './config.js';
 
 import { homeBed } from './lowpoly/homeShape.js';
 import * as H from './lowpoly/harborPlan.js';
+import { havenBed } from './lowpoly/havenShape.js';
+import * as HV from './lowpoly/havenPlan.js';
+import { reefBed } from './lowpoly/reefShape.js';
 const IL = WORLD.home.islandLocal;
 
-// 地圖：開闊海洋上的一座母島（低面的小島漁港，形狀見 lowpoly/homeShape.js），沒有大陸。高程單位公尺，海平面 = 0，負值為海底。
+// 地圖：開闊海洋上兩座島——左上的母島（低面的小島漁港，形狀見 lowpoly/homeShape.js）、右下的探險大港灣島（lowpoly/havenShape.js），
+// 中間的海上有幾組礁石（lowpoly/reefShape.js），沒有大陸。高程單位公尺，海平面 = 0，負值為海底。
 // 座標原點在地圖中心，+z 是南方。
 
 export const SEA_FLOOR = -30;
 
-// 島的資料（港座標）。R：島的大概半徑（著色與佈景用）；look：地表的樣子；flora：舊的佈景（樹、石頭）—— 新島的樹和岩石是低面模型，這裡不種
+// 島的資料（各自的設計圖座標；to：轉成世界座標的函式）。R：島的大概半徑（著色與佈景用）；look：地表的樣子；flora：舊的佈景（樹、石頭）—— 新島的樹和岩石是低面模型，這裡不種
 const LOCAL_ISLANDS = [
   {
     id: 'home', name: '母港島', x: H.ISLAND.x, z: H.ISLAND.z, R: 85, bumps: [{ x: H.HILL.x, z: H.HILL.z, r: 50, peak: H.HILL.peak }],
     shape: { beach: 0, bw: 1, jag: 0, cliff: 0, hill: 0 },
     look: { rock: 0.12, veg: 1.0, white: 0.15, dry: 0.15 },
     flora: { broadleaf: 0, conifer: 0, palm: 0, bush: 0, shoreRock: 0, landRock: 0 },
+    to: toWorld,
+  },
+  {
+    id: 'haven', name: '大港灣島', x: 0, z: 0, R: HV.GROUND.size / 2 - 10, bumps: [],
+    shape: { beach: 0, bw: 1, jag: 0, cliff: 0, hill: 0 },
+    look: { rock: 0.3, veg: 1.0, white: 0.15, dry: 0.15 },
+    flora: { broadleaf: 0, conifer: 0, palm: 0, bush: 0, shoreRock: 0, landRock: 0 },
+    to: havenToWorld,
   },
 ];
 
 // 世界座標版（佈景、著色器、伺服器用）：島的位置、圓丘的位置都轉成世界座標。地形本身用港座標算（見 makeTerrain）
-export const ISLANDS = LOCAL_ISLANDS.map((o) => {
-  const [x, z] = toWorld(o.x, o.z);
-  return { ...o, x, z, bumps: o.bumps.map((b) => { const [bx, bz] = toWorld(b.x, b.z); return { ...b, x: bx, z: bz }; }) };
+export const ISLANDS = LOCAL_ISLANDS.map(({ to, ...o }) => {
+  const [x, z] = to(o.x, o.z);
+  return { ...o, x, z, bumps: o.bumps.map((b) => { const [bx, bz] = to(b.x, b.z); return { ...b, x: bx, z: bz }; }) };
 });
 
-// 海床高度圖：每一格換成港座標，照母港島的形狀算（島、水泥平台、港池、往外慢慢變深的海底）
+// 海床高度圖：每一格換成各座島自己的座標，照它的形狀算（島、港池、往外慢慢變深的海底），再疊上海上的礁石。
+// 回傳 { bed 完整的海床, main 只有兩座大島（沒有礁石）}。
+// main 給「離陸地多遠」這一類的圖用（外海的風暴、巨浪、深海魚看的是離大島多遠）：海中間的幾塊礁石不算陸地，
+// 不然礁石周圍幾百公尺都會變成「近岸」，風暴到那裡就沒了、深海魚也釣不到
 export function makeTerrain(N, L) {
-  const bed = new Float32Array(N * N);
+  const bed = new Float32Array(N * N), main = new Float32Array(N * N);
   for (let j = 0; j < N; j++) {
     for (let i = 0; i < N; i++) {
-      const [x, z] = toLocal(((i + 0.5) / N - 0.5) * L, ((j + 0.5) / N - 0.5) * L);
+      const wx = ((i + 0.5) / N - 0.5) * L, wz = ((j + 0.5) / N - 0.5) * L, k = j * N + i;
+      const [x, z] = toLocal(wx, wz);
       // 離島 260 公尺外都是外海的海底（homeBed 在那裡早就到底了），不用算
-      bed[j * N + i] = (x - H.ISLAND.x) ** 2 + (z - H.ISLAND.z) ** 2 > 260 * 260 ? SEA_FLOOR : Math.max(SEA_FLOOR, homeBed(x, z));
+      let h = (x - H.ISLAND.x) ** 2 + (z - H.ISLAND.z) ** 2 > 260 * 260 ? SEA_FLOOR : Math.max(SEA_FLOOR, homeBed(x, z));
+      const [vx, vz] = havenToLocal(wx, wz);
+      if (vx * vx + vz * vz < HV.REACH * HV.REACH) h = Math.max(h, havenBed(vx, vz));
+      main[k] = h;
+      bed[k] = Math.max(h, reefBed(wx, wz));
     }
   }
-  return { bed };
+  return { bed, main };
 }
 
 // 避浪係數（0 = 完全平靜，1 = 完全暴露）：逆著浪的來向看出去，若近處有陸地擋著就比較平靜。

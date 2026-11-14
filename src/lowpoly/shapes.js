@@ -185,10 +185,12 @@ export function ledgeGeo(P, seed, top) {
 // 草、樹、石頭、人物的腳都照 at() 站，才會貼在看得到的地面上（不是照平滑的高度算式，那個跟一面一面的三角形差好幾十公分）
 // 陡坡（坡度超過 37 度，連海岸的陡壁也算）：高度一層一層地分（每層 BAND 公尺，分界跟著雜訊起伏），每層是一段緩的岩架接一段陡的岩壁，
 // 岩壁的顏色照它在哪一層輪流換灰褐色（看起來是一層層的岩層），岩架上夠平的地方照樣長草
-export function islandTerrain(P, size, step, seed, hf, cx, cz) {
+// opt（大島用）：band 每層岩層多厚（預設 1.5）；minY 整個三角形都比這個深就不畫（深水看不到）；
+//   tile 切成幾公尺見方的一塊塊（回傳 geos，各自有邊界，看不到的那幾塊不用畫）；tint(顏色, x, y, z, 種類) 可以再調顏色
+export function islandTerrain(P, size, step, seed, hf, cx, cz, opt = {}) {
   const r = rng(seed);
   const N = Math.round(size / step), half = size / 2, x0 = cx - half, z0 = cz - half;
-  const BAND = 1.5;
+  const BAND = opt.band ?? 1.5, MIN_Y = opt.minY ?? -Infinity, TILE = opt.tile ?? 0, tiles = new Map();
   const X = new Float32Array((N + 1) * (N + 1)), Y = new Float32Array(X.length), Z = new Float32Array(X.length);
   for (let j = 0; j <= N; j++) for (let i = 0; i <= N; i++) {
     const edge = i === 0 || j === 0 || i === N || j === N;
@@ -229,7 +231,15 @@ export function islandTerrain(P, size, step, seed, hf, cx, cz) {
     else if (cy < 1.5 && nrm.y > 0.8) { col = P.sand; kind = 1; }
     else { col = patch < 0.42 ? P.grassDark : patch < 0.55 ? P.grass2 : P.grass; kind = 3; }
     kinds[slot] = kind;
-    fb.tri(a, b, c, jitter(col, r, 0.05), [0, 0, 0], 0.25);   // 0.25：地形的記號（不打邊緣光）
+    if (Math.max(a.y, b.y, c.y) < MIN_Y) return;
+    if (opt.tint) col = opt.tint(col, fx, cy, fz, kind);
+    let out = fb;
+    if (TILE) {
+      const key = Math.floor((fx - x0) / TILE) * 4096 + Math.floor((fz - z0) / TILE);
+      if (!tiles.has(key)) tiles.set(key, new FaceBuilder());
+      out = tiles.get(key);
+    }
+    out.tri(a, b, c, jitter(col, r, 0.05), [0, 0, 0], 0.25);   // 0.25：地形的記號（不打邊緣光）
   };
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
     const qa = j * (N + 1) + i, a = V3(qa), b = V3(qa + 1), c = V3(qa + N + 1), d = V3(qa + N + 2), cell = j * N + i;
@@ -257,7 +267,7 @@ export function islandTerrain(P, size, step, seed, hf, cx, cz) {
   };
   const at = (x, z) => { const y = find(x, z); return y === null ? hf(x, z) : y; };
   const kind = (x, z) => (find(x, z) === null ? groundKind(x, z, hf) : KIND[kinds[lastSlot]]);
-  return { geo: fb.build(), at, kind };
+  return { geo: TILE ? null : fb.build(), geos: TILE ? [...tiles.values()].map((b) => b.build()) : null, at, kind };
 }
 
 // 地面的種類（擺放物件用；跟上色同一套規則）
