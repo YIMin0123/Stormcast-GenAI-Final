@@ -7,4 +7,4 @@ splash-small ← Splash, Small #1 (1529)　splash-big ← Splash, Big #1 (1519)�
 steps-wood ← Walk on Pontoon (1845)　steps-grass ← Steps in the short grass (0854)　switch ← Old switch (0540)
 coins ← Coins #1 (0193)　hammer ← Nail and Hammer #1 (0005)　pour ← Flowing water (1522)　thud ← Canvas bag on floor (0576)
 wind ← Wind (0595)　gale ← Strong wind #4 (0154)　roar ← Small dam (0871)
-birds ← Forest (0100)　night ← Field cricket (1020)　trees ← Strong wind and trees #1 (1450)
+night ← Field cricket (1020)　trees ← Strong wind and trees #1 (1450)

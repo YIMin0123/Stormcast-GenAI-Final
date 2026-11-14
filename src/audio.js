@@ -24,8 +24,7 @@ const LOOPS = {
   spout: ['gale.ogg', 0, 600, 'n'],
   // 海嘯、漩渦逼近時的轟鳴：大水的錄音放慢、只留低頻
   roar: ['roar.ogg', 0, 600, 'n'],
-  // 島上的環境音：白天的鳥、夜裡的蟲、樹林裡的風
-  birds: ['birds.mp3', 0, 600, 2],
+  // 島上的環境音：夜裡的蟲、樹林裡的風（白天的鳥叫太吵，拿掉了）
   night: ['night.mp3', 0, 600, 2],
   trees: ['trees.mp3', 0, 600, 2],
 };
@@ -172,7 +171,7 @@ export class OceanAudio {
   //   sea：外海的浪有多大 0–1；shore：人離岸邊多近 0–1；gulls：聽得到海鷗的程度 0–1（白天、港口附近、沒下大雨）
   //   rain：雨勢 0–1；engine：引擎開著（0 / 1）；throttle：油門 0–1；pitch：引擎的音高倍率（小船高、大船低）
   //   reel：正在收線 0–1；under：鏡頭在水裡
-  //   birds：聽得到鳥叫的程度 0–1（白天、在島上、沒下雨）；night：蟲鳴 0–1（夜裡、在島上）；trees：樹林裡的風 0–1
+  //   night：蟲鳴 0–1（夜裡、在島上）；trees：樹林裡的風 0–1
   ambient(o) {
     if (!this.ctx || !this.on) return;
     const dry = o.under ? 0 : 1;
@@ -183,7 +182,6 @@ export class OceanAudio {
     this._vol('engine', o.engine * (0.22 + 0.3 * o.throttle), 0.3);
     this._rate('engine', o.pitch * (0.85 + 0.5 * o.throttle));
     this._vol('reel', 0.5 * o.reel, 0.06);
-    this._vol('birds', 0.5 * o.birds * dry, 1.2);
     this._vol('night', 0.3 * o.night * dry, 1.2);
     this._vol('trees', 0.5 * o.trees * dry, 0.6);
     this.engineReal = !!this.loops.engine;

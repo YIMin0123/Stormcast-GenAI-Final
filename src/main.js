@@ -4431,7 +4431,6 @@ function drawFrame(dt) {
     // 島上的環境音：鏡頭在陸地上（離岸二十幾公尺內漸漸淡掉）。港口那一帶是人住的地方，鳥叫蟲鳴小聲一點
     const land = clamp(1 - off / 25, 0, 1) * (0.45 + 0.55 * clamp((Math.hypot(cp.x - QUAY_CENTER_W.x, cp.z - QUAY_CENTER_W.z) - 30) / 60, 0, 1));
     audio.ambient({
-      birds: land * clamp(1 - night * 1.8, 0, 1) * clamp(1 - rainNow * 3, 0, 1),
       night: land * clamp((night - 0.45) / 0.35, 0, 1) * clamp(1 - rainNow * 2, 0, 1),
       trees: land * clamp(0.25 + 0.35 * WIND.amp.value, 0, 1),
       under,
