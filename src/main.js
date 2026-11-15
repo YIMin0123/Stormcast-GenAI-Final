@@ -2070,6 +2070,7 @@ let rodLv = 0;
 let rodBroken = false;   // 釣竿斷了（爆桿）：要回商店修好才能再釣
 let wrench = false;      // 有沒有扳手（修船用，買一次就一直有）
 let buying = false;      // 已經送出購買、還在等伺服器回話
+let dexBook = {};        // 圖鑑（伺服器存的）：魚種 → { n, len, kg, at, _honors }。要宣告在 refreshTags() 第一次執行之前（價格牌的頭銜要用它）
 // 每樣商品現在賣什麼：lines = 價格牌上的三行字；price 為 null 表示沒得買。引擎和魚箱是裝在自己放在世界裡的那艘船上
 function offer(id) {
   const o = shopItem(id, kit, dexBook?._honors), cur = kit.boats[kit.active] ?? { engineLv: 0 }, bn = BOAT_TYPES[kit.active].name;
@@ -3699,7 +3700,6 @@ function quadMatrix(w, h, q) {
   return `matrix3d(${n.map((v) => +v.toFixed(8)).join(',')})`;
 }
 let storedInfo = {};                   // 伺服器說倉庫裡的船：船種 → { fuel, hp 0–1 }
-let dexBook = {};                      // 圖鑑（伺服器存的）：魚種 → { n, len, kg, at }
 const dexNew = new Set();              // 這次新釣到、還沒在圖鑑裡看過的魚種
 // 釣到魚時伺服器帶來的圖鑑那一筆：記下來；第一次釣到回傳 true
 function noteDex(d) {
