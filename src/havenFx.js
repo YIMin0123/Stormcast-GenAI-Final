@@ -84,7 +84,7 @@ export function makeHavenFx({ scene, shade, splash, mist, flood, waterY, groundA
       if (hot) {
         for (const b of birds) {
           b.ang += b.sp * dt;
-          b.g.position.set(hot.x + Math.cos(b.ang) * b.rad, b.h + Math.sin(time * 0.7 + b.ph) * 0.8, hot.z + Math.sin(b.ang) * b.rad);
+          b.g.position.set(hot.x + Math.cos(b.ang) * b.rad, b.h, hot.z + Math.sin(b.ang) * b.rad);
           b.g.rotation.y = -b.ang + (b.sp < 0 ? Math.PI : 0);
           const f = Math.sin(time * 9 + b.ph) * 0.6;
           b.wl.rotation.z = f; b.wr.rotation.z = -f;

@@ -222,7 +222,7 @@ export function makeWildlife(E) {
     switch (o.st) {
       case 'orbit': {
         const a = anchorFor(o), rx = o.x - a.x, rz = o.z - a.z, ang = Math.atan2(rz, rx), tAng = ang + o.dir * 0.5;
-        steer(o, a.x + Math.cos(tAng) * a.R, a.h + Math.sin(time * 0.4 + o.phase) * 1.6, a.z + Math.sin(tAng) * a.R, clamp(o.sp, GS.speed[0], GS.speed[1]), dt);
+        steer(o, a.x + Math.cos(tAng) * a.R, a.h, a.z + Math.sin(tAng) * a.R, clamp(o.sp, GS.speed[0], GS.speed[1]), dt);
         o.nextPerch -= dt;
         if (o.nextPerch <= 0) {
           o.nextPerch = rr(GS.perchEvery);
