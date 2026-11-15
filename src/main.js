@@ -103,7 +103,7 @@ renderer.domElement.addEventListener('webglcontextlost', (e) => {
 //           手機預設 1.6 倍，可手動選 1.0 到 2.0 倍。
 //   畫質等級：低／中／高，管陰影的細緻度、草的數量、角落的暗影（AO）、濕地板的倒影、光暈和陽光光束。
 //           電腦預設高、手機預設中。沒調過畫質的電腦第一次進房會量幀率，太慢就降一檔。
-//           手機的畫面幀率獨立設定，預設 30；低畫質減少的是陰影與特效。
+//           手機的畫面幀率獨立設定，預設上限 60 FPS；低畫質減少的是陰影與特效。
 const prefStore = (() => { try { return TEST ? window.sessionStorage : window.localStorage; } catch { return null; } })();
 const getPref = (k) => { try { return prefStore ? prefStore.getItem(k) : null; } catch { return null; } };
 const setPref = (k, v) => { try { if (prefStore) prefStore.setItem(k, String(v)); } catch { /* 存不了就下次重調 */ } };
@@ -2826,7 +2826,7 @@ if (TOUCH) {
   const group = $('frameChoices');
   row.hidden = false;
   const savedLimit = Number(getPref('stormcast.mobileFps'));
-  let preferredLimit = MOBILE_FRAME_LIMITS.includes(savedLimit) ? savedLimit : MOBILE_FRAME_LIMITS[0];
+  let preferredLimit = MOBILE_FRAME_LIMITS.includes(savedLimit) ? savedLimit : 60;
   const buttons = MOBILE_FRAME_LIMITS.map((fps) => {
     const b = group.appendChild(Object.assign(document.createElement('button'), { type: 'button', textContent: `${fps} FPS` }));
     b.dataset.fps = fps;
