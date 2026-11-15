@@ -2,6 +2,7 @@
 // 版面用 html 字串畫，有變才換（按鈕用 data-act，點了交給 env.act）
 import { ICON } from './icons.js';
 import { RARITY } from './fishdata.js';
+import { BOAT_MODS, BOAT_PAINTS, BLESSINGS, HONOR_TITLES, CHUM_SPEC } from './boatdata.js';
 import { NOTICE, UPDATES, nextRefreshAt, countdownText, refreshLabel } from './announce.js';
 import { unreadCount, isUnread, markRead } from './updates.js';
 
@@ -105,7 +106,8 @@ export function makeApps(env) {
       el.innerHTML = `<div class="tbMap"><canvas width="560" height="560"></canvas><div class="tbMapSide">
         <div class="tbBtns" style="margin:0">${[['boat', '我的船'], ['box', '魚箱'], ['others', '其他人'], ['hot', '魚群']].map(([k, t]) => `<button class="tbChip${filt[k] ? ' on' : ''}" data-f="${k}">${t}</button>`).join('')}</div>
         <div class="tbNote">紅色箭頭是你、黃色是你的船、白色是其他人、橘色方塊是你的魚箱。上方是北</div>
-        <div class="tbNote" data-v="hint"></div></div></div>`;
+        <div class="tbNote" data-v="hint"></div>
+        <div class="tbNote" data-v="sonar" style="color:var(--sea-d);line-height:1.5"></div></div></div>`;
       this.cv = el.querySelector('canvas');
       el.querySelector('.tbMapSide').addEventListener('click', (e) => {
         const b = e.target.closest('[data-f]');
@@ -126,6 +128,8 @@ export function makeApps(env) {
       this.hits = env.drawMap(this.cv, filt);
       const hint = el.querySelector('[data-v="hint"]'), t = env.mapHint();
       if (hint.textContent !== t) hint.textContent = t;
+      const sonar = el.querySelector('[data-v="sonar"]'), s = env.mapSonar ? env.mapSonar() : '';
+      if (sonar && sonar.innerHTML !== s) sonar.innerHTML = s;
     },
     leave() { this.cv = null; },
   };
@@ -147,7 +151,17 @@ export function makeApps(env) {
       return `<div class="tbc${b.active ? ' on' : ''}${warn ? ' warn' : ''}">${head}${rows}${warn}${btns}</div>`;
     }).join('');
     const why = d.block ? `<p class="tbNote">現在不能叫船、換船：${esc(d.block)}</p>` : '<p class="tbNote">叫船、換船：船會停到離你最近的空船位</p>';
-    return cards + why + (d.more ? `<p class="tbNote">${esc(d.more)}</p>` : '');
+    const mods = `<div class="tbSec">船隻改裝（於魚市場購買，永久套用至所有船隻）</div><div class="tbBaits">${Object.values(BOAT_MODS).map((m) => {
+      const on = !!d.mods?.[m.id];
+      return `<div class="tbc${on ? ' on' : ''}" style="margin:0;padding:8px 10px"><h4>${esc(m.name)}<span class="tbTag ${on ? 'g' : 'q'}">${on ? '已安裝' : `$${m.price.toLocaleString('en-US')}`}</span></h4><p class="tbNote">${esc(m.desc)}</p></div>`;
+    }).join('')}</div>`;
+    const ownedPaints = new Set(d.paints || ['default']);
+    const paints = `<div class="tbSec">船殼塗裝（點已擁有塗裝可隨時切換；未擁有請至魚市場購買）</div><div class="tbBaits">${BOAT_PAINTS.map((p) => {
+      const owned = ownedPaints.has(p.id), cur = (d.paint || 'default') === p.id;
+      const swatch = p.rgb ? `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:rgb(${p.rgb.map((v) => Math.round(v * 255)).join(',')});margin-right:5px;border:1px solid rgba(0,0,0,0.25)"></span>` : '';
+      return `<button class="tbBait${cur ? ' on' : ''}" data-act="paint" data-arg="${p.id}">${swatch}${esc(p.name)}<small>${cur ? '目前塗裝' : owned ? '點擊切換塗裝' : `$${p.price.toLocaleString('en-US')}（魚市場購買）`}</small></button>`;
+    }).join('')}</div>`;
+    return cards + why + (d.more ? `<p class="tbNote">${esc(d.more)}</p>` : '') + mods + paints;
   }, env);
 
   // ---- 天氣：時間、風向羅盤、浪、潮汐、預報、徵兆 ----
@@ -190,10 +204,20 @@ export function makeApps(env) {
   // ---- 背包：釣竿、餌（點一下換）、魚箱在哪 ----
   const bag = htmlApp({ id: 'bag', name: '背包', icon: 'bag', color: '#e2a03d' }, function () {
     const b = env.bag();
-    const rod = `<div class="tbc${b.rod.broken ? ' warn' : ''}"><h4>${ICON.rod} 釣竿 Lv${b.rod.lv}<span class="r">拋竿最遠約 ${Math.round(b.rod.range)} 公尺</span></h4>${b.rod.broken ? '<p class="tbNote tbBad">斷了：回潮汐灣的商店修</p>' : '<p class="tbNote">在商店可以升級：拋得更遠、魚咬得更快</p>'}</div>`;
+    const rod = `<div class="tbc${b.rod.broken ? ' warn' : ''}"><h4>${ICON.rod} 釣竿 Lv${b.rod.lv}<span class="r">拋竿最遠約 ${Math.round(b.rod.range)} 公尺</span></h4>${b.rod.broken ? '<p class="tbNote tbBad">斷了：回潮汐灣的商店修</p>' : '<p class="tbNote">在商店可升級（滿級 Lv5）：拋竿距離更遠、拉扯綠區更寬、抗斷線更強</p>'}</div>`;
     const baits = `<div class="tbSec">餌（點一下換上；也可以按 B）</div><div class="tbBaits">${b.baits.map((x) => `<button class="tbBait${x.id === b.bait ? ' on' : ''}" data-act="bait" data-arg="${x.id}">${esc(x.name)}${x.id ? `　× ${x.n}` : ''}<small>${esc(x.desc)}</small></button>`).join('')}</div>`;
+    const chum = `<div class="tbSec">誘魚桶（於魚市場購買・快捷鍵 U）</div><div class="tbc${b.chum > 0 ? ' on' : ''}"><h4>誘魚桶 × ${b.chum || 0} / ${CHUM_SPEC.max}<span class="r">$${CHUM_SPEC.price} / 桶</span></h4><p class="tbNote">清除周圍 ${CHUM_SPEC.clearR}m 漁獲驚嚇，並產生 ${CHUM_SPEC.life} 秒、上限 ${CHUM_SPEC.quota} 尾的人工魚群</p><div class="tbBtns"><button class="main" data-act="useChum"${b.chum > 0 ? '' : ' disabled'}>${b.chum > 0 ? '就地施放打窩 (U)' : '目前沒有誘魚桶'}</button></div></div>`;
     const boxes = `<div class="tbSec">魚箱（${b.boxes.length} / ${b.boxMax}）</div>${b.boxes.length ? b.boxes.map((x) => `<div class="tbc"><h4>${ICON.box} ${x.n} 條魚・${x.kg.toFixed(1)} 公斤<span class="r">${esc(x.where)}</span></h4><p class="tbNote">值 $${x.value.toLocaleString('en-US')}</p></div>`).join('') : '<p class="tbNote">還沒有魚箱：在商店買，抱著搬，魚放進去別人拿不走</p>'}`;
-    return rod + baits + boxes;
+    const bless = `<div class="tbSec">全服海神祈福（同房玩家共享${b.blessing > 0 ? `・魚潮剩餘 ${b.blessing} 秒` : ''}）</div><div class="tbBaits">
+      <button class="tbBait${b.blessing > 0 ? ' on' : ''}" data-act="bless" data-arg="tide">${esc(BLESSINGS.tide.name)}　$${BLESSINGS.tide.price.toLocaleString('en-US')}<small>${esc(BLESSINGS.tide.desc)}</small></button>
+      <button class="tbBait" data-act="bless" data-arg="storm">${esc(BLESSINGS.storm.name)}　$${BLESSINGS.storm.price.toLocaleString('en-US')}<small>${esc(BLESSINGS.storm.desc)}</small></button>
+    </div>`;
+    const ownedTitles = new Set(b.honors?.titles || []), curTitle = b.honors?.title || '';
+    const honors = `<div class="tbSec">跨季榮譽頭銜（72 小時全服刷新永久保留）</div><div class="tbBaits">${HONOR_TITLES.map((t) => {
+      const owned = ownedTitles.has(t.name), cur = curTitle === t.name;
+      return `<button class="tbBait${cur ? ' on' : ''}" data-act="title" data-arg="${t.id}"${t.gold ? ' style="border-color:#d8a32a"' : ''}>${t.gold ? '👑 ' : ''}${esc(t.name)}<small>${cur ? '配戴中（點擊卸下）' : owned ? '已永久解鎖（點擊配戴）' : `$${t.price.toLocaleString('en-US')}（魚市場購買）`}</small></button>`;
+    }).join('')}</div>`;
+    return rod + baits + chum + boxes + bless + honors;
   }, env);
 
   // ---- 房間：同房的人在哪 ----

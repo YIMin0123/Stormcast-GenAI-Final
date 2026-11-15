@@ -8,18 +8,32 @@ import { SPECIES, makeFishMesh, makeCanMesh } from './fish.js';
 import { makeTabletMesh, holdTablet, poseTablet } from './tabletMesh.js';
 import { restyle } from './figure.js';
 
-// 頭上的名牌：一張畫著名字的小圖，永遠面向鏡頭、遠近都一樣大
-function nameTag(name) {
+// 頭上的名牌：一張畫著名字（含可選跨季榮譽稱號）的小圖，永遠面向鏡頭、遠近都一樣大
+function nameTag(name, title = '') {
   const cv = document.createElement('canvas'), ctx = cv.getContext('2d');
   const font = '30px "Huninn", "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif';
+  const titleFont = 'bold 26px "Huninn", "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif';
+  const prefix = title ? `[${title}] ` : '';
+  ctx.font = titleFont;
+  const tw = title ? Math.ceil(ctx.measureText(prefix).width) : 0;
   ctx.font = font;
-  const w = Math.ceil(ctx.measureText(name).width) + 28, h = 44;
+  const nw = Math.ceil(ctx.measureText(name).width);
+  const w = tw + nw + 30, h = 44, gold = title === '七海龍王';
   cv.width = w; cv.height = h;
-  ctx.font = font;
-  ctx.fillStyle = 'rgba(191, 232, 248, 0.9)';   // 跟介面的卡片同一種水藍
-  ctx.beginPath(); ctx.roundRect(0, 0, w, h, h / 2); ctx.fill();
-  ctx.fillStyle = '#1d6f9f'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(name, w / 2, h / 2 + 1);
+  ctx.fillStyle = gold ? 'rgba(34, 24, 8, 0.92)' : 'rgba(191, 232, 248, 0.9)';
+  ctx.beginPath(); ctx.roundRect(1, 1, w - 2, h - 2, (h - 2) / 2); ctx.fill();
+  if (gold) { ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 2.5; ctx.stroke(); }
+  ctx.textBaseline = 'middle';
+  let x = 15;
+  if (title) {
+    ctx.font = titleFont; ctx.textAlign = 'left';
+    ctx.fillStyle = gold ? '#ffd24a' : '#0d5380';
+    ctx.fillText(prefix, x, h / 2 + 1);
+    x += tw;
+  }
+  ctx.font = font; ctx.textAlign = 'left';
+  ctx.fillStyle = gold ? '#fff6d6' : '#1d6f9f';
+  ctx.fillText(name, x, h / 2 + 1);
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, fog: false, sizeAttenuation: false }));
@@ -48,22 +62,35 @@ export class Others {
 
   // 房裡的一個人。here：他現在連著線（沒有的話只有船，人不在）；boat：{ type, s, sunk }
   // look：他選的角色（'girl'／'boy'）
-  add({ id, name, look = 'girl', here = true, pos = null, boat = null, hold = null, line = null }) {
+  add({ id, name, title = '', look = 'girl', here = true, pos = null, boat = null, hold = null, line = null }) {
     let o = this.map.get(id);
-    if (!o) { o = { id, name, look, fig: null, tag: null, rod: null, boat: null, st: null, lastAct: '', hold: null, held: null, ln: null, bob: null, line: null, rodA: ROD_ANGLE }; this.map.set(id, o); }
+    if (!o) { o = { id, name, title, look, fig: null, tag: null, rod: null, boat: null, st: null, lastAct: '', hold: null, held: null, ln: null, bob: null, line: null, rodA: ROD_ANGLE }; this.map.set(id, o); }
     o.name = name;
     if (o.look !== look) {   // 換了角色（重新整理後回來）：人偶重做、船上的舵手也換
       o.look = look;
       if (o.fig) this._unfigure(o);
       if (o.boat) restyle(o.boat.parts.helmsman, look);
     }
-    if (here && !o.fig) this._figure(o);
+    if (here && !o.fig) { o.title = title; this._figure(o); }
+    else if (o.title !== title) this.setTitle(id, title);
     if (!here) this._unfigure(o);
     if (boat) this.setBoat(id, boat);
     if (pos) this.setPos(id, pos);
     this.setHold(id, hold);
     this.setLine(id, line);
     return o;
+  }
+
+  setTitle(id, title = '') {
+    const o = this.map.get(id);
+    if (!o || o.title === title) return;
+    o.title = title;
+    if (!o.fig) return;
+    const pos = o.tag.position.clone(), vis = o.tag.visible;
+    o.tag.removeFromParent(); dispose(o.tag);
+    o.tag = nameTag(o.name, o.title);
+    o.tag.position.copy(pos); o.tag.visible = vis;
+    this.env.scene.add(o.tag);
   }
 
   _figure(o) {
@@ -75,7 +102,7 @@ export class Others {
     rod.castShadow = true;
     fig.mesh.add(rod);
     fig.mesh.visible = false;   // 收到第一筆位置才出現
-    o.tag = nameTag(o.name);
+    o.tag = nameTag(o.name, o.title || '');
     o.tag.visible = false;
     // 釣線和浮標：他在釣魚的時候才顯示
     o.bob = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), new THREE.MeshBasicMaterial({ color: 0xff4a33 }));
@@ -138,6 +165,7 @@ export class Others {
       restyle(o.boat.parts.helmsman, o.look);   // 只有船主能開：舵手長得跟船主一樣
     }
     o.boat.setNet(info.s, true);
+    o.boat.setPaint?.(info.paint || 'default');
   }
 
   // 船被收走了（人離開 30 秒後）

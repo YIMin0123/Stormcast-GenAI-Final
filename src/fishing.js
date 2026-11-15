@@ -76,16 +76,31 @@ export class Fishing {
     if (this.state === 'idle') {
       if (!this.env.canFish()) return;
       if (this.env.broken && this.env.broken()) { this.env.toast('釣竿斷了，要拿回商店的攤位修理'); return; }
-      this.state = 'charge'; this.power = 0; this.env.player.yaw = this.env.viewYaw(); // 身體轉向要拋的方向
-    } else if (this.state === 'wait') this.cancel();           // 沒魚咬：把線收回來
+      this.state = 'charge'; this.power = 0; this.nibbleT = 0; this.env.player.yaw = this.env.viewYaw(); // 身體轉向要拋的方向
+    } else if (this.state === 'wait') this._earlyPull();   // 沒真咬就提早拉竿：把魚嚇跑
     else if (this.state === 'bite') {
       if (this.env.net) { this.state = 'hooking'; this.t = 0; this.env.net.hook(); } else this._hook(this.env.pick(this.land.x, this.land.z));
     }
   }
 
+  _earlyPull() {
+    this.nibbleT = 0;
+    this.env.net?.earlyPull?.();
+    this._sound('plop');
+    this.env.toast('太早拉竿，把魚嚇跑了！');
+    this.cancel(null);
+  }
+
   // ---- 伺服器說的 ----
+  serverNibble() {
+    if (this.state !== 'wait') return;
+    this.nibbleT = 0.38;
+    this.env.splash(this.bob.position.x, 0.1, this.bob.position.z);
+    this._sound('plop');
+  }
   serverBite() {
     if (this.state !== 'wait') return;
+    this.nibbleT = 0;
     this.state = 'bite'; this.biteWin = 1.3;
     this.env.splash(this.bob.position.x, 0.1, this.bob.position.z);
     this._sound('bite');
@@ -101,11 +116,11 @@ export class Fishing {
   // 放開 F
   release() {
     if (this.state !== 'charge') return;
-    const p = this.env.player, yaw = this.env.viewYaw(), d = (5 + 17 * this.power) * (1 + 0.25 * this.env.rodLv());
+    const p = this.env.player, yaw = this.env.viewYaw(), d = (5 + 17 * this.power) * (1 + 0.20 * this.env.rodLv());
     this._tip();
     this.from.copy(this.tip);
     this.land.set(p.x + Math.cos(yaw) * d, 0, p.z + Math.sin(yaw) * d);
-    this.state = 'fly'; this.t = 0;
+    this.state = 'fly'; this.t = 0; this.nibbleT = 0;
     this.flyDur = 0.5 + 0.4 * this.power;
     this._sound('cast');
   }
@@ -113,12 +128,13 @@ export class Fishing {
   // why：告訴伺服器為什麼不釣了（null = 不用講）
   cancel(why = 'cancel') {
     if (why && this.env.net && this.state !== 'idle' && this.state !== 'charge' && this.state !== 'fly') this.env.net.lose(why);
+    this.nibbleT = 0;
     this.state = 'idle'; this.rodTop.rotation.z = 0;
   }
 
   _sound(name, vol) { if (this.env.sound) this.env.sound(name, vol); }
 
-  _biteTime() { return rand(2.5, 9) * Math.pow(0.82, this.env.rodLv()) * (this.env.biteK ? this.env.biteK() : 1); }
+  _biteTime() { return Math.max(2.5, rand(4.5, 12.5) * (this.env.biteK ? this.env.biteK() : 1)); }
 
   _hook(fish) {
     const f = this.fish = fish;
@@ -127,10 +143,10 @@ export class Fishing {
     this.dist0 = this.dist = Math.max(4, Math.hypot(this.land.x - p.x, this.land.z - p.z));
     // 越兇的魚（越大、越值錢）：區間越窄、跑得越快、越常變向
     const lv = this.env.rodLv();
-    this.zoneW = clamp(0.42 - 0.10 * f.strength, 0.17, 0.40) + 0.03 * lv;
+    this.zoneW = clamp(0.42 - 0.10 * f.strength, 0.17, 0.40) + 0.022 * lv;
     this.zoneSpeed = Math.min(0.18 + 0.30 * f.strength, 0.72);
     // 這條魚的力氣是這支竿受得了的幾倍：六成以下怎麼拉都不會斷，超過越多、用力過頭時負荷加得越快
-    this.risk = clamp((f.strength / (1.0 + 0.4 * lv) - 0.6) / 0.8, 0, 1.3);
+    this.risk = clamp((f.strength / (1.0 + 0.38 * lv) - 0.6) / 0.8, 0, 1.3);
     this.strain = 0;
     if (this.risk > 0.25) this.env.toast(this.risk > 0.8 ? '好重！是個大傢伙——千萬別硬拉，釣竿會斷' : '手感很沉，別拉得太用力，釣竿會斷');
     this._sound('hook');
@@ -188,11 +204,17 @@ export class Fishing {
         break;
       }
 
-      case 'wait':
-        b.set(this.land.x, env.surfaceY(this.land.x, this.land.z) + 0.03, this.land.z);
+      case 'wait': {
+        let bob = 0;
+        if (this.nibbleT > 0) { this.nibbleT = Math.max(0, this.nibbleT - dt); bob = -0.055 * Math.sin((this.nibbleT / 0.38) * Math.PI); }
+        b.set(this.land.x, env.surfaceY(this.land.x, this.land.z) + 0.03 + bob, this.land.z);
         if (Math.hypot(b.x - p.x, b.z - p.z) > 60) { this.cancel(); break; }
-        if (!env.net && (this.biteT -= dt) <= 0) { this.state = 'bite'; this.biteWin = 1.3; env.splash(b.x, 0.1, b.z); this._sound('bite'); }
+        if (!env.net) {
+          if (this.biteT > 3.5 && !this.nibbled && this.biteT < 2.2) { this.nibbled = true; if (Math.random() < 0.5) { this.nibbleT = 0.38; env.splash(b.x, 0.1, b.z); this._sound('plop'); } }
+          if ((this.biteT -= dt) <= 0) { this.nibbleT = 0; this.nibbled = false; this.state = 'bite'; this.biteWin = 1.3; env.splash(b.x, 0.1, b.z); this._sound('bite'); }
+        }
         break;
+      }
 
       case 'bite':
         b.set(this.land.x, env.surfaceY(this.land.x, this.land.z) - 0.1 + Math.sin(this.t * 40) * 0.03, this.land.z);

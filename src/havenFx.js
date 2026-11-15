@@ -19,8 +19,8 @@ export function makeHavenFx({ scene, shade, splash, mist, flood, waterY, groundA
   const lam = (c) => new THREE.MeshLambertMaterial({ color: c, flatShading: true });
   const now = () => performance.now() / 1000;
 
-  // ---- 魚群熱點：海鳥 ----
-  let hot = null, foamAcc = 0;
+  // ---- 魚群熱點：海鳥 ＋ 誘魚桶人工魚群 ----
+  let hot = null, chums = [], foamAcc = 0, chumAcc = 0;
   const birds = [], flock = new THREE.Group();
   flock.visible = false;
   group.add(flock);
@@ -63,14 +63,15 @@ export function makeHavenFx({ scene, shade, splash, mist, flood, waterY, groundA
   }
 
   return {
-    // 伺服器送來的狀態：{ hot: { x, z, r, left } | null, chests: [[id, 第幾個地點]] }
+    // 伺服器送來的狀態：{ hot: { x, z, r, left, count, maxCount } | null, chums: [...], chests: [[id, 第幾個地點]] }
     sync(st) {
       const t = now();
       if (st.hot) {
         const fresh = !hot || Math.hypot(hot.x - st.hot.x, hot.z - st.hot.z) > 1;
-        hot = { x: st.hot.x, z: st.hot.z, r: st.hot.r, until: t + st.hot.left };
+        hot = { x: st.hot.x, z: st.hot.z, r: st.hot.r, until: t + st.hot.left, count: st.hot.count, maxCount: st.hot.maxCount };
         if (fresh && onHot) onHot(hot);
       } else hot = null;
+      chums = Array.isArray(st.chums) ? st.chums.map((c) => ({ ...c, until: t + c.left })) : [];
       const keep = new Set(st.chests.map((c) => c[0]));
       for (const [id, c] of chests) if (!keep.has(id)) { c.g.removeFromParent(); chests.delete(id); }
       for (const [id, k] of st.chests) if (!chests.has(id)) addChest(id, k);
@@ -78,6 +79,7 @@ export function makeHavenFx({ scene, shade, splash, mist, flood, waterY, groundA
     update(dt, time, cam) {
       const t = now();
       if (hot && t > hot.until) hot = null;
+      chums = chums.filter((c) => t <= c.until && c.count > 0);
       flock.visible = !!hot;
       if (hot) {
         for (const b of birds) {
@@ -94,6 +96,15 @@ export function makeHavenFx({ scene, shade, splash, mist, flood, waterY, groundA
           splash(x, waterY(x, z), z, 5);
         }
       }
+      if (chums.length && (chumAcc += dt) > 0.18) {
+        chumAcc = 0;
+        for (const c of chums) {
+          if ((cam.x - c.x) ** 2 + (cam.z - c.z) ** 2 < 180 * 180) {
+            const a = Math.random() * 6.28, d = Math.sqrt(Math.random()) * c.r * 0.75, x = c.x + Math.cos(a) * d, z = c.z + Math.sin(a) * d;
+            splash(x, waterY(x, z), z, 3);
+          }
+        }
+      }
       // 瀑布的水花：落水的那一點往四周、往上濺，沖進深潭的那一道濺得比較高、比較散
       for (const h of hits) {
         if ((cam.x - h.x) ** 2 + (cam.z - h.z) ** 2 > SPLASH_NEAR * SPLASH_NEAR) { h.acc = 0; continue; }
@@ -106,6 +117,7 @@ export function makeHavenFx({ scene, shade, splash, mist, flood, waterY, groundA
       for (const c of chests.values()) if (c.float) { c.g.position.y = waterY(c.x, c.z) - 0.22; c.g.rotation.z = Math.sin(time * 1.3 + c.k) * 0.08; }
     },
     hot: () => hot,
+    chums: () => chums,
     // 人站在哪個寶箱旁邊：回傳 { id, pos }；沒有就 null
     chestNear(x, y, z) {
       for (const [id, c] of chests) if (Math.hypot(x - c.x, z - c.z) < CHESTS.reach && Math.abs(y - c.g.position.y) < 3) return { id, pos: c.g.position.clone().setY(c.g.position.y + 0.4) };

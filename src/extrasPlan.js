@@ -3,7 +3,7 @@ import { HAVEN, REEF_FRAMES } from './frame.js';
 
 // 魚群熱點（海鳥盤旋、水面翻白沫）：每隔 every 秒冒出一個、維持 life 秒（都是範圍，隨機取）；半徑 r 公尺；
 // 出現在離地圖正中間 reach 公尺以內、水夠深、離大島夠遠的海面。拋進圈裡：等咬的時間乘 biteK、魚的個頭大一截
-export const HOTSPOT = { every: [240, 420], life: [130, 180], r: 28, reach: 620, minDepth: 10, minOff: 120, biteK: 0.45 };
+export const HOTSPOT = { every: [240, 420], life: [150, 200], quota: [8, 12], r: 28, reach: 620, minDepth: 10, minOff: 120, biteK: 0.58 };
 
 // 漂流寶箱：暴風雨、颱風、海嘯結束後，從下面這些地方隨機挑 count 個各放一箱，life 秒沒人撿就漂走。
 // 撿到的是獎金（cash 的範圍）或一桶油（fuel 的機率）。at：哪一套座標；y：有寫的照它（洞裡的岩台是下層，查地面查不到）

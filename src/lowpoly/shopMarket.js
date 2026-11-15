@@ -637,4 +637,60 @@ export function buildShopMarket({ fb, fd, P, box, obox, gableRoof, boatGeo, out,
     box(fb, x, x + sg.w + 0.05, sg.y + sg.h / 2 + 0.02, sg.y + sg.h / 2 + 0.05, z - 0.012, z + 0.012, Q.steel, Q.steel, r, 0);
     out.solids.push({ x, z, r: 0.26 });
   }
+
+  // ---- 魚市場新增實體攤位道具（用獨立亂數種子，不影響前面任何擺設的位置）----
+  {
+    const r2 = rng(8831);
+    if (G.title) {   // 榮譽頭銜木座台（table 與水槽之間空位）
+      const t = G.title;
+      box(fb, t.x - 0.42, t.x + 0.42, D, D + 0.72, t.z - 0.40, t.z + 0.40, P.woodDark, P.woodDark, r2);
+      box(fb, t.x - 0.46, t.x + 0.46, D + 0.72, t.y, t.z - 0.42, t.z + 0.42, P.wood, P.woodDark, r2);
+      out.solids.push({ x: t.x, z: t.z, r: 0.45 });
+      // 金色榮譽牌匾 / 龍王金杯造型
+      box(fb, t.x - 0.26, t.x + 0.26, t.y, t.y + 0.04, t.z - 0.14, t.z + 0.14, P.woodDark, P.woodDark, r2);
+      box(fb, t.x - 0.22, t.x + 0.22, t.y + 0.04, t.y + 0.36, t.z - 0.03, t.z + 0.03, Q.brass, P.woodDark, r2);
+      cyl(fb, t.x, t.y + 0.36, t.z, 0.14, 0.07, 0.16, 10, Q.brass, r2);
+      cyl(fb, t.x, t.y + 0.52, t.z, 0.04, 0.14, 0.06, 10, Q.plYellow, r2);
+    }
+    if (G.chum) {   // 誘魚桶：橘色餌桶裝著魚塊與白浮蓋
+      const g = G.chum;
+      cyl(fb, g.x, g.y, g.z, 0.18, 0.15, 0.30, 10, Q.plOrange, r2);
+      cyl(fb, g.x, g.y + 0.27, g.z, 0.19, 0.19, 0.04, 10, Q.plWhite, r2);
+      for (let i = 0; i < 4; i++) {
+        const a = i * 1.55;
+        box(fd, g.x + Math.cos(a) * 0.07 - 0.04, g.x + Math.cos(a) * 0.07 + 0.04, g.y + 0.31, g.y + 0.36, g.z + Math.sin(a) * 0.07 - 0.03, g.z + Math.sin(a) * 0.07 + 0.03, Q.red, Q.redDark, r2, 0.02);
+      }
+    }
+    if (G.paint) {   // 船殼塗裝桶：三個彩色油漆罐＋刷子
+      const g = G.paint;
+      const cols = [Q.red, Q.plBlue, Q.plYellow];
+      for (let i = 0; i < 3; i++) {
+        const cx = g.x + (i - 1) * 0.16, cz = g.z + (i === 1 ? -0.09 : 0.07);
+        cyl(fb, cx, g.y, cz, 0.08, 0.08, 0.18, 10, Q.steel, r2);
+        cyl(fb, cx, g.y + 0.17, cz, 0.07, 0.07, 0.02, 10, cols[i], r2);
+      }
+      obox(fd, g.x + 0.18, g.y + 0.24, g.z + 0.08, 1, 0, 0.04, 0.22, 0.03, P.woodLight, Q.dark, r2, 0.02, 0, -0.35);
+    }
+    if (G.mod_sonar) {   // 探魚聲納：深色主機＋綠螢幕＋黃銅天線
+      const g = G.mod_sonar;
+      box(fb, g.x - 0.18, g.x + 0.18, g.y, g.y + 0.04, g.z - 0.14, g.z + 0.14, Q.dark, Q.dark, r2);
+      box(fb, g.x - 0.15, g.x + 0.15, g.y + 0.04, g.y + 0.28, g.z - 0.08, g.z + 0.05, Q.dark, Q.dark, r2);
+      box(fb, g.x - 0.12, g.x + 0.12, g.y + 0.08, g.y + 0.24, g.z + 0.05, g.z + 0.06, Q.plGreen, Q.green, r2, 0.01);
+      cyl(fd, g.x + 0.12, g.y + 0.28, g.z - 0.02, 0.015, 0.025, 0.18, 8, Q.brass, r2);
+    }
+    if (G.mod_hull) {   // 自動抽水龍骨：金屬泵浦＋黃銅管＋底座
+      const g = G.mod_hull;
+      box(fb, g.x - 0.20, g.x + 0.20, g.y, g.y + 0.05, g.z - 0.13, g.z + 0.13, Q.dark, Q.dark, r2);
+      cyl(fb, g.x - 0.05, g.y + 0.05, g.z, 0.09, 0.10, 0.22, 10, Q.steel, r2);
+      cyl(fb, g.x + 0.10, g.y + 0.05, g.z, 0.04, 0.04, 0.28, 8, Q.brass, r2);
+      box(fd, g.x - 0.05, g.x + 0.12, g.y + 0.24, g.y + 0.29, g.z - 0.03, g.z + 0.03, Q.brass, Q.brass, r2);
+    }
+    if (G.mod_lamp) {   // 船首集魚燈：支架＋大型探照燈頭
+      const g = G.mod_lamp;
+      box(fb, g.x - 0.12, g.x + 0.12, g.y, g.y + 0.04, g.z - 0.12, g.z + 0.12, Q.dark, Q.dark, r2);
+      box(fb, g.x - 0.03, g.x + 0.03, g.y + 0.04, g.y + 0.20, g.z - 0.03, g.z + 0.03, Q.dark, Q.dark, r2);
+      cyl(fb, g.x, g.y + 0.24, g.z - 0.08, 0.12, 0.07, 0.20, 10, Q.brass, r2, Math.PI / 2);
+      cyl(fb, g.x, g.y + 0.24, g.z + 0.12, 0.11, 0.11, 0.02, 10, Q.bulb, r2, Math.PI / 2);
+    }
+  }
 }

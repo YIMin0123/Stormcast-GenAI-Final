@@ -59,6 +59,13 @@ export const GOODS = [   // 順序跟伺服器的商品清單一樣
   onCounter('fuel', -23.4), onCounter('wrench', -22.1), onCounter('rod', -26.0), onCounter('box', -24.7),
   onPlinth('engine', 0), onPlinth('fisher', 1), onPlinth('trawler', 2),
   onBench('bait_shrimp', -18.5), onBench('bait_minnow', -17.3), onBench('bait_squid', -16.1), onBench('bait_lure', -14.9),
+  // 魚市場新攤位（誘魚桶、塗裝、三大改裝、榮譽頭銜座）
+  { id: 'chum',      x: 14.0,  z: -11.1, y: DECK_Y + 0.82, tag: { dy: -0.40, dz: 0.52, tilt: 0 } },
+  { id: 'paint',     x: 15.0,  z: -11.1, y: DECK_Y + 0.82, tag: { dy: -0.40, dz: 0.52, tilt: 0 } },
+  { id: 'mod_sonar', x: 17.65, z: -9.15, y: DECK_Y + 0.90, tag: { dy: -0.45, dz: 0.46, tilt: 0 } },
+  { id: 'mod_hull',  x: 19.05, z: -9.15, y: DECK_Y + 0.90, tag: { dy: -0.45, dz: 0.46, tilt: 0 } },
+  { id: 'mod_lamp',  x: 20.85, z: -9.15, y: DECK_Y + 0.90, tag: { dy: -0.45, dz: 0.46, tilt: 0 } },
+  { id: 'title',     x: 23.6,  z: -9.15, y: DECK_Y + 0.80, tag: { dy: -0.38, dz: 0.42, tilt: 0 } },
 ];
 // 魚市場（橋頭東邊）：開放的棚子，前排左右兩座鋪冰的展示台；中間那根柱子是收購站——
 // 柱子上掛電子價格板，左邊是放在磅秤上的漁獲籃，緊靠著籃子右邊是賣出的按鈕。棚子裡有處理魚的長桌、冰櫃和魚箱、東邊一排活魚水槽

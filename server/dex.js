@@ -47,11 +47,17 @@ export class Dexbooks {
   }
 }
 
-// 存檔讀回來：只留認得的魚種、數字正常的
+// 存檔讀回來：只留認得的魚種、數字正常的（另保留跨季榮譽稱號 _honors）
 export function loadDex(raw) {
   const out = {};
   if (!raw || typeof raw !== 'object') return out;
   for (const [id, e] of Object.entries(raw)) {
+    if (id === '_honors' && e && typeof e === 'object') {
+      const titles = Array.isArray(e.titles) ? [...new Set(e.titles.filter((t) => typeof t === 'string' && t.length <= 24))] : [];
+      const title = typeof e.title === 'string' && titles.includes(e.title) ? e.title : '';
+      if (titles.length || title) out._honors = { titles, title };
+      continue;
+    }
     if (!SPECIES[id] || !e || !(e.n > 0)) continue;
     out[id] = { n: Math.floor(e.n), len: +e.len || 0, kg: +e.kg || 0, at: typeof e.at === 'string' ? e.at.slice(0, 20) : '' };
   }

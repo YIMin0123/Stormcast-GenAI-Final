@@ -71,8 +71,15 @@ export class Chat {
   }
 
   // 玩家說的話
-  say(name, text, mine = false) {
+  say(name, text, mine = false, title = '') {
     const el = this._line(mine ? 'mine' : '');
+    if (title) {
+      const badge = document.createElement('span');
+      badge.textContent = `[${title}] `;
+      badge.style.color = title === '七海龍王' ? '#ffd24a' : '#7fd8ff';
+      badge.style.fontWeight = '700';
+      el.append(badge);
+    }
     const who = document.createElement('b');
     who.textContent = `${name}：`;
     el.append(who, document.createTextNode(text));

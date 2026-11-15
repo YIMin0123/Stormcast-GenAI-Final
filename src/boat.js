@@ -5,7 +5,7 @@ import { bulb } from './toon.js';
 import { buildFigure } from './figure.js';
 export { buildFigure };
 
-import { BOAT_TYPES, MAX_LEVEL } from './boatdata.js';
+import { BOAT_TYPES, MAX_LEVEL, BOAT_PAINTS } from './boatdata.js';
 // 三種船的規格在 boatdata.js（伺服器也用同一份）
 export { BOAT_TYPES, MAX_LEVEL };
 const CRACKS = 6;          // 耐久度分成幾處破洞：全破了船就沉
@@ -90,7 +90,7 @@ function buildHull(S) {
       for (const [ss, ii] of [[s, i], [s + 1, i], [s, i + 1], [s + 1, i + 1]]) nrm[ss][ii].add(fn);
     }
   }
-  const pos = [], colr = [], nor = [], deck = [], cap = [];
+  const pos = [], colr = [], nor = [], deck = [], cap = [], paintVerts = [];
   // 水線下是深紅的防污漆，水線上一道白漆，船舷是上過油的木頭，舷牆是各船自己的漆色
   const RED = [0.50, 0.095, 0.065], WHITE = [0.90, 0.88, 0.80], WOOD = [0.52, 0.31, 0.15], PAINT = S.paint.map((v) => Math.min(1, v * 1.25));
   const tri = (list) => { for (const [ss, ii] of list) { pos.push(...rings[ss][ii]); const n = nrm[ss][ii]; const l = n.length() || 1; nor.push(n.x / l, n.y / l, n.z / l); } };
@@ -100,8 +100,9 @@ function buildHull(S) {
       const y = (rings[s][i][1] + rings[s][i + 1][1] + rings[s + 1][i][1] + rings[s + 1][i + 1][1]) / 4;
       const sheer = (sheers[s] + sheers[s + 1]) / 2, strake = Math.min(Math.abs(i - mid), Math.abs(i + 1 - mid));
       let col = y < 0.0 ? RED : y < 0.11 ? WHITE : y < 0.66 * sheer ? WOOD : PAINT;
+      const isPaint = col === PAINT;
       if (col === WOOD) { const k = 0.86 + 0.28 * (((s >> 1) * 7 + strake * 3) % 4) / 3; col = [WOOD[0] * k, WOOD[1] * k, WOOD[2] * k]; }   // 木板一片深一片淺
-      for (let n = 0; n < 6; n++) colr.push(col[0], col[1], col[2]);
+      for (let n = 0; n < 6; n++) { if (isPaint) paintVerts.push(colr.length / 3); colr.push(col[0], col[1], col[2]); }
     }
     const d = (r) => [[r[0][0], S.deck, r[0][2] * DECK_WIDTH], [r[M - 1][0], S.deck, r[M - 1][2] * DECK_WIDTH]];
     const [a0, a1] = d(rings[s]), [b0, b1] = d(rings[s + 1]);
@@ -120,12 +121,14 @@ function buildHull(S) {
     const L0 = rings[0][i], L1 = rings[0][i + 1], R0 = rings[0][M - 1 - i], R1 = rings[0][M - 2 - i];
     pos.push(...L0, ...L1, ...R0, ...L1, ...R1, ...R0);
     const y = (L0[1] + L1[1]) / 2, col = y < 0.0 ? RED : y < 0.11 ? WHITE : y < 0.66 * sheers[0] ? WOOD : PAINT;
-    for (let n = 0; n < 6; n++) { colr.push(col[0], col[1], col[2]); nor.push(-1, 0, 0); }
+    const isPaint = col === PAINT;
+    for (let n = 0; n < 6; n++) { if (isPaint) paintVerts.push(colr.length / 3); colr.push(col[0], col[1], col[2]); nor.push(-1, 0, 0); }
   }
   const hg = new THREE.BufferGeometry();
   hg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
   hg.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colr), 3));
   hg.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(nor), 3));
+  hg.userData.paintVerts = paintVerts;
   const dg = new THREE.BufferGeometry();
   dg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(deck), 3));
   const duv = new Float32Array((deck.length / 3) * 2);
@@ -331,7 +334,7 @@ function buildCabinBoat(S, g, blocks) {
   helmsman.position.set(wheelPos.x - HELM_GAP, D, 0);
   g.add(helmsman);
   return {
-    wheel, wheelPos, throttle, helmsman, lantern, lever, pilot,
+    wheel, wheelPos, throttle, helmsman, lantern, lever, pilot, roofPaintMat: paint,
     helm: wheelPos,                                       // 準心要對準哪裡才能掌舵：方向盤
     tank: new THREE.Vector3(ex + 0.1, tankY + 0.3, tz),   // 加油口
     switch: sw, switchR: 0.2,                             // 船燈的開關
@@ -408,7 +411,8 @@ function buildSkiff(S, g, blocks) {
 // 回傳船的模型；blocks 會被填入甲板上走不過去的範圍 [x0, x1, z0, z1]
 export function buildBoatMesh(S, blocks = []) {
   const g = new THREE.Group();
-  buildHull(S).forEach((m) => g.add(m));
+  const hull = buildHull(S);
+  hull.forEach((m) => g.add(m));
   // 船舷掛的草繩碰墊
   const fender = new THREE.CylinderGeometry(0.16, 0.16, 0.7, 8), fmat = lambert(0xc9ae7a);
   for (const t of S.cabin ? [0.3, 0.5, 0.68] : [0.4, 0.62]) {
@@ -420,6 +424,7 @@ export function buildBoatMesh(S, blocks = []) {
     }
   }
   g.userData = S.cabin ? buildCabinBoat(S, g, blocks) : buildSkiff(S, g, blocks);
+  g.userData.hullGeo = hull[0].geometry;
   return g;
 }
 
@@ -468,6 +473,10 @@ export class Boat {
     this.sunkBy = null;  // 'capsize' 被浪打翻、'flood' 破損太嚴重
     this.moor = null;    // 纜繩綁在岸上的哪根繫纜樁：{ i 第幾根, lx, lz 船上綁繩子的位置, len 繩長 }；沒綁是 null
     this.lampOn = true;  // 船燈的開關（開著：天黑了會照亮甲板；關掉就不亮）
+    this.paintId = 'default';
+    this.hasHullMod = false;
+    this.healDirty = false;
+    this._healTimer = 0;
     this._m = new THREE.Matrix4();
     this._v = new THREE.Vector3();
     this._d = new THREE.Vector3();
@@ -532,6 +541,37 @@ export class Boat {
       if (d < bd) { bd = d; best = c; }
     }
     return best;
+  }
+
+  // 更換船殼塗裝（船舷漆色 + 駕駛艙屋頂）
+  setPaint(paintId = 'default') {
+    if (this.paintId === paintId) return;
+    this.paintId = paintId;
+    const P = BOAT_PAINTS.find((p) => p.id === paintId);
+    const rgb = (P && P.rgb) || this.spec.paint;
+    const hullPaint = rgb.map((v) => Math.min(1, v * 1.25));
+    const hg = this.parts.hullGeo, colAttr = hg?.getAttribute('color');
+    if (colAttr && hg.userData.paintVerts) {
+      for (const vi of hg.userData.paintVerts) colAttr.setXYZ(vi, hullPaint[0], hullPaint[1], hullPaint[2]);
+      colAttr.needsUpdate = true;
+    }
+    if (this.parts.roofPaintMat) this.parts.roofPaintMat.color.setRGB(rgb[0], rgb[1], rgb[2]).multiplyScalar(1.6);
+  }
+
+  // 自動抽水龍骨：緩慢縮小並修補最後一個破洞
+  _healStep(amount, dt) {
+    const each = this.spec.hp / CRACKS;
+    while (amount > 1e-9 && this.damage.length > 0) {
+      const c = this.damage[this.damage.length - 1];
+      const sub = Math.min(c.dmg, amount);
+      c.dmg -= sub; amount -= sub;
+      if (c.dmg <= 1e-4) { this.repair(c); this.healDirty = true; }
+      else c.mesh.scale.setScalar(0.5 + 0.5 * c.dmg / each);
+    }
+    if (this.damage.length > 0) {
+      this._healTimer += dt;
+      if (this._healTimer >= 3) { this._healTimer = 0; this.healDirty = true; }
+    } else this._healTimer = 0;
   }
 
   // 修好一個破洞
@@ -702,7 +742,8 @@ export class Boat {
       // 歪得超過「會翻」的角度不會馬上翻掉，而是船板裂得很快（浪打進來）；耐久歸零才沉。只有水龍捲的風會直接把船掀翻
       const over = Math.max(0, ar - CAPSIZE_ROLL) + Math.max(0, ap - CAPSIZE_PITCH);
       const stress = 2.5 * Math.max(0, ar - SAFE_ROLL) + Math.max(0, Math.abs(this.pitch - this._ride - this._bankP) - SAFE_PITCH) + 0.3 * Math.max(0, swamp - 0.3) + 6 * over;   // 浪花潑進來一點不算，水真的高過船舷三十公分以上才傷船
-      if (stress > 0) this.hurt(stress * HURT_K * dt);
+      if (stress > 0) this.hurt(stress * HURT_K * (this.hasHullMod ? 0.6 : 1) * dt);
+      if (this.hasHullMod && !this.sinking && this.damage.length > 0) this._healStep(0.5 * dt, dt);
       // 往低的那一側翻：roll > 0 是右舷被抬高
       const blown = flow && Math.hypot(flow.wx, flow.wz) > 0.3;   // 是被水龍捲的風吹翻的，不是浪
       if (blown && (ar > CAPSIZE_ROLL || ap > CAPSIZE_PITCH)) this.founder('spout', this.roll > 0 ? -1 : 1);

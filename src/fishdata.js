@@ -146,6 +146,12 @@ function spotWeight(id, sp, spot, c, d) {
   if (c.storm === 'after' && sp.after) w *= sp.after;
   const bait = BAITS[c.bait];
   if (bait && sp.kind !== 'junk') w *= bait.luck[sp.rarity] ?? 1;   // 越貴的餌，越容易釣到少見、稀有的魚
+  if (sp.kind !== 'junk') {
+    const rar = sp.rarity === 'uncommon' || sp.rarity === 'rare';
+    if (c.fatigue > 0 && rar) w *= Math.max(0.5, 1 - 0.10 * Math.min(5, c.fatigue));
+    if (c.blessing && rar) w *= 2.0;
+    if (c.night && c.lamp && (id === 'glowsquid' || id === 'lanternfish' || id === 'swordfish' || id === 'hairtail' || id === 'squid')) w *= 1.8;
+  }
   return w;
 }
 
@@ -174,8 +180,8 @@ function junkChance(c) {
 // 依水深、最近的島、離岸多遠、時間與天氣決定釣到什麼：岸邊是小魚，島的周圍有特產，離陸地越遠魚越大越貴
 // off：離最近的陸地幾公尺；zone：特別的釣場（'river'、'cave'、'arch'、'atoll'、'beacon'）；
 // hour：現在幾點；storm：'before' 風暴快來了、'after' 風暴剛過、其餘 null；bait：掛的餌（'' 是基本餌）
-export function pickSpecies(depth, island, off, night = false, zone = null, rain = 0, hour = night ? 23 : 12, storm = null, bait = '') {
-  const c = { depth, island, off, night, zone, rain, hour, storm, bait };
+export function pickSpecies(depth, island, off, night = false, zone = null, rain = 0, hour = night ? 23 : 12, storm = null, bait = '', extra = null) {
+  const c = { depth, island, off, night, zone, rain, hour, storm, bait, fatigue: extra?.fatigue || 0, blessing: !!extra?.blessing, lamp: !!extra?.lamp };
   if (Math.random() < junkChance(c)) { const j = pickFrom(c, true); if (j) return j; }
   return pickFrom(c, false) ?? 'mackerel';
 }
@@ -201,9 +207,9 @@ export function fishValue(id, kg) {
 // 這個位置會釣到什麼。where：{ depth 水深, island 最近的島, off 離岸幾公尺, night 是不是晚上, hour 幾點, storm 風暴前後, rough 浪有多大（0–1）, zone 特別的釣場, rain 雨勢, hot 是不是在魚群熱點裡 }
 // 離岸越遠：魚種越好（鰹魚、鮪魚、旗魚）、個頭越大；浪大的日子，外海的魚個頭更大。
 // 越值錢的魚越難釣：同一種魚個頭越大掙扎越兇，身價越高（二十塊以下不算、八百塊以上到頂）再往上加
-export function rollCatch({ depth, island, off, night, rough, zone = null, rain = 0, hot = false, hour, storm = null, bait = '' }) {
+export function rollCatch({ depth, island, off, night, rough, zone = null, rain = 0, hot = false, hour, storm = null, bait = '', fatigue = 0, blessing = false, lamp = false }) {
   const far = clamp((off - 60) / 380, 0, 1), special = zone === 'river' || zone === 'cave';
-  const id = pickSpecies(depth, island, off, night, zone, rain, hour ?? (night ? 23 : 12), storm, bait);
+  const id = pickSpecies(depth, island, off, night, zone, rain, hour ?? (night ? 23 : 12), storm, bait, { fatigue, blessing, lamp });
   // 雜物不看離岸距離變大；魚群熱點裡的魚個頭大一截；小河和洞穴的魚不照離岸距離變大
   const flat = special || isJunk(id);
   const f = rollFish(id, flat ? 0 : clamp(0.7 * far + 0.5 * (off >= 120 ? rough : 0) + (hot ? 0.45 : 0), 0, 1), flat ? 0 : clamp((off - 250) / 300, 0, 1)), [a, b] = SPECIES[id].kg;
@@ -214,10 +220,19 @@ export function rollCatch({ depth, island, off, night, rough, zone = null, rain 
 
 // 這條魚最快幾秒拉得上來（收線小遊戲的進度從三成開始，一直對在區間裡的速度）；伺服器用來擋「太快釣起來」
 export const minFightTime = (strength) => 0.7 / (0.2 / (0.7 + 0.5 * strength));
-// 等魚咬的時間（秒）：釣竿越好越快，下雨時也比較快
-export const biteDelay = (rodLv, rain) => (2.5 + Math.random() * 6.5) * Math.pow(0.82, rodLv) * (1 - 0.35 * clamp(rain / 0.5, 0, 1));
+// 等魚咬的時間（秒）：升級釣竿不再縮短等待；大魚/稀有魚更謹慎，過度捕撈會拉長等待，保底至少 2.5 秒
+export function biteDelay({ rain = 0, hot = false, caveRain = false, fish = null, fatigue = 0 } = {}) {
+  let t = 4.5 + Math.random() * 8.0;
+  t *= 1 - 0.28 * clamp(rain / 0.5, 0, 1);
+  if (hot) t *= 0.58;
+  if (caveRain) t *= 0.65;
+  const sp = fish ? SPECIES[fish.id] : null;
+  if (sp && (sp.rarity === 'rare' || fish.kg > sp.kg[1])) t *= 1.35 + Math.random() * 0.25;
+  if (fatigue > 0) t *= 1 + 0.12 * Math.min(5, fatigue);
+  return Math.max(2.5, t);
+}
 // 拋竿最遠拋多遠（公尺）
-export const castRange = (rodLv) => 22 * (1 + 0.25 * rodLv);
+export const castRange = (rodLv) => 22 * (1 + 0.20 * rodLv);
 
 // 畫面上顯示用：「鯖魚　38 公分　0.82 公斤」
 export const fishLabel = (it) => `${(it.sp ?? SPECIES[it.id]).name}　${Math.round(it.len * 100)} 公分　${it.kg.toFixed(2)} 公斤`;
