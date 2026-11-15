@@ -3,7 +3,7 @@
 import { TEST, QUERY } from './net.js';
 import { startLookPick } from './lookPick.js';
 import { NOTICE, UPDATES, nextRefreshAt, countdownText } from './announce.js';
-import { unreadCount } from './updates.js';
+import { unreadCount, isUnread, markRead } from './updates.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -25,14 +25,21 @@ export function runMenu(net, onLook) {
     const mk = (tag, text) => Object.assign(document.createElement(tag), { textContent: text });
     updList.replaceChildren(...UPDATES.slice(0, 3).map((u) => {
       const sec = document.createElement('section'), h = mk('h4', u.title), ul = document.createElement('ul');
+      if (isUnread(u)) {
+        sec.className = 'fresh';
+        h.append(Object.assign(mk('span', '新'), { className: 'updNew' }));
+      }
       h.append(mk('small', u.date));
       ul.append(...u.items.map((t) => mk('li', t)));
       sec.append(h, ul);
       return sec;
     }));
-    const hasNew = unreadCount() > 0;
-    noticeBtn.classList.toggle('hasNew', hasNew);
-    tabBtns.find((b) => b.dataset.ntab === 'updates')?.classList.toggle('hasNew', hasNew);
+    const syncUnread = () => {
+      const hasNew = unreadCount() > 0;
+      noticeBtn.classList.toggle('hasNew', hasNew);
+      tabBtns.find((b) => b.dataset.ntab === 'updates')?.classList.toggle('hasNew', hasNew);
+    };
+    syncUnread();
 
     const setNoticeOpen = (open) => {
       notice.classList.toggle('open', open);
@@ -44,6 +51,7 @@ export function runMenu(net, onLook) {
       for (const b of tabBtns) b.classList.toggle('on', b.dataset.ntab === tab);
       rulesBox.hidden = tab !== 'rules';
       updList.hidden = tab !== 'updates';
+      if (tab === 'updates') { markRead(); syncUnread(); }
     };
     for (const b of tabBtns) b.addEventListener('click', () => setNoticeTab(b.dataset.ntab));
     noticeBtn.addEventListener('click', () => setNoticeOpen(!notice.classList.contains('open')));

@@ -1,5 +1,5 @@
 // 更新資訊的「看過沒」：瀏覽器記著最後看到哪一條（announce.js 的 UPDATES），比它新的就是未讀，拿來亮小紅點。
-// 打開平板的「公告」app 才算看過（主頁的公告只是露出來，不算）。
+// 點開主頁「更新資訊」分頁或平板「公告」app 就標為看過。
 // ?test 分頁記在分頁自己（sessionStorage），不動正式的紀錄，跟 net.js 的名字、代碼一樣
 import { UPDATES } from './announce.js';
 import { TEST } from './net.js';
