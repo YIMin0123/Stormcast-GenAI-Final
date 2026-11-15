@@ -70,10 +70,11 @@ export class Spray {
     this.max = max;
     this.pos = new Float32Array(max * 3);
     this.vel = new Float32Array(max * 3);
-    this.age = new Float32Array(max).fill(1e9);
-    this.life = new Float32Array(max).fill(1);
+    this.age = new Float32Array(max);
+    this.life = new Float32Array(max);
     this.alpha = new Float32Array(max);
     this.size = new Float32Array(max);
+    this.count = 0;
     this.next = 0;
 
     const g = new THREE.InstancedBufferGeometry();
@@ -84,7 +85,7 @@ export class Spray {
     g.setAttribute('iVel', inst(this.vel, 3));
     g.setAttribute('iA', inst(this.alpha, 1));
     g.setAttribute('iSize', inst(this.size, 1));
-    g.instanceCount = max;
+    g.instanceCount = 0;
     const L = light || {};
     this.material = new THREE.ShaderMaterial({
       vertexShader: vert, fragmentShader: frag, transparent: true, depthWrite: false, side: THREE.DoubleSide,
@@ -98,30 +99,49 @@ export class Spray {
     this.points = new THREE.Mesh(g, this.material);   // 名字沿用舊的（以前是點）：外面用它來藏起來、加進場景
     this.points.frustumCulled = false;
     this.points.renderOrder = 3;
+    this.points.visible = false;
   }
 
   emit(x, y, z, vx, vy, vz, life, size) {
-    const i = this.next;
-    this.next = (i + 1) % this.max;
-    this.pos.set([x, y, z], i * 3);
-    this.vel.set([vx, vy, vz], i * 3);
+    const i = this.count < this.max ? this.count++ : this.next;
+    if (this.count === this.max) this.next = (i + 1) % this.max;
+    const k = i * 3;
+    this.pos[k] = x; this.pos[k + 1] = y; this.pos[k + 2] = z;
+    this.vel[k] = vx; this.vel[k + 1] = vy; this.vel[k + 2] = vz;
     this.age[i] = 0; this.life[i] = life; this.size[i] = size;
   }
 
   update(dt) {
-    const { pos, vel, age, life, alpha } = this;
+    if (!this.count) return;
+    const { pos, vel, age, life, alpha, size } = this;
     const drag = Math.exp(-0.9 * dt);
-    for (let i = 0; i < this.max; i++) {
-      if (age[i] >= life[i]) { alpha[i] = 0; continue; }
+    for (let i = 0; i < this.count;) {
       age[i] += dt;
       const k = i * 3;
+      if (age[i] >= life[i]) {
+        // 用最後一顆活水滴補上空位，讓 GPU 只畫緩衝區前面這一段。
+        const last = --this.count, j = last * 3;
+        pos.copyWithin(k, j, j + 3);
+        vel.copyWithin(k, j, j + 3);
+        age[i] = age[last]; life[i] = life[last]; size[i] = size[last];
+        continue;
+      }
       vel[k + 1] -= 9.81 * dt;
       vel[k] *= drag; vel[k + 1] *= drag; vel[k + 2] *= drag;
       pos[k] += vel[k] * dt; pos[k + 1] += vel[k + 1] * dt; pos[k + 2] += vel[k + 2] * dt;
       const t = age[i] / life[i];
-      alpha[i] = t >= 1 ? 0 : Math.min(1, age[i] * 30) * (1 - t * t);
+      alpha[i] = Math.min(1, age[i] * 30) * (1 - t * t);
+      i++;
     }
-    const a = this.points.geometry.attributes;
-    a.iPos.needsUpdate = true; a.iVel.needsUpdate = true; a.iA.needsUpdate = true; a.iSize.needsUpdate = true;
+    const g = this.points.geometry;
+    g.instanceCount = this.count;
+    this.points.visible = this.count > 0;
+    if (!this.count) return;
+    for (const name of ['iPos', 'iVel', 'iA', 'iSize']) {
+      const a = g.attributes[name];
+      a.clearUpdateRanges();
+      a.addUpdateRange(0, this.count * a.itemSize);
+      a.needsUpdate = true;
+    }
   }
 }

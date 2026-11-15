@@ -36,6 +36,7 @@ import { money as cash, rarityOf, BAITS, SPECIES, castRange } from './fishdata.j
 import { Fishing } from './fishing.js';
 import { EmoteWheel } from './emotes.js';
 import { TOUCH, TouchUI, touchText, touchSet, canFullscreen, isFullscreen, setFullscreen } from './touch.js';
+import { FramePacer } from './framePacer.js';
 import { REFL, addOutline, BULBS, softDisc } from './toon.js';   // 它會改掉內建材質的受光算法（改成手繪風）
 import { makeScenery, SHADOW_LAYER } from './scenery.js';
 import { makeGroundDetail, makeGrassGeometry, WIND, SIGHT } from './foliage.js';
@@ -99,12 +100,14 @@ renderer.domElement.addEventListener('webglcontextlost', (e) => {
 // 畫質由玩家自己在設定裡調，不會自動變，調過的記在瀏覽器裡（?test 分頁只記在那個分頁）：
 //   解析度：沒調過的話，電腦跟著螢幕的縮放比例走（筆電常見 1.25、1.5 倍，畫面才不會被放大而糊掉）；
 //           手機用 2 倍（螢幕原生的 2.6 倍太吃力；1 倍會糊。S22+「中」畫質實測 2 倍 57～60 fps）
-//   畫質等級：手機／低／中／高，管陰影的細緻度、草的數量、角落的暗影（AO）、濕地板的倒影、光暈和陽光光束。
-//           電腦預設高；手機預設低，第一次進遊戲時量幾秒幀率，太慢就自動換成「手機」（只有沒調過的人才會換，換完就記住）。
-//           「手機」這一檔不降解析度，省的是特效：沒有光暈、光束，陰影貼圖小一點、範圍收窄、取樣點減半，草少一半
+//   畫質等級：低／中／高，管陰影的細緻度、草的數量、角落的暗影（AO）、濕地板的倒影、光暈和陽光光束。
+//           電腦預設高、手機預設中。第一次進遊戲時量幾秒幀率，太慢就降一檔（只有沒調過的人才會換）。
+//           手機的畫面幀率獨立設定，預設 30；低畫質減少的是陰影與特效。
 const prefStore = (() => { try { return TEST ? window.sessionStorage : window.localStorage; } catch { return null; } })();
 const getPref = (k) => { try { return prefStore ? prefStore.getItem(k) : null; } catch { return null; } };
 const setPref = (k, v) => { try { if (prefStore) prefStore.setItem(k, String(v)); } catch { /* 存不了就下次重調 */ } };
+let frameLimit = TOUCH ? (getPref('stormcast.mobileFps') === '60' ? 60 : 30) : 0;
+const mobileShadowClock = new FramePacer();
 const ratioFor = () => (TOUCH ? Math.min(2, window.devicePixelRatio || 1) : Math.round(clamp(window.devicePixelRatio || 1, 1, 1.5) * 10) / 10);
 const RATIO_MAX = Math.round(clamp(window.devicePixelRatio || 1, 1.5, 2) * 10) / 10;
 let BASE_RATIO = ratioFor();
@@ -1470,6 +1473,7 @@ function renderReflection(under, turn = true) {
   vcam.projectionMatrixInverse.copy(vcam.projectionMatrix).invert();
   shared.uReflMat.value.copy(BIAS).multiply(vcam.projectionMatrix).multiply(vcam.matrixWorldInverse);
 
+  const sprayOn = spray.points.visible;
   water.visible = false; sky.visible = false; spray.points.visible = false;
   const rainOn = rain.lines.visible, driftOn = spindrift.mesh.visible;
   rain.lines.visible = false; spindrift.mesh.visible = false;
@@ -1487,7 +1491,7 @@ function renderReflection(under, turn = true) {
   renderer.setClearColor(_cc, ca);
   renderer.clippingPlanes = clipOff;
   shared.uReflPass.value = 0;
-  water.visible = true; sky.visible = true; spray.points.visible = true;
+  water.visible = true; sky.visible = true; spray.points.visible = sprayOn;
   rain.lines.visible = rainOn; spindrift.mesh.visible = driftOn;
   scenery.update(camera.position, false, gfx.far);
   grass.visible = OLD_GRASS && gfx.grass > 0;
@@ -1519,6 +1523,7 @@ function renderDeckReflection() {
   vcam.projectionMatrixInverse.copy(vcam.projectionMatrix).invert();
   WET.reflMat.value.copy(BIAS).multiply(vcam.projectionMatrix).multiply(vcam.matrixWorldInverse);
 
+  const sprayOn = spray.points.visible;
   water.visible = false; sky.visible = false; spray.points.visible = false;
   const rainOn = rain.lines.visible, driftOn = spindrift.mesh.visible;
   rain.lines.visible = false; spindrift.mesh.visible = false;
@@ -1538,7 +1543,7 @@ function renderDeckReflection() {
   renderer.clippingPlanes = clipOff;
   WET.reflTex.value = deckRT.texture;
   shared.uReflPass.value = 0; shared.uReflY.value = tideNow;
-  water.visible = true; sky.visible = true; spray.points.visible = true;
+  water.visible = true; sky.visible = true; spray.points.visible = sprayOn;
   rain.lines.visible = rainOn; spindrift.mesh.visible = driftOn;
   scenery.update(camera.position, false, gfx.far);
   grass.visible = OLD_GRASS && gfx.grass > 0;
@@ -2687,6 +2692,7 @@ function applyLite() {
 let viewReady = false;
 function applyGfx() {
   gfx = deriveGfx();
+  mobileShadowClock.reset();
   if (SHADOW_HALF !== gfx.shadowHalf) {
     SHADOW_HALF = gfx.shadowHalf;
     Object.assign(sun.shadow.camera, { left: -SHADOW_HALF, right: SHADOW_HALF, top: SHADOW_HALF, bottom: -SHADOW_HALF });
@@ -2798,6 +2804,24 @@ function syncGfxUi() {
   for (const k in gfxCtl) gfxCtl[k]();
 }
 for (const b of $('gfx').children) b.addEventListener('click', () => { b.blur(); setGfx(+b.dataset.v); saveGfx(); });
+if (TOUCH) {
+  const row = $('frameLimit');
+  row.hidden = false;
+  const buttons = [...row.querySelectorAll('button')];
+  const sync = () => {
+    for (const b of buttons) {
+      const on = +b.dataset.fps === frameLimit;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    }
+  };
+  for (const b of buttons) b.addEventListener('click', () => {
+    frameLimit = +b.dataset.fps;
+    setPref('stormcast.mobileFps', frameLimit);
+    sync();
+  });
+  sync();
+}
 applyGfx();
 // 設定裡換角色：記下來、重新載入（寬限內接回原本的房間）
 for (const b of $('lookSet').children) {
@@ -4524,12 +4548,9 @@ function advance(dt) {
   player.load = hbx ? boxes.speed(hbx) : 1;
   // （抱著魚箱也能游：比較慢、比較累（player.carry 讓體力掉得快），騰不出手放下，要上岸或爬上船才能放）
   boxes.update(time);
-  boxes.marks(camera, meAt(), net.id, inGame && !tabOpen());   // 開船時人的座標不會跟著船動，距離要用船的位置量（meAt）
-  markMyBoat();
   throwTick(dt);
   fishing.reel = keys.f || keys.mouse;
   fishing.update(dt);
-  updateFishUi();
   sendState(dt);
 
   // 船首破浪的飛沫
@@ -4572,8 +4593,12 @@ function advance(dt) {
   }
 }
 
-function drawFrame(dt) {
+let shadowElapsed = 0, shadowDraws = 0;
+function drawFrame(dt, ms = performance.now()) {
   updateCamera(dt);
+  boxes.marks(camera, meAt(), net.id, inGame && !tabOpen());   // 開船時用船的位置量距離
+  markMyBoat();
+  updateFishUi();
   placeTabletDom();
   lpUniforms.uTime.value = time;   // 低面模型（樹、草）隨風搖
   seascape.update(time, camera.position);   // 燈標閃光；太遠、被霧蓋掉的島不畫
@@ -4698,7 +4723,7 @@ function drawFrame(dt) {
   grass.material.uniforms.uGrassCam.value.copy(cp).addScaledVector(_gd.normalize(), 13);
   grass.visible = OLD_GRASS && gfx.grass > 0;
   updateBoatShadow();
-  // 倒影隔一幀重畫一次（偶數幀）；陰影平常每一幀都重畫，畫質「手機」只在奇數幀畫，兩個錯開
+  // 倒影隔一幀重畫一次（偶數幀）
   const even = (drawCount++ & 1) === 0;
   // 地面是濕的、鏡頭在港口附近時，還要畫積水的倒影：跟海面倒影輪流，各自每四幀更新一次
   const deckWet = gfx.wet && !under && WET.wet.value > 0.04 && cp.y > DECK_Y + 0.3 && Math.hypot(cp.x - HARBOR_CENTER_W.x, cp.z - HARBOR_CENTER_W.z) < 120;
@@ -4707,9 +4732,16 @@ function drawFrame(dt) {
   if (deckTurn || (deckWet && !deckReady)) { renderDeckReflection(); deckReady = true; }
   if (!deckWet) deckReady = false;
   WET.reflOn.value = deckWet ? 1 : 0;
-  // 畫質「手機」：陰影貼圖隔一幀才重畫（會動的東西的影子晚一幀跟上，看不出來；陰影是手機上最貴的一項）
-  if (gfx.shadowOn && (!gfx.lite || !even)) {
-    placeSun(target, dt, even);
+  if (gfx.shadowOn) {
+    shadowElapsed += dt;
+    const shadowHz = !inGame ? 10 : gfx.lite ? 15 : 30;
+    const redraw = TOUCH ? mobileShadowClock.take(ms, shadowHz) !== null : !gfx.lite || !even;
+    if (redraw) {
+      // 淡入淡出的新舊貼圖按實際更新次數輪流畫，並用累積時間推進。
+      const shadowEven = TOUCH || gfx.lite ? (shadowDraws++ & 1) === 0 : even;
+      placeSun(target, Math.min(shadowElapsed, 0.25), shadowEven);
+      shadowElapsed = 0;
+    }
     shadowUniforms();
   }
   // 太陽（月亮）在畫面上的位置；背對著它、或人在水裡時沒有光束
@@ -4746,7 +4778,8 @@ ocean.cacheBlock(boat.x, boat.z);
 boat.update(0.016, boatEnv);
 player.place(walkWorld, SPAWN_W.x, SPAWN_W.z);
 
-let frame = 0, last = performance.now();
+let frame = 0;
+const simClock = new FramePacer(), drawClock = new FramePacer(), hudClock = new FramePacer();
 // 角落一直顯示每秒幾幀、平均一幀幾毫秒；網址加 ?fps 的話，後面再加上解析度、畫質、顯示晶片這些細節
 const fpsMore = new URLSearchParams(window.location.search).has('fps');
 const fpsEl = document.body.appendChild(Object.assign(document.createElement('div'), { id: 'fps', textContent: '-- fps　-- ms' }));
@@ -4834,15 +4867,16 @@ const diag = new URLSearchParams(window.location.search).has('diag') ? (() => {
     ].join(String.fromCharCode(10));
   };
 })() : null;
-renderer.setAnimationLoop((ms) => {
+function animate(ms) {
+  const drawMs = TOUCH ? drawClock.take(ms, inGame ? frameLimit : 20) : simClock.take(ms);
+  // 手機保留每秒 60 次的走路、掌舵和釣魚更新，畫面可獨立以 30 FPS 繪製。
+  const simMs = TOUCH ? simClock.take(ms, inGame ? 60 : 30) : drawMs;
+  if (simMs > 0) advance(Math.min(simMs / 1000, 0.05));
+  if (drawMs === null) return;
   if (diag) diag(ms);
-  const rawMs = ms - last;
-  const dt = Math.min(rawMs / 1000, 0.05);
-  last = ms;
-  if (probe) probeGfx(ms, rawMs);
-  if (dt > 0) advance(dt);
-  drawFrame(dt);
-  if (frame++ % 6 === 0) { updatePrompt(); if (tabOpen()) tablet.update(); }
+  if (probe) probeGfx(ms, drawMs);
+  drawFrame(Math.min(drawMs / 1000, TOUCH && !inGame ? 0.075 : 0.05), ms);
+  if (TOUCH ? hudClock.take(ms, 10) !== null : frame++ % 6 === 0) { updatePrompt(); if (tabOpen()) tablet.update(); }
   if (++fpsN && ms - fpsT >= 1000) {
     const span = ms - fpsT;
     fpsEl.textContent = `${Math.round(fpsN * 1000 / span)} fps　${(span / fpsN).toFixed(1)} ms`
@@ -4850,7 +4884,16 @@ renderer.setAnimationLoop((ms) => {
       + (fpsMore ? `　${pixelRatio.toFixed(1)}×　${canvas.width}×${canvas.height}　畫質${gfx.name}　${TOUCH ? '手機' : '電腦'}　${gpuName}` : '');
     fpsN = 0; fpsT = ms;
   }
-});
+}
+function syncAnimation() {
+  simClock.reset(); drawClock.reset(); hudClock.reset(); mobileShadowClock.reset();
+  shadowElapsed = 0;
+  if (probe) { probe.t0 = 0; probe.n = 0; probe.sum = 0; }
+  fpsN = 0; fpsT = performance.now();
+  renderer.setAnimationLoop(document.hidden ? null : animate);
+}
+document.addEventListener('visibilitychange', syncAnimation);
+syncAnimation();
 
 // 供除錯與測試使用
 window.__sim = {
@@ -4860,7 +4903,7 @@ window.__sim = {
   fish, fishing, isWater, SELL: SELL_W, get money() { return money; },
   // 多人
   net, others, chat, boards, garage, enterRoom, applyWorld, myFishUids, takeHelm, releaseHelm, touch, setGfx, setPixelRatio,
-  get gfxLv() { return presetOf(); }, get waterSplit() { return waterSplit; }, get pixelRatio() { return pixelRatio; }, gs, applyGfx, PRESETS, get gfx() { return gfx; }, diag,
+  get gfxLv() { return presetOf(); }, get waterSplit() { return waterSplit; }, get pixelRatio() { return pixelRatio; }, get frameLimit() { return frameLimit; }, gs, applyGfx, PRESETS, get gfx() { return gfx; }, diag,
   get kit() { return kit; }, get myBoat() { return myBoat; }, get berth() { return berth; }, get room() { return room; }, get inGame() { return inGame; }, get time() { return time; },
   dev: (cmd, o = {}) => net.send({ t: 'dev', cmd, ...o }),   // 測試指令（伺服器開了開發模式才收）：event / calm / skip / money / fish / refresh（立刻刷新）
   sea, dangerAt, tsuAt, stormK, waterY, nearTank, nearCrack, get wrench() { return wrench; },
@@ -4873,12 +4916,14 @@ window.__sim = {
   // 量測實際每幀成本（毫秒）：連續算 n 幀並強制 GPU 完成
   bench(n = 20) {
     const gl = renderer.getContext(), px = new Uint8Array(4);
+    mobileShadowClock.reset();
     const t0 = performance.now();
     for (let i = 0; i < n; i++) {
       advance(1 / 60);
-      drawFrame(1 / 60);
+      drawFrame(1 / 60, t0 + i * 1000 / 60);
       gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
     }
+    mobileShadowClock.reset();
     return (performance.now() - t0) / n;
   },
 };

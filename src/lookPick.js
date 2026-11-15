@@ -5,10 +5,12 @@ import * as THREE from 'three';
 import { buildFigure, LOOKS, FACES } from './figure.js';
 import { addOutline } from './toon.js';
 import { myLook, setMyLook } from './look.js';
+import { TOUCH } from './touch.js';
+import { FramePacer } from './framePacer.js';
 
 const $ = (id) => document.getElementById(id);
 
-// 開始預覽。onPick(look)：換了角色時呼叫。回傳 stop()：選單關掉時呼叫
+// 角色預覽只在填名字時播放，進房後釋放資源。
 export function startLookPick(onPick) {
   const cv = $('lookView'), buttons = [...$('lookPick').children];
   const renderer = new THREE.WebGLRenderer({ canvas: cv, alpha: true, antialias: true });
@@ -32,7 +34,8 @@ export function startLookPick(onPick) {
     scene.add(f);
     figs[look] = f;
   }
-  let look = myLook(), spin = 0.6, faceT = 2.5, faceI = 0, raf = 0, last = performance.now();
+  let look = myLook(), spin = 0.6, faceT = 2.5, faceI = 0, raf = null;
+  const clock = new FramePacer();
   const show = () => {
     for (const l of LOOKS) figs[l].visible = l === look;
     for (const b of buttons) b.classList.toggle('on', b.dataset.look === look);
@@ -51,12 +54,19 @@ export function startLookPick(onPick) {
 
   const size = () => {
     const w = cv.clientWidth, h = cv.clientHeight;
-    if (!w || !h) return;
-    if (cv.width !== Math.round(w * renderer.getPixelRatio())) { renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+    if (!w || !h) return false;
+    const ratio = renderer.getPixelRatio();
+    if (cv.width !== Math.floor(w * ratio) || cv.height !== Math.floor(h * ratio)) {
+      renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+    }
+    return true;
   };
   const loop = (now) => {
-    const dt = Math.min(0.05, (now - last) / 1000);
-    last = now;
+    raf = requestAnimationFrame(loop);
+    if (document.hidden) return;
+    const ms = clock.take(now, TOUCH ? 30 : 0);
+    if (ms === null || !size()) return;
+    const dt = Math.min(0.05, ms / 1000);
     spin += dt * 0.7;
     const f = figs[look];
     f.rotation.y = spin;
@@ -68,15 +78,23 @@ export function startLookPick(onPick) {
       f.userData.setFace(faceI ? FACES[1 + Math.floor(Math.random() * (FACES.length - 1))] : 'normal');
       faceT = faceI ? 1.6 : 3;
     }
-    size();
     renderer.render(scene, camera);
-    raf = requestAnimationFrame(loop);
   };
-  raf = requestAnimationFrame(loop);
-
-  return () => {
-    cancelAnimationFrame(raf);
-    for (const f of Object.values(figs)) f.traverse((m) => { if (m.isMesh && !m.userData.hull) [m.material].flat().forEach((x) => x.dispose()); });
-    renderer.dispose();
+  const setVisible = (visible) => {
+    if (visible === (raf !== null)) return;
+    clock.reset();
+    if (visible) raf = requestAnimationFrame(loop);
+    else { cancelAnimationFrame(raf); raf = null; }
+  };
+  const resetClock = () => clock.reset();
+  document.addEventListener('visibilitychange', resetClock);
+  return {
+    setVisible,
+    dispose() {
+      setVisible(false);
+      document.removeEventListener('visibilitychange', resetClock);
+      for (const f of Object.values(figs)) f.traverse((m) => { if (m.isMesh && !m.userData.hull) [m.material].flat().forEach((x) => x.dispose()); });
+      renderer.dispose();
+    },
   };
 }

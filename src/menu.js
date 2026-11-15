@@ -13,7 +13,7 @@ export function runMenu(net, onLook) {
     const box = $('menu'), nameStep = $('menuName'), lobbyStep = $('menuLobby');
     const input = $('nameInput'), go = $('nameGo'), nameMsg = $('nameMsg'), list = $('roomList'), lobbyMsg = $('lobbyMsg');
     let busy = false, finished = false;
-    const stopPick = startLookPick(onLook);
+    const lookPick = startLookPick(onLook);
 
     // 公告與「距離下次刷新」倒數（每秒更新，進了房間就停）
     $('noticeTitle').textContent = NOTICE.title;
@@ -34,7 +34,7 @@ export function runMenu(net, onLook) {
     const finish = (joined) => {
       finished = true;
       clearInterval(timer);
-      stopPick();
+      lookPick.dispose();
       box.style.display = 'none';
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
       done(joined);
@@ -42,6 +42,7 @@ export function runMenu(net, onLook) {
     const step = (which) => {
       nameStep.style.display = which === 'name' ? 'block' : 'none';
       lobbyStep.style.display = which === 'lobby' ? 'block' : 'none';
+      lookPick.setVisible(which === 'name');
       if (which === 'name') input.focus();
     };
 
