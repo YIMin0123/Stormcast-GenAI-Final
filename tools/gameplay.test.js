@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three';
-import { Room, newPlayer } from '../server/room.js';
+import { GRACE, Room, newPlayer } from '../server/room.js';
 import { FishWorld } from '../src/fish.js';
-import { SELL_W, HAVEN_PUMP_W, QUAY_CENTER_W } from '../src/layout.js';
+import { SELL_W, HAVEN_PUMP_W, QUAY_CENTER_W, DECK_Y, deckY } from '../src/layout.js';
+import { SERVER } from '../src/config.js';
 import { PORT } from '../src/lowpoly/havenPlan.js';
 
 function roomFixture() {
@@ -51,6 +52,73 @@ test('船沉後，甲板上的散魚不會留給下一艘船，魚箱仍漂浮',
   assert.equal(guest.fish.has(7), false);
   assert.equal(guest.fish.has(8), true);
   assert.equal(box.k, 'w');
+});
+
+test('船主離線滿三分鐘才回收，仍在船上的乘客帶著手上的魚及自有魚箱回港', () => {
+  assert.equal(SERVER.reconnectSec, 180);
+  const { room, p: owner, guest } = roomFixture();
+  const received = [];
+  guest.ws = { readyState: 1, send: (raw) => received.push(JSON.parse(raw)) };
+  guest.pos[8] = owner.id;
+  guest.hold = ['tuna', tuna.len];
+  guest.fish.set(11, tuna);
+  guest.fish.set(12, tuna);
+  guest.fish.set(13, tuna);
+  const hand = { bid: 1, owner: guest.id, k: 'hand', b: 0, fish: [12] };
+  const deck = { bid: 2, owner: guest.id, k: 'd', b: owner.id, x: 0, z: 0, fish: [13] };
+  guest.boxes.push(hand, deck);
+  room.boxes.set(hand.bid, hand);
+  room.boxes.set(deck.bid, deck);
+
+  room.quit(owner);
+  const droppedAt = owner.gone;
+  assert.ok(received.some((m) => m.t === 'leave' && m.reclaimMs > 0 && m.reclaimMs <= GRACE));
+  room.step(droppedAt + GRACE - 1);
+  assert.equal(guest.pos[8], owner.id);
+  assert.equal(room.count, 2);
+  room.step(droppedAt + GRACE);
+
+  const returned = received.findIndex((m) => m.t === 'passengerReturn');
+  assert.ok(returned >= 0 && returned < received.findIndex((m) => m.t === 'boatGone'));
+  assert.equal(room.count, 1);
+  assert.equal(guest.pos[8], 0);
+  assert.equal(deckY(guest.pos[0], guest.pos[2]), DECK_Y);
+  assert.deepEqual(guest.hold, ['tuna', tuna.len]);
+  assert.equal(room.resumeData(guest).fish[0].uid, 11);
+  assert.equal(hand.k, 'hand');
+  assert.equal(deck.k, 'g');
+  assert.equal(deckY(deck.x, deck.z), DECK_Y);
+  assert.deepEqual(hand.fish, [12]);
+  assert.deepEqual(deck.fish, [13]);
+});
+
+test('船主及時重連或乘客已下船時，不會觸發回港；離線乘客仍能在重連時回港', () => {
+  const { room, p: owner, guest } = roomFixture();
+  guest.pos[8] = owner.id;
+  room.drop(owner);
+  const droppedAt = owner.gone;
+  owner.gone = 0;
+  room.step(droppedAt + GRACE);
+  assert.equal(guest.pos[8], owner.id);
+  assert.equal(room.boatInfo(owner).reclaimMs, null);
+
+  guest.pos[8] = 0;
+  room.returnPassengers(owner);
+  assert.equal(guest.passengerReturn, null);
+
+  guest.pos[8] = owner.id;
+  const oldPos = [...guest.pos];
+  oldPos[8] = 0;
+  // 船在外海，回港前尚未送達的座標封包應被忽略。
+  oldPos[0] = 0; oldPos[2] = 0;
+  room.remove(owner);
+  const landing = guest.passengerReturn;
+  assert.ok(landing);
+  assert.equal(room.resumeData(guest).passengerReturn, landing);
+  room.on(guest, { t: 'p', s: oldPos });
+  assert.equal(guest.passengerReturn, landing);
+  room.on(guest, { t: 'p', s: [...guest.pos] });
+  assert.equal(guest.passengerReturn, null);
 });
 
 test('斷線放下魚箱時，甲板用船身座標，在海裡則留下浮箱', () => {

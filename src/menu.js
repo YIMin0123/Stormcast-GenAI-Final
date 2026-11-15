@@ -6,7 +6,7 @@ import { NOTICE, UPDATES, nextRefreshAt, countdownText, refreshLabel } from './a
 
 const $ = (id) => document.getElementById(id);
 
-// 回傳伺服器給的整包進房資料（Promise）。30 秒內斷線回來的人會跳過大廳，直接接回原本的房間
+// 回傳伺服器給的整包進房資料（Promise）。在寬限內回來會跳過大廳，接回原本的房間。
 // onLook(look)：在選單裡換了角色（讓港口裡自己的人偶也跟著換）
 export function runMenu(net, onLook) {
   return new Promise((done) => {

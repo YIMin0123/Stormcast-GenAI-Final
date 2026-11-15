@@ -1,11 +1,11 @@
-// 跟多人伺服器的連線：填名字進大廳、挑房間、收發訊息、斷線時在 30 秒內自動接回去。
+// 跟多人伺服器的連線：填名字進大廳、挑房間、收發訊息、斷線後自動接回去。
 import { myLook } from './look.js';
+import { SERVER } from './config.js';
 // 正式版只連官方伺服器；開發版可用 ?server=、VITE_SERVER_URL 或預設的本機伺服器。
 const PROD_SERVER = 'wss://35-229-248-193.sslip.io';
 const params = new URLSearchParams(window.location.search);
 export const TEST = params.has('test');
 export const QUERY = params;
-const RETRY_FOR = 30000;   // 斷線後試著接回去多久（伺服器只幫忙留 30 秒）
 const PING_EVERY = 2000;   // 多久量一次延遲（毫秒）
 const PING_STALE = 7000;   // 超過這麼久沒收到回覆，就不顯示延遲
 
@@ -21,7 +21,7 @@ function serverUrl() {
   return `ws://${window.location.hostname || 'localhost'}:8787`;
 }
 
-// 名字和認人用的代碼記在瀏覽器裡：關掉分頁再打開，30 秒內接得回原本的位置；錢、船、裝備、魚跟著代碼存在伺服器，到定時刷新才清。
+// 名字和認人用的代碼記在瀏覽器裡：寬限內可接回原本的位置；錢、船、裝備、魚存在伺服器。
 // ?test 分頁記在這個分頁自己（sessionStorage）：每個測試分頁都是不同的玩家，也不會動到正式的身分
 const store = (() => {
   try { return TEST ? window.sessionStorage : window.localStorage; } catch { return null; }
@@ -43,6 +43,7 @@ export class Net {
     this.roomId = 0;          // 進的是哪一間（伺服器重開之後要回同一間）
     this.online = false;      // 現在連線正常
     this.lostAt = 0;          // 從什麼時候開始斷線
+    this.reconnectSec = SERVER.reconnectSec;
     this._want = null;        // 正在等伺服器回話的那件事：{ resolve, reject }
     this.ping = null;         // 跟伺服器一來一回要幾毫秒（還沒量到、或伺服器沒回就是 null）
     this._pongAt = 0;
@@ -57,7 +58,7 @@ export class Net {
   send(msg) { if (this.ws && this.ws.readyState === 1 && this.inRoom && this.online) this.ws.send(JSON.stringify(msg)); }
   _raw(msg) { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(msg)); }
 
-  // 用這個名字連上伺服器。回傳 { lobby }（房間列表）或 { joined }（30 秒內回來，直接接回原本的房間）；被拒絕時丟出 Error(原因)
+  // 回傳 { lobby } 或 { joined }（寬限內接回原房）；被拒絕時丟出 Error。
   hello(name) {
     this.name = name;
     return new Promise((resolve, reject) => {
@@ -107,6 +108,7 @@ export class Net {
           this.id = m.id; this.token = m.token; this.name = m.name; this.roomId = m.room?.id ?? this.roomId;
           setItem(this.tokenKey, m.token); setItem('stormcast.name', m.name);
           this.inRoom = true; this.online = true; this.lostAt = 0;
+          if (Number.isFinite(m.reconnectSec) && m.reconnectSec > 0) this.reconnectSec = m.reconnectSec;
           if (want) { this._want = null; want.resolve({ joined: m }); } else if (back) this.emit('rejoin', m);
           this.emit('status', 'online');
           return;
@@ -136,7 +138,7 @@ export class Net {
       if (!this.inRoom) { this._fail(was ? '和伺服器斷線了' : '連不上伺服器，等一下再試試看'); this.emit('status', 'lobbylost'); return; }
       // 玩到一半斷線：遊戲照常跑，背景一直試著接回去；超過時間就放棄
       if (!this.lostAt) this.lostAt = Date.now();
-      if (Date.now() - this.lostAt > RETRY_FOR) { this.inRoom = false; this.emit('status', 'expired'); return; }
+      if (Date.now() - this.lostAt > this.reconnectSec * 1000) { this.inRoom = false; this.emit('status', 'expired'); return; }
       this.emit('status', 'offline');
       setTimeout(() => this._connect(), 1500);
     };

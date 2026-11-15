@@ -86,7 +86,7 @@ function fail(msg) {
 // ---- Renderer -------------------------------------------------------------
 const renderer = new THREE.WebGLRenderer({ antialias: false });   // 抗鋸齒由後製的 SMAA 負責；「高」畫質另外在場景緩衝區開多重取樣（MSAA）
 // 顯示晶片把畫面收走（WebGL 失效：驅動重開、顯示記憶體不夠……）時整個 3D 畫面會變成一片底色、救不回來：
-// 告訴玩家、重新載入（伺服器 30 秒內認得回來的人，會直接接回原本的房間，家當都在）
+// 告訴玩家、重新載入（寬限內會接回原本的房間）
 renderer.domElement.addEventListener('webglcontextlost', (e) => {
   e.preventDefault();
   console.warn('[gl] 畫面失效（webglcontextlost），重新載入');
@@ -2538,6 +2538,11 @@ function updatePrompt() {
   }
   if (toastState.until && performance.now() > toastState.until) { toastState.until = 0; $('toast').style.display = 'none'; }
   if (!inGame) text = '';
+  else if (mode === 'walk' && Number.isFinite(player.boat?.reclaimAt)) {
+    const sec = Math.max(0, Math.ceil((player.boat.reclaimAt - performance.now()) / 1000));
+    const warning = sec > 0 ? `船主已離線，${sec} 秒後回港` : '船主已離線，準備回港';
+    text = text ? `${warning}　｜　${text}` : warning;
+  }
   // 手機按鈕先更新：提示裡畫的「互動」圖示要跟按鈕現在的樣子一樣
   touch.update({
     on: inGame && !tabOpen() && !chat.isOpen && !wheel.isOpen, helm: mode === 'helm', sink: mode === 'sink', held: !!fish.held && !player.swim,
@@ -2793,7 +2798,7 @@ function syncGfxUi() {
 }
 for (const b of $('gfx').children) b.addEventListener('click', () => { b.blur(); setGfx(+b.dataset.v); saveGfx(); });
 applyGfx();
-// 設定裡換角色：記下來、重新載入（伺服器 30 秒內認得回來的人，會直接接回原本的房間）
+// 設定裡換角色：記下來、重新載入（寬限內接回原本的房間）
 for (const b of $('lookSet').children) {
   b.classList.toggle('on', b.dataset.look === myLook());
   b.addEventListener('click', () => {
@@ -2825,7 +2830,7 @@ function syncRatio() {
 window.addEventListener('resize', syncRatio);
 window.setInterval(syncRatio, 2000);
 
-// 離開房間：回到大廳（錢、船、裝備、還沒賣的魚都存著，下次進房從港口出發；船會在原地留 30 秒才被收走）
+// 離開房間：回到大廳，船留到寬限期結束，下次進房從港口出發。
 $('reset').addEventListener('click', () => {
   $('reset').blur();
   if (!inGame || !window.confirm('確定要離開房間嗎？錢、船、裝備和還沒賣的魚都會留著，下次進房從港口出發。')) return;
@@ -3329,13 +3334,25 @@ function beginWreck(b) {
   applyViewSettings();
 }
 // 被救回港口
-function rescue(text) {
+function rescue(text, landing = SPAWN_W) {
   mode = 'walk';
-  player.place(walkWorld, SPAWN_W.x, SPAWN_W.z);
-  player.yaw = view.walk.yaw = SPAWN_W.yaw;
+  player.place(walkWorld, landing.x, landing.z);
+  player.yaw = view.walk.yaw = landing.yaw;
   applyViewSettings();
   fadeIn = 1.6;
   toast(text);
+}
+function returnPassenger(destination) {
+  fishing.cancel(null);
+  throwCancel();
+  landing = false;
+  drown = null;
+  if (wreck?.mine) wreck.aboard = false;
+  else wreck = null;
+  stamina = 1;
+  for (const key in keys) keys[key] = false;
+  lastPosMsg = '';
+  rescue('船主離線，已帶你和隨身漁獲、魚箱回到潮汐灣', destination);
 }
 function endWreck() {
   // 自己的船：告訴伺服器沉完了，等它回話（swapped）——倉庫裡還有船就換一艘出來，一艘都不剩就送一艘小舢舨
@@ -4098,7 +4115,8 @@ net.on('world', (m) => applyWorld(m));
 net.on('join', (m) => others.add({ id: m.id, name: m.name, title: m.title || '', look: m.look, here: m.here, boat: m.boat }));
 net.on('h', (m) => others.setHold(m.id, m.s));
 net.on('fl', (m) => others.setLine(m.id, m.s));
-net.on('leave', (m) => others.leave(m.id));
+net.on('leave', (m) => others.leave(m.id, m.reclaimMs));
+net.on('passengerReturn', returnPassenger);
 net.on('boatGone', (m) => others.boatGone(m.id));
 net.on('boat', (m) => { if (m.id !== net.id) others.setBoat(m.id, m.boat); });
 net.on('sunk', (m) => { const b = others.boat(m.id); if (b) b.founder(m.why, m.side); });
@@ -4281,7 +4299,7 @@ net.on('status', (st) => {
   if (!inGame) return;   // 還在大廳：選單自己會處理
   landing = false;
   fishing.cancel(null);
-  if (st === 'offline') { msg.textContent = '連線中斷，正在接回去…（30 秒內接得回來，進度都還在）'; btn.style.display = 'none'; }
+  if (st === 'offline') { msg.textContent = `連線中斷，正在接回去…（最多等 ${net.reconnectSec} 秒，進度都還在）`; btn.style.display = 'none'; }
   else {
     msg.textContent = st === 'expired' ? '斷線太久，已經離開房間了（錢、船、裝備和魚都存著，重新進房就好）' : st.startsWith('kicked:') ? st.slice(7) : '和伺服器斷線了';
     btn.style.display = 'inline-block';
@@ -4308,6 +4326,7 @@ net.on('rejoin', (j) => {
   boxes.apply(j.boxes);
   fish.reconcileOwn(j.resume?.fish ?? [], j.loose ?? [], net.id, myBoat);
   refreshBoard();
+  if (j.resume?.passengerReturn) returnPassenger(j.resume.passengerReturn);
   if (myBoat._wrecked && !j.resume?.boat?.sunk) net.send({ t: 'sink', why: myBoat.sunkBy, side: myBoat._side });
   lastPosMsg = lastBoatMsg = lastBoatDetail = '';
   lastHold = lastLine = '?';
@@ -4321,7 +4340,7 @@ net.on('restarted', (j) => {
   chat.sys('伺服器剛更新完，已經幫你重新進入；錢、船和還沒賣的魚都還在', 'info');
 });
 
-// 進到房間裡（從大廳點進來，或是關掉分頁後 30 秒內回來）
+// 進到房間裡（從大廳進房，或是斷線後在寬限內回來）
 function enterRoom(j) {
   room = j.room;
   pendingIn.clear();
@@ -4388,6 +4407,7 @@ function enterRoom(j) {
   inGame = true;
   document.body.classList.add('playing');   // 設定搬進平板（左上角的設定鈕收起來）
   fadeIn = 1.2;
+  if (back?.passengerReturn) returnPassenger(back.passengerReturn);
 }
 
 let wakeIdx = 0, wakeTimer = 0, sprayAcc = 0, crestSide = 1, crestI = -1, jetShake = 0, lastStep = 0;

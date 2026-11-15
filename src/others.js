@@ -150,7 +150,12 @@ export class Others {
   }
 
   // 人走了（斷線或離開）：人偶拿掉，船先留著
-  leave(id) { const o = this.map.get(id); if (o) this._unfigure(o); }
+  leave(id, reclaimMs) {
+    const o = this.map.get(id);
+    if (!o) return;
+    if (o.boat && Number.isFinite(reclaimMs)) o.boat.reclaimAt = performance.now() + reclaimMs;
+    this._unfigure(o);
+  }
 
   // 他的船換了一艘（或第一次出現）。舊的那艘交給 dropBoat 拿掉（站在上面的人和東西由它處理）
   setBoat(id, info) {
@@ -166,9 +171,10 @@ export class Others {
     }
     o.boat.setNet(info.s, true);
     o.boat.setPaint?.(info.paint || 'default');
+    o.boat.reclaimAt = Number.isFinite(info.reclaimMs) ? performance.now() + info.reclaimMs : null;
   }
 
-  // 船被收走了（人離開 30 秒後）
+  // 離線的船已被收走。
   boatGone(id) {
     const o = this.map.get(id);
     if (!o) return;

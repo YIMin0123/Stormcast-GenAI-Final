@@ -106,6 +106,18 @@ export function loadBoxes(p, list, uid) {
 }
 // 斷線：抱著的箱子先放在腳邊
 export const dropBoxes = (room, p) => { const bx = heldBox(p); if (bx) setDown(room, p, bx); };
+// 船被回收：乘客仍抱著的箱子跟著人走，其餘放在舊船上的自有箱搬到岸上。
+export function returnPassengerBoxes(room, p, boatOwner, landing) {
+  let i = 0;
+  for (const bx of p.boxes) {
+    if (bx.k !== 'd' || bx.b !== boatOwner) continue;
+    const side = i++ % 2 === 0 ? -1 : 1;
+    const offset = side * (FISHBOX.d / 2 + 0.27);
+    Object.assign(bx, { k: 'g', x: landing.x - Math.sin(landing.yaw) * offset, y: landing.y,
+      z: landing.z + Math.cos(landing.yaw) * offset, yaw: landing.yaw, b: 0 });
+    show(room, bx);
+  }
+}
 // 離開太久被收走：箱子收起來（跟著存檔）；別人放在他船上的箱子浮到海上
 export function stowBoxes(room, p) {
   floatBoxes(room, p);

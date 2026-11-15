@@ -4,7 +4,7 @@
 //   - 大廳：連進來先填名字，拿到房間列表（房名、人數、天氣），點一間就進去
 //   - 合併：臨時房連續 10 分鐘少於 5 人，整間併進一間放得下的常駐房（先通知、倒數；有海上事件就等它結束）；常駐房之間不合併
 //   - 進度（錢、船、裝備、還沒賣的魚）跟著裝置的認人代碼存在檔案裡（profiles.js），換房、隔天再來、伺服器重開都還在；
-//     斷線 30 秒內回來連位置都接得回去
+//     斷線在寬限內回來連位置都接得回去
 //   - 定時刷新：從 SERVER.refresh.first 起每 SERVER.refresh.everyHours 小時，進度和排行榜全部清空
 // 房間裡的事（天氣、釣魚、買賣、聊天、看板）在 room.js。
 import { createServer } from 'node:http';
@@ -12,7 +12,7 @@ import { WebSocketServer } from 'ws';
 import { randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Room, newPlayer, profileOf, applyProfile, MAX_PLAYERS, TICK, DEV } from './room.js';
+import { Room, newPlayer, profileOf, applyProfile, MAX_PLAYERS, TICK, DEV, GRACE } from './room.js';
 import { boxPub } from './fishBoxes.js';
 import { sendRaw } from './wire.js';
 import { Daily } from './daily.js';
@@ -85,7 +85,6 @@ function doMerge() {
   hub.merge = null;
   from.hold = to.hold = false;
   to.lowSince = 0;
-  for (const p of [...from.players.values()]) if (p.left) from.remove(p);   // 已經離開、只剩船還沒收的：不搬
   const moving = [...from.players.values()];
   for (const p of moving) {
     from.players.delete(p.id);
@@ -127,7 +126,8 @@ function mergeStep(now) {
   }
   const m = hub.merge;
   if (!m) {
-    const ready = [...hub.rooms.values()].filter((r) => r.lowSince && now - r.lowSince >= MERGE_AFTER);
+    const ready = [...hub.rooms.values()].filter((r) => r.lowSince && now - r.lowSince >= MERGE_AFTER
+      && ![...r.players.values()].some((p) => p.left));
     if (!ready.length) return;
     ready.sort((a, b) => a.active - b.active || b.id - a.id);
     const from = ready[0];
@@ -140,6 +140,8 @@ function mergeStep(now) {
   }
   const { from, to } = m;
   if (!hub.rooms.has(from.id) || !hub.rooms.has(to.id) || !from.active) return cancelMerge('');
+  // 保留已離開船主的船直到寬限期結束，避免合併提早收船。
+  if ([...from.players.values()].some((p) => p.left)) return cancelMerge('等離線的船回收後再合併');
   if (from.active >= MERGE_BELOW || from.count + to.count > MAX_PLAYERS) return cancelMerge('人數變多了，合併取消');
   if (!from.calm || !to.calm) {
     // 有一邊正在發生海上事件：等它結束
@@ -214,10 +216,11 @@ wss.on('connection', (ws) => {
   let name = '', token = '', look = 'girl';   // look：選的角色（只收得到 girl／boy）
   let burstAt = 0, burst = 0;
 
-  // 這個代碼的人還在某間房裡（斷線 30 秒內、或在別的視窗）：接回那間房、那一局
-  const resume = () => {
+  // 這個代碼的人還在某間房裡：接回那間房、那一局
+  const resume = (now) => {
     const old = token && hub.sessions.get(token);
     if (!old || !old.room || old.left) return false;
+    if (old.gone && now - old.gone >= GRACE) { old.room.remove(old); return false; }
     if (old.ws) { send(old.ws, { t: 'kicked', msg: '你在另一個視窗進入了遊戲' }); const w = old.ws; old.ws = null; w.close(); old.room.all({ t: 'leave', id: old.id }); }
     me = old;
     me.ws = ws; me.gone = 0; me.name = name; me.look = look;   // 重新整理後可能換了角色
@@ -263,8 +266,7 @@ wss.on('connection', (ws) => {
       if (!name) return send(ws, { t: 'denied', msg: '請先填好名字' });
       if (isRude(name)) { name = ''; return send(ws, { t: 'denied', msg: '這個名字不能用，換一個吧' }); }
       token = typeof m.token === 'string' && /^[0-9a-f]{32}$/.test(m.token) ? m.token : '';
-      // 斷線 30 秒內回來：直接接回原本那間房、原本的位置
-      if (resume()) return;
+      if (resume(now)) return;
       hub.lobby.add(ws);
       return send(ws, { ...lobbyList(), name });
     }
@@ -284,12 +286,7 @@ wss.on('connection', (ws) => {
       if (!r) return send(ws, { t: 'full', msg: '這間房已經關了，挑別間吧', ...lobbyList() });
       if (r.count >= MAX_PLAYERS) return send(ws, { t: 'full', msg: '這間房滿了，挑別間吧', ...lobbyList() });
       if (hub.merge && hub.merge.from === r) return send(ws, { t: 'full', msg: '這間房正要合併到別間，挑別間吧', ...lobbyList() });
-      if (resume()) return;   // 同一台裝置在別的視窗已經在房裡了：接過來
-      // 留船只為了讓離線畫面自然。在反覆進出填滿泊位時先回收離開的船。
-      if (r.players.size >= MAX_PLAYERS) {
-        const departed = [...r.players.values()].find((p) => p.left);
-        if (departed) r.remove(departed);
-      }
+      if (resume(now)) return;   // 同一台裝置在別的視窗已經在房裡了：接過來
       if (!hub.profiles.raw.has(token) && !hub.dexbook.raw.has(token)) token = randomBytes(16).toString('hex');
       me = newPlayer(hub.nextId++, ws, token, name, look);
       const prof = hub.profiles.get(token);

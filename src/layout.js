@@ -128,6 +128,13 @@ export const LIGHTHOUSE_W = homeW(LIGHTHOUSE);
 export const SHELF_W = SHELF.map((it) => ({ ...it, ...homeW(it), stand: homeW({ x: it.x, z: it.z + STAND_OFF }), tagW: homeW(it.tag) }));
 // 玩家出生點：位置與面向（世界座標）
 export const SPAWN_W = { ...homeW(PLAYER_SPAWN), yaw: headingToWorld(PLAYER_SPAWN.yaw) };
+// 岸邊木平台中央的空地，避開棧橋、商店與港口擺設。每個泊位對應一個回港位置。
+export function passengerLanding(berth) {
+  const { BOARDWALK } = H;
+  const x = BOARDWALK.cx + (berth % 8 - 3.5) * 1.95;
+  const z = BOARDWALK.cz + (Math.floor(berth / 8) - 1.5) * 1.5;
+  return { ...homeW({ x, z }), y: DECK_Y, yaw: SPAWN_W.yaw };
+}
 // 以前水泥岸壁朝海的那條邊（纜繩翻過牆角用）；木棧橋的纜繩直接拉，不翻牆角，所以放到無限遠
 export const QUAY_EDGE_Z = Infinity;
 // 橋頭（岸邊木平台中央）、棧橋第一段的中間：海鷗、環境音、鏡頭、地圖標記用

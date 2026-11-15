@@ -5,7 +5,7 @@
 //   釣魚：上鉤什麼魚、多大、值多少由這裡擲；收線太快、離落水點太遠、站在陸地卻說拋進深海，一律不認
 //   本房紀錄（看板）與聊天
 import { Sea, Climate, HOUR } from '../src/weather.js';
-import { BERTHS, berthPose, berthKinds, SELL_W, SELL_REACH, SHELF_W, SPAWN_W, SWITCHES_W, LIGHT_ZONES, HAVEN_SELL_W, HAVEN_PUMP_W } from '../src/layout.js';
+import { BERTHS, berthPose, berthKinds, SELL_W, SELL_REACH, SHELF_W, SPAWN_W, SWITCHES_W, LIGHT_ZONES, HAVEN_SELL_W, HAVEN_PUMP_W, passengerLanding } from '../src/layout.js';
 import { PORT } from '../src/lowpoly/havenPlan.js';
 import { HOTSPOT, CHESTS } from '../src/extrasPlan.js';
 import { Extras } from './extras.js';
@@ -18,11 +18,12 @@ import { callBoat, moveBlocked, reberthNear, storedInfo } from './boatCall.js';
 import { recordDex } from './dex.js';
 import { sendRaw } from './wire.js';
 import { placeOfSpot } from '../src/places.js';
-import { onBoxMsg, boxList, homeBoxes, savedBoxesOf, loadBoxes, dropBoxes, stowBoxes, resetBoxes, sellBox, buyBox, floatBoxes, inBoxes, expireOffers } from './fishBoxes.js';
+import { onBoxMsg, boxList, homeBoxes, savedBoxesOf, loadBoxes, dropBoxes, stowBoxes, resetBoxes, sellBox, buyBox, floatBoxes, inBoxes, expireOffers, returnPassengerBoxes } from './fishBoxes.js';
 
 export const MAX_PLAYERS = 30;
 export const TICK = 0.1;                 // 世界每 0.1 秒算一次
-export const GRACE = +(process.env.GRACE_SEC || 30) * 1000;   // 斷線後多久內回來可以接回原進度；離開的人的船也是這麼久之後消失
+const graceSec = Number(process.env.GRACE_SEC);
+export const GRACE = (Number.isFinite(graceSec) && graceSec > 0 ? graceSec : SERVER.reconnectSec) * 1000;
 const WORLD_EVERY = 5;                   // 每 5 次（0.5 秒）把天氣送一次
 const CLIMATE_KEYS = ['hour', 'day', 'wind', 'windGoal', 'cloud', 'cloudGoal', 'rain', 'rainAmt', 'rainFrom', 'rainTo', 'fog', 'fogAmt', 'veer', 'veerGoal'];
 export const DEV = process.env.STORMCAST_DEV === '1';  // 開發用：允許測試指令（引發海上事件、快轉、加錢）
@@ -59,6 +60,7 @@ export function newPlayer(id, ws, token, name, look = 'girl') {
     gone: 0, left: false, suspect: 0,
     owner: true,                                // 進度由這個物件存回檔案（按了離開、被收走之後就不是了，免得蓋掉新進度）
     resetMsg: null,                             // 斷線時遇到定時刷新：接回來時要補講的話
+    passengerReturn: null,                      // 斷線期間搭的船被收回：重連時套用回港位置
   };
 }
 
@@ -143,8 +145,8 @@ export class Room {
     while (d > 0) { const s = Math.min(d, 1); this.climate.update(s * HOUR); d -= s; }
   }
 
-  // 佔了位置的人數（斷線還在等他回來的也算；已經離開、只剩船還沒收的不算）
-  get count() { let n = 0; for (const p of this.players.values()) if (!p.left) n++; return n; }
+  // 離線玩家的船仍佔著泊位，保留到寬限期結束。
+  get count() { return this.players.size; }
   // 現在連著線的人數
   get active() { let n = 0; for (const p of this.players.values()) if (p.ws) n++; return n; }
   get calm() { return this.sea.phase === 'calm' && !this.sea.vortices.length; }
@@ -201,7 +203,10 @@ export class Room {
   }
   // 倉庫裡的船的油量、耐久（給平板看）
   storedOf(p) { return storedInfo(p, (type, cracks) => Math.max(0, 1 - cracks.reduce((sum, c) => sum + c[2], 0) / BOAT_TYPES[type].hp)); }
-  boatInfo(p) { return p.boat && { type: p.boat.type, s: p.boat.s, sunk: p.boat.sunk, paint: p.kit.paint || 'default' }; }
+  boatInfo(p) {
+    return p.boat && { type: p.boat.type, s: p.boat.s, sunk: p.boat.sunk, reclaimMs: this.reclaimMs(p), paint: p.kit.paint || 'default' };
+  }
+  reclaimMs(p) { return p.gone ? Math.max(0, p.gone + GRACE - Date.now()) : null; }
   roster(except) {
     return [...this.players.values()].filter((p) => p !== except).map((p) => ({ id: p.id, name: p.name, title: titleOf(p), look: p.look, here: !!p.ws, pos: p.ws ? p.pos : null, boat: this.boatInfo(p), hold: p.ws ? p.hold : null, line: p.ws ? p.line : null }));
   }
@@ -234,7 +239,7 @@ export class Room {
   snapshot(p, extra = {}) {
     return {
       id: p.id, token: p.token, name: p.name, room: { id: this.id, name: this.name, max: MAX_PLAYERS },
-      world: this.worldState(), kit: p.kit, berth: this.berthInfo(p), players: this.roster(p), boards: this.boards(), dev: DEV, loose: this.looseList(), boxes: boxList(this), stored: this.storedOf(p), dex: p.dex, ...extra,
+      world: this.worldState(), kit: p.kit, berth: this.berthInfo(p), players: this.roster(p), boards: this.boards(), dev: DEV, loose: this.looseList(), boxes: boxList(this), stored: this.storedOf(p), dex: p.dex, reconnectSec: GRACE / 1000, ...extra,
     };
   }
   // 斷線重連時還給他的進度
@@ -242,7 +247,7 @@ export class Room {
     const boxed = inBoxes(p);
     const fish = [...p.fish].filter(([uid]) => !this.loose.has(uid) && !boxed.has(uid))
       .map(([uid, { id, kg, len, value }]) => ({ uid, id, kg, len, value }));
-    return { pos: p.pos, boat: p.boat && { ...p.boat }, stored: p.stored, fish };
+    return { pos: p.pos, boat: p.boat && { ...p.boat }, stored: p.stored, fish, passengerReturn: p.passengerReturn };
   }
 
   // 連線斷了：人先從畫面上消失，位置和家當留著等他回來
@@ -253,7 +258,7 @@ export class Room {
     p.hold = p.line = null;
     dropBoxes(this, p);   // 抱著的箱子先放在腳邊
     for (const o of [...this.offers.values()]) if (o.from === p.id || o.to === p.id) this.offers.delete(o.oid);
-    this.all({ t: 'leave', id: p.id });
+    this.all({ t: 'leave', id: p.id, reclaimMs: this.reclaimMs(p) });
   }
   // 自己按了離開：進度存回檔案（下次進房從港口出發）、不能再接回這一局；船留到時間到才收
   quit(p) {
@@ -273,6 +278,7 @@ export class Room {
   remove(p) {
     this.hub.keep(p);   // 斷線太久沒回來：進度存回檔案，下次進房還在
     p.owner = false;
+    if (p.boat && !p.boat.sunk) this.returnPassengers(p);
     this.removeDeckFish(p.id);
     for (const e of this.loose.values()) if (e.owner === p.id) e.owner = 0;
     stowBoxes(this, p);   // 箱子收起來跟著存檔；別人放在他船上的箱子浮到海上   // 他放在外面的魚留在原地（沒有主人了），照樣可以撿、時間到就消失
@@ -284,9 +290,24 @@ export class Room {
     p.room = null;
   }
 
+  returnPassengers(owner) {
+    for (const p of this.players.values()) {
+      if (p === owner || p.left || p.pos?.[8] !== owner.id) continue;
+      const landing = passengerLanding(p.berth);
+      p.pos = [landing.x, landing.y, landing.z, landing.yaw, 0, 0, landing.yaw, 0, 0, 0, 0, '', ''];
+      p.posAt = Date.now();
+      p.posDirty = true;
+      p.fishing = p.line = null;
+      this.all({ t: 'fl', id: p.id, s: null }, p);
+      returnPassengerBoxes(this, p, owner.id, landing);
+      p.passengerReturn = landing;
+      this.send(p, { t: 'passengerReturn', ...landing });
+    }
+  }
+
   // ---- 每 0.1 秒 ----
   step(now) {
-    for (const p of [...this.players.values()]) if (p.gone && now - p.gone > GRACE) this.remove(p);
+    for (const p of [...this.players.values()]) if (p.gone && now - p.gone >= GRACE) this.remove(p);
     this.syncClock(now);
     if (!this.active) { this.stepAt = 0; return; }   // 沒人連著：海暫停（時間照走）
     // 照實際過了多久來推進（計時器不會剛好每 0.1 秒叫一次，用固定的 0.1 秒去加，房間的時鐘會越走越慢，大家的浪就對不起來）
@@ -344,6 +365,12 @@ export class Room {
         }
         if (typeof s[11] !== 'string' || typeof s[12] !== 'string' || s[11].length > 16 || s[12].length > 16
           || Object.hasOwn(Object.prototype, s[11]) || Object.hasOwn(Object.prototype, s[12])) return;
+        if (p.passengerReturn) {
+          const { x, z } = p.passengerReturn;
+          // 忽略短時間內尚在傳輸的舊座標。舊版客戶端未處理回港訊息也能繼續回報。
+          if (now - p.posAt < 2000 && dist(s[0], s[2], x, z) > 10) return;
+          p.passengerReturn = null;
+        }
         // 一下子移動太遠（不是被救回港口）：之後一小段時間不讓他拋竿
         if (p.pos && p.posAt) {
           const d = dist(s[0], s[2], p.pos[0], p.pos[2]), dt = Math.max(0.05, (now - p.posAt) / 1000);
@@ -706,6 +733,7 @@ export class Room {
   // 定時刷新：家當回到新玩家的樣子（錢、船、裝備、魚都清掉），人送回港口
   reset(p, text) {
     p.fishing = null;
+    p.passengerReturn = null;
     p.kit = newKit();
     const del = [];
     for (const e of this.loose.values()) if (e.owner === p.id) { this.loose.delete(e.uid); del.push(e.uid); }
