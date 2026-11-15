@@ -166,24 +166,25 @@
     #menu, #net { position: fixed; inset: 0; display: none; padding: 12px; box-sizing: border-box; overflow-y: auto;
       background: rgba(14, 53, 80, 0.38); z-index: 40; }
     #menu .card, #net .card { position: static; margin: auto; padding: 24px 30px 22px; width: min(380px, calc(100vw - 32px)); box-sizing: border-box; text-align: center; user-select: auto; }
-    #menu { flex-wrap: wrap; gap: 16px; justify-content: center; align-content: center; }   /* 名字卡片旁邊放公告；窄的畫面公告掉到下面 */
+    #menu { flex-wrap: wrap; gap: 16px; justify-content: center; align-content: flex-start; align-content: safe center; }   /* 名字卡片旁邊放公告；窄的畫面公告掉到下面（safe center 避免超出視窗時頂部被切掉） */
     #menu .card { margin: auto 0; }   /* 左右交給 justify-content 置中（auto 會把多出來的空間平分到卡片兩側，變成偏移）；上下仍自動置中、卡片比畫面高時可捲 */
     #menu #notice { position: fixed; left: 28px; top: 50%; transform: translateY(-50%); max-height: calc(100vh - 40px); overflow-y: auto; width: 320px; text-align: left; margin: 0; }   /* 公告固定在畫面左邊，不跟中間的玩家卡片擠在一起 */
-    @media (max-width: 1100px) { #menu #notice { position: static; transform: none; max-height: none; width: min(380px, calc(100vw - 32px)); } }   /* 畫面不夠寬：掉到玩家卡片下面 */
+    #menu #refreshBox { position: fixed; right: 28px; top: 58px; width: auto; min-width: 260px; max-width: calc(100vw - 56px); padding: 14px 22px 12px; margin: 0; text-align: center; }   /* 全服刷新倒數獨立放右上角（避開後方 HUD） */
+    @media (max-width: 1100px) { #menu #notice, #menu #refreshBox { position: static; transform: none; max-height: none; width: min(380px, calc(100vw - 32px)); max-width: none; margin: auto 0; } }   /* 畫面不夠寬：掉到玩家卡片下面 */
     #menu #notice h2 { text-align: center; }
     #noticeList { margin: 0 0 12px; padding-left: 20px; font-size: 14px; line-height: 1.6; color: var(--ink); }
     #noticeList li { margin-bottom: 6px; }
     #updTitle { margin: 4px 0 6px; font-size: 15px; font-weight: 400; letter-spacing: 1px; color: var(--sea-d); }
-    #updList { margin: 0 0 12px; font-size: 13px; line-height: 1.55; color: var(--ink); }
+    #updList { margin: 0; font-size: 13px; line-height: 1.55; color: var(--ink); }
     #updList section { margin-bottom: 8px; padding: 6px 10px 4px; border-radius: 12px; background: var(--btn); border: 2px solid var(--line); }
+    #updList section:last-child { margin-bottom: 0; }
     #updList h4 { margin: 0 0 2px; font-size: 14px; font-weight: 400; color: var(--sea-d); display: flex; justify-content: space-between; gap: 8px; }
     #updList h4 small { font-size: 12px; color: var(--ink-2); white-space: nowrap; }
     #updList ul { margin: 0 0 4px; padding-left: 18px; }
     #updList li { margin-bottom: 2px; }
-    #refreshBox { text-align: center; padding: 10px 8px 8px; border-radius: 14px; background: var(--btn); border: 2px solid var(--line); }
     #refreshBox span { display: block; font-size: 13px; color: var(--ink-2); }
-    #refreshBox b { display: block; margin: 2px 0; font-size: 22px; font-weight: 400; letter-spacing: 1px; color: var(--sea-d); font-variant-numeric: tabular-nums; }
-    #refreshBox small { font-size: 12px; color: var(--ink-2); }
+    #refreshBox b { display: block; margin: 4px 0 3px; font-size: 21px; font-weight: 400; letter-spacing: 1px; color: var(--sea-d); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    #refreshBox small { display: block; font-size: 12px; color: var(--ink-2); }
     body.touch #notice { display: none; }   /* 手機橫著畫面太矮，公告不顯示 */
     #menu h1 { margin: 0 0 4px; font-size: 34px; font-weight: 400; letter-spacing: 3px; color: var(--sea); text-shadow: 0 2px 0 var(--btn), 0 4px 0 rgba(29, 111, 159, 0.2); }
     #menu h2 { margin: 0 0 4px; font-size: 22px; font-weight: 400; letter-spacing: 2px; color: var(--sea-d); }
@@ -288,6 +289,8 @@
     body.touch #chat.open #chatLog { max-height: 110px; }
     body.touch #chatInput { font-size: 16px; }   /* 小於 16px 的話 iPhone 點輸入框會自己把畫面放大 */
     body.touch #menu .card { padding: 14px 22px 12px; }
+    body.touch #menu #refreshBox { position: static; transform: none; width: auto; min-width: 0; max-width: calc(100vw - 32px); padding: 10px 16px; margin: auto 0; }
+    body.touch #menu #refreshBox b { font-size: 18px; }
     body.touch #menu h1 { font-size: 26px; }
     body.touch #menu p { margin-bottom: 10px; }
     body.touch #lookView { height: 130px; }
@@ -407,12 +410,12 @@
       <div id="lobbyMsg"></div>
       <button id="lobbyBack">換個名字</button>
     </div>
+    <div id="refreshBox" class="card"><span>距離下次全服刷新</span><b id="refreshLeft"></b><small id="refreshAt"></small></div>
     <div id="notice" class="card">
       <h2 id="noticeTitle"></h2>
       <ul id="noticeList"></ul>
       <h3 id="updTitle">更新資訊</h3>
       <div id="updList"></div>
-      <div id="refreshBox"><span>距離下次全服刷新</span><b id="refreshLeft"></b><small id="refreshAt"></small></div>
     </div>
   </div>
   <div id="net"><div class="card"><p id="netMsg"></p><button id="netRetry">回到大廳</button></div></div>
