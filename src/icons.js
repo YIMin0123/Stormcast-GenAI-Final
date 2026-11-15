@@ -53,6 +53,8 @@ export const ICON = {
   signal: svg(p('M5 19v-3M9.7 19v-6M14.3 19v-9M19 19V6')),
   rod: svg(p('M4 20L19 5') + p('M19 5v9') + p('M19 14a2 2 0 1 1-2 2')),
   box: svg(p('M3.5 9h17l-1.5 10.5h-14z') + p('M3.5 9l2-4h13l2 4') + p('M10 13h4')),
+  // 刷新：循環箭頭
+  refresh: svg(p('M20.5 12A8.5 8.5 0 1 1 19.36 7.75') + p('M19.6 3.7v4.2h-4.2')),
 };
 
 for (const e of document.querySelectorAll('[data-ic]')) e.innerHTML = ICON[e.dataset.ic] || '';

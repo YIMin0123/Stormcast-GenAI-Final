@@ -162,19 +162,46 @@
     #keybar > span { white-space: nowrap; }
     #keybar kbd { margin-right: 4px; }
     #keybar .kdot { display: inline-block; width: 9px; height: 9px; margin-left: 4px; border-radius: 50%; background: var(--bad); vertical-align: middle; }   /* 「Tab 平板」旁的小紅點 */
-    /* 進遊戲前：填名字、挑房間。背景是半透明的，看得到後面的港口。卡片比畫面高時可以捲，不會被切掉 */
+    /* 進遊戲前：填名字、挑房間。背景微柔化遮罩，讓後面的陽光海港透出來；卡片比畫面高時可以捲 */
     #menu, #net { position: fixed; inset: 0; display: none; padding: 12px; box-sizing: border-box; overflow-y: auto;
-      background: rgba(14, 53, 80, 0.38); z-index: 40; }
+      background: radial-gradient(ellipse at center, rgba(14, 53, 80, 0.14), rgba(14, 53, 80, 0.34)); z-index: 40; }
     #menu .card, #net .card { position: static; margin: auto; padding: 24px 30px 22px; width: min(380px, calc(100vw - 32px)); box-sizing: border-box; text-align: center; user-select: auto; }
-    #menu { flex-wrap: wrap; gap: 16px; justify-content: center; align-content: flex-start; align-content: safe center; }   /* 名字卡片旁邊放公告；窄的畫面公告掉到下面（safe center 避免超出視窗時頂部被切掉） */
-    #menu .card { margin: auto 0; }   /* 左右交給 justify-content 置中（auto 會把多出來的空間平分到卡片兩側，變成偏移）；上下仍自動置中、卡片比畫面高時可捲 */
-    #menu #notice { position: fixed; left: 28px; top: 50%; transform: translateY(-50%); max-height: calc(100vh - 40px); overflow-y: auto; width: 320px; text-align: left; margin: 0; }   /* 公告固定在畫面左邊，不跟中間的玩家卡片擠在一起 */
-    #menu #refreshBox { position: fixed; right: 28px; top: 58px; width: auto; min-width: 260px; max-width: calc(100vw - 56px); padding: 14px 22px 12px; margin: 0; text-align: center; }   /* 全服刷新倒數獨立放右上角（避開後方 HUD） */
-    @media (max-width: 1100px) { #menu #notice, #menu #refreshBox { position: static; transform: none; max-height: none; width: min(380px, calc(100vw - 32px)); max-width: none; margin: auto 0; } }   /* 畫面不夠寬：掉到玩家卡片下面 */
-    #menu #notice h2 { text-align: center; }
-    #noticeList { margin: 0 0 12px; padding-left: 20px; font-size: 14px; line-height: 1.6; color: var(--ink); }
+    #menu { flex-wrap: wrap; gap: 16px; justify-content: center; align-content: flex-start; align-content: safe center; }
+    #menu .card { margin: auto 0; }
+    /* 進房前隱藏局內 HUD（時間、$0）；設定由主頁右上膠囊點開後浮於右上 */
+    body:not(.playing) #hud { display: none; }
+    body:not(.playing) #panel { display: none; left: auto; right: 16px; top: 56px; max-height: calc(100vh - 72px); z-index: 46; }
+    body:not(.playing) #panel[open] { display: block; }
+    body:not(.playing) #panel .leaveSec { display: none; }
+    /* 主頁右上角兩顆膠囊鈕：公告與更新（有未讀亮紅點）、設定 */
+    #menuTop { position: fixed; top: 14px; right: 16px; z-index: 44; display: flex; align-items: center; gap: 8px; }
+    .menuPill { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 999px;
+      background: var(--paper); border: 2px solid var(--edge); box-shadow: var(--shadow); color: var(--ink); font-size: 14px; line-height: 1.3; }
+    .menuPill:hover { background: var(--sea-l); border-color: var(--edge); }
+    .menuPill.on { background: var(--sea-a); border-color: var(--sea); color: #fff; }
+    .menuPill i[data-ic] { line-height: 0; }
+    #noticeBtn i[data-ic] { color: var(--coral); }
+    #menuSetBtn i[data-ic] { color: var(--sea); }
+    .menuPill.on i[data-ic] { color: #fff; }
+    .menuPill.hasNew::after { content: ''; position: absolute; top: -2px; right: -2px; width: 11px; height: 11px; border-radius: 50%; background: var(--bad); border: 2px solid var(--paper); }
+    /* 公告與更新彈出抽屜（點擊右上按鈕才展開） */
+    #menu #notice { display: none; position: fixed; top: 56px; right: 16px; width: min(360px, calc(100vw - 24px)); max-height: calc(100vh - 72px);
+      overflow-y: auto; scrollbar-width: thin; padding: 14px 16px; margin: 0; text-align: left; z-index: 45; }
+    #menu #notice.open { display: block; }
+    @media (max-width: 820px) {
+      #menuTop { flex-direction: column; align-items: flex-end; gap: 6px; }
+      #menu .card { width: min(350px, calc(100vw - 32px)); }
+      #menu #notice { top: 92px; max-height: calc(100vh - 108px); }
+      body:not(.playing) #panel { top: 92px; max-height: calc(100vh - 108px); }
+    }
+    .noticeHead { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    #noticeTabs button { padding: 4px 12px; font-size: 13px; }
+    #noticeTabs button.hasNew::after { content: ''; display: inline-block; width: 7px; height: 7px; margin-left: 5px; border-radius: 50%; background: var(--bad); vertical-align: middle; }
+    #noticeClose { margin-left: auto; padding: 3px 9px; font-size: 13px; border-color: transparent; background: none; color: var(--ink-2); }
+    #noticeClose:hover { background: var(--sea-l); border-color: transparent; }
+    #noticeList { margin: 0; padding-left: 18px; font-size: 13.5px; line-height: 1.65; color: var(--ink); }
     #noticeList li { margin-bottom: 6px; }
-    #updTitle { margin: 4px 0 6px; font-size: 15px; font-weight: 400; letter-spacing: 1px; color: var(--sea-d); }
+    #noticeList li:last-child { margin-bottom: 0; }
     #updList { margin: 0; font-size: 13px; line-height: 1.55; color: var(--ink); }
     #updList section { margin-bottom: 8px; padding: 6px 10px 4px; border-radius: 12px; background: var(--btn); border: 2px solid var(--line); }
     #updList section:last-child { margin-bottom: 0; }
@@ -182,10 +209,11 @@
     #updList h4 small { font-size: 12px; color: var(--ink-2); white-space: nowrap; }
     #updList ul { margin: 0 0 4px; padding-left: 18px; }
     #updList li { margin-bottom: 2px; }
-    #refreshBox span { display: block; font-size: 13px; color: var(--ink-2); }
-    #refreshBox b { display: block; margin: 4px 0 3px; font-size: 21px; font-weight: 400; letter-spacing: 1px; color: var(--sea-d); font-variant-numeric: tabular-nums; white-space: nowrap; }
-    #refreshBox small { display: block; font-size: 12px; color: var(--ink-2); }
-    body.touch #notice { display: none; }   /* 手機橫著畫面太矮，公告不顯示 */
+    /* 刷新倒數整合進主卡底部一條細列 */
+    #refreshBox { margin-top: 14px; padding-top: 11px; border-top: 1.5px solid var(--line); display: flex; align-items: center; justify-content: center;
+      gap: 6px; font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+    #refreshBox i[data-ic] { color: var(--sea); line-height: 0; }
+    #refreshBox b { font-weight: 400; color: var(--sea-d); font-variant-numeric: tabular-nums; letter-spacing: 0.5px; }
     #menu h1 { margin: 0 0 4px; font-size: 34px; font-weight: 400; letter-spacing: 3px; color: var(--sea); text-shadow: 0 2px 0 var(--btn), 0 4px 0 rgba(29, 111, 159, 0.2); }
     #menu h2 { margin: 0 0 4px; font-size: 22px; font-weight: 400; letter-spacing: 2px; color: var(--sea-d); }
     #menu p { margin: 0 0 16px; color: var(--ink-2); font-size: 14px; }
@@ -201,6 +229,7 @@
     #nameGo:hover { background: rgba(255, 143, 112, 0.92); }
     #nameGo:active { transform: translateY(2px); box-shadow: 0 2px 0 var(--coral-d); }
     #nameGo:disabled { opacity: 0.6; cursor: default; }
+    #nameMsg:empty, #lobbyMsg:empty { display: none; }
     #nameMsg, #lobbyMsg { min-height: 18px; margin-top: 10px; font-size: 13px; color: var(--coral-d); }
     #roomList { display: flex; flex-direction: column; gap: 8px; max-height: min(46vh, 380px); overflow-y: auto; scrollbar-width: thin; padding: 2px; }
     button.room { display: flex; align-items: baseline; gap: 12px; padding: 10px 16px; font-size: 15px; text-align: left; border-radius: 14px; }
@@ -288,13 +317,22 @@
     body.touch #chatLog { max-height: 92px; }
     body.touch #chat.open #chatLog { max-height: 110px; }
     body.touch #chatInput { font-size: 16px; }   /* 小於 16px 的話 iPhone 點輸入框會自己把畫面放大 */
-    body.touch #menu .card { padding: 14px 22px 12px; }
-    body.touch #menu #refreshBox { position: static; transform: none; width: auto; min-width: 0; max-width: calc(100vw - 32px); padding: 10px 16px; margin: auto 0; }
-    body.touch #menu #refreshBox b { font-size: 18px; }
-    body.touch #menu h1 { font-size: 26px; }
-    body.touch #menu p { margin-bottom: 10px; }
-    body.touch #lookView { height: 130px; }
+    body.touch #menu .card { padding: 12px 22px 10px; }
+    body.touch #menu h1 { font-size: 25px; }
+    body.touch #menu p { margin-bottom: 8px; font-size: 13px; }
+    body.touch #lookView { height: 116px; }
     body.touch #lookPick { margin-bottom: 8px; }
+    body.touch #nameInput { padding: 7px 12px; font-size: 15px; }
+    body.touch #nameGo { margin-top: 8px; padding: 8px; font-size: 16px; }
+    body.touch #refreshBox { margin-top: 9px; padding-top: 8px; font-size: 12px; }
+    body.touch #menuTop { top: calc(10px + env(safe-area-inset-top)); right: calc(12px + env(safe-area-inset-right)); gap: 6px; }
+    body.touch .menuPill { padding: 5px 11px; font-size: 13px; }
+    body.touch #menu #notice { top: calc(50px + env(safe-area-inset-top)); right: calc(12px + env(safe-area-inset-right)); max-height: calc(100vh - 64px); }
+    body.touch:not(.playing) #panel { left: auto; right: calc(12px + env(safe-area-inset-right)); top: calc(50px + env(safe-area-inset-top)); max-height: calc(100vh - 64px); }
+    @media (max-width: 820px) {
+      body.touch #menu #notice { top: calc(82px + env(safe-area-inset-top)); max-height: calc(100vh - 96px); }
+      body.touch:not(.playing) #panel { top: calc(82px + env(safe-area-inset-top)); max-height: calc(100vh - 96px); }
+    }
     body.touch #roomList { max-height: 42vh; }
     #err { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
       background: #0e3550; color: #fff; padding: 30px; text-align: center; font-size: 16px; line-height: 1.8; }
@@ -389,7 +427,7 @@
       <div class="line"><span>刷新</span><button data-dev="refresh">立刻刷新</button></div>
       <p class="note">立刻刷新會清掉這台測試伺服器上所有人的錢、船、魚和排行榜</p>
     </details>
-    <div class="sec main"><button id="reset">離開房間（回到大廳）</button><p class="note">錢、船、裝備和還沒賣的魚會留著，下次進房從港口出發（定時全服刷新，倒數見主頁）</p></div>
+    <div class="sec main leaveSec"><button id="reset">離開房間（回到大廳）</button><p class="note">錢、船、裝備和還沒賣的魚會留著，下次進房從港口出發（定時全服刷新，倒數見主頁）</p></div>
   </details>
   <div id="hud" class="card hudRow"><span id="hClock"></span><span id="hSky"></span><span id="hMoneyBox" title="金錢"><i data-ic="coin"></i><b id="hMoney">$0</b></span></div>
   <div id="hShip" class="card hudRow"><span title="船的耐久"><i data-ic="boat"></i><b id="hHp">100%</b></span><span title="燃油"><i data-ic="fuel"></i><b id="hFuel">0</b></span><span id="hSpeed" title="船速"><i data-ic="speed"></i><b id="hBoat">0.0 節</b></span></div>
@@ -402,6 +440,10 @@
   <div id="stam" class="card"><i data-ic="bolt" title="體力"></i><div id="stamBar"><div id="stamFill"></div></div></div>
   <div id="keybar"></div>
   <div id="menu">
+    <div id="menuTop">
+      <button id="noticeBtn" class="menuPill" type="button" aria-expanded="false"><i data-ic="bell"></i><span>公告與更新</span></button>
+      <button id="menuSetBtn" class="menuPill" type="button" aria-expanded="false"><i data-ic="gear"></i><span>設定</span></button>
+    </div>
     <div id="menuName" class="card">
       <h1>Stormcast</h1>
       <p>選好角色、填好名字，跟大家一起出海釣魚</p>
@@ -410,6 +452,7 @@
       <input id="nameInput" maxlength="12" placeholder="你的名字" autocomplete="nickname" />
       <button id="nameGo">進入大廳</button>
       <div id="nameMsg"></div>
+      <div id="refreshBox"><i data-ic="refresh"></i><span>距全服刷新</span><b id="refreshLeft"></b></div>
     </div>
     <div id="menuLobby" class="card" style="display: none">
       <h2>選一間房間</h2>
@@ -418,12 +461,16 @@
       <div id="lobbyMsg"></div>
       <button id="lobbyBack">換個名字</button>
     </div>
-    <div id="refreshBox" class="card"><span>距離下次全服刷新</span><b id="refreshLeft"></b><small id="refreshAt"></small></div>
-    <div id="notice" class="card">
-      <h2 id="noticeTitle"></h2>
-      <ul id="noticeList"></ul>
-      <h3 id="updTitle">更新資訊</h3>
-      <div id="updList"></div>
+    <div id="notice" class="card" role="dialog" aria-label="公告與更新">
+      <div class="noticeHead">
+        <div id="noticeTabs" class="seg">
+          <button type="button" data-ntab="rules" class="on">公告</button>
+          <button type="button" data-ntab="updates">更新資訊</button>
+        </div>
+        <button id="noticeClose" type="button" aria-label="關閉公告">✕</button>
+      </div>
+      <div id="noticeRules"><ul id="noticeList"></ul></div>
+      <div id="updList" hidden></div>
     </div>
   </div>
   <div id="net"><div class="card"><p id="netMsg"></p><button id="netRetry">回到大廳</button></div></div>
