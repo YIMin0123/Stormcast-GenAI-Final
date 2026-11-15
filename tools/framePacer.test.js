@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { FramePacer } from '../src/framePacer.js';
+import { FramePacer, RefreshRateProbe } from '../src/framePacer.js';
 
-test('30, 45 and 60 FPS preserve animation time and independent gameplay updates', () => {
-  for (const limit of [30, 45, 60]) {
+test('render caps preserve animation time and independent gameplay updates', () => {
+  for (const limit of [30, 45, 60, 90, 120]) {
     for (const screenHz of [60, 90, 120, 144]) {
+      if (limit > screenHz) continue;
       const draw = new FramePacer();
       const sim = new FramePacer();
       let draws = 0, steps = 0, simulatedMs = 0;
@@ -19,6 +20,30 @@ test('30, 45 and 60 FPS preserve animation time and independent gameplay updates
       assert.equal(simulatedMs, 10000);
     }
   }
+});
+
+test('the browser clock unlocks only sustainable choices, including integer timestamps and dropped frames', () => {
+  for (const [screenHz, expected] of [[30, 30], [60, 60], [90, 90], [120, 120], [144, 120]]) {
+    const probe = new RefreshRateProbe();
+    let tick = 0;
+    for (let i = 0; i <= 64; i++) {
+      tick += i % 7 === 0 ? 2 : 1;
+      probe.sample(Math.round(tick * 1000 / screenHz));
+    }
+    assert.equal(probe.hz, expected, `${screenHz} Hz`);
+  }
+});
+
+test('refresh capability ignores isolated fast callbacks and survives temporary slowdown', () => {
+  const probe = new RefreshRateProbe();
+  for (let i = 0; i <= 32; i++) probe.sample(i * 1000 / 60 - (i === 5 ? 10 : 0));
+  assert.equal(probe.hz, 60);
+  probe.reset();
+  for (let i = 0; i <= 32; i++) probe.sample(i * 1000 / 90);
+  assert.equal(probe.hz, 90);
+  probe.reset();
+  for (let i = 0; i <= 32; i++) probe.sample(i * 1000 / 60);
+  assert.equal(probe.hz, 90);
 });
 
 test('changing rate or resuming from a hidden page starts a new timing interval', () => {

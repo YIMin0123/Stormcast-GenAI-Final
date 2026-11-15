@@ -19,7 +19,7 @@ import { placeAt } from './places.js';
 import { bearing, dirName, whereFrom, beaufort, windWord, clockOf, skyOf, tideText, tideShort, forecast, signsOf } from './tabletData.js';
 import { ICON } from './icons.js';
 import { BoxWorld } from './fishBox.js';
-import { ask, cancelAsk } from './ask.js';
+import { ask, asking, cancelAsk } from './ask.js';
 import { HOME_U, placeInHome } from './homeGl.js';
 import { HOME_YAW, toWorld, toLocal, headingToWorld, havenToLocal, HAVEN } from './frame.js';
 import { makeSeascape, HAVEN_LAND, HAVEN_GROUND } from './haven.js';
@@ -36,7 +36,8 @@ import { money as cash, rarityOf, BAITS, SPECIES, castRange } from './fishdata.j
 import { Fishing } from './fishing.js';
 import { EmoteWheel } from './emotes.js';
 import { TOUCH, TouchUI, touchText, touchSet, canFullscreen, isFullscreen, setFullscreen } from './touch.js';
-import { FramePacer } from './framePacer.js';
+import { FramePacer, MOBILE_FRAME_LIMITS, RefreshRateProbe } from './framePacer.js';
+import { MAX_QUALITY_REDUCTION, QualityTiming, reducedQuality } from './adaptiveQuality.js';
 import { REFL, addOutline, BULBS, softDisc } from './toon.js';   // 它會改掉內建材質的受光算法（改成手繪風）
 import { makeScenery, SHADOW_LAYER } from './scenery.js';
 import { makeGroundDetail, makeGrassGeometry, WIND, SIGHT } from './foliage.js';
@@ -97,21 +98,29 @@ renderer.domElement.addEventListener('webglcontextlost', (e) => {
   document.body.appendChild(n);
   window.setTimeout(() => window.location.reload(), 1500);
 });
-// 畫質由玩家自己在設定裡調，不會自動變，調過的記在瀏覽器裡（?test 分頁只記在那個分頁）：
+// 畫質設定記在瀏覽器裡（?test 分頁只記在那個分頁）。手機開啟動態畫質後會暫時減少特效。
 //   解析度：沒調過的話，電腦跟著螢幕的縮放比例走（筆電常見 1.25、1.5 倍，畫面才不會被放大而糊掉）；
-//           手機用 2 倍（螢幕原生的 2.6 倍太吃力；1 倍會糊。S22+「中」畫質實測 2 倍 57～60 fps）
+//           手機預設 1.6 倍，可手動選 1.0 到 2.0 倍。
 //   畫質等級：低／中／高，管陰影的細緻度、草的數量、角落的暗影（AO）、濕地板的倒影、光暈和陽光光束。
-//           電腦預設高、手機預設中。第一次進遊戲時量幾秒幀率，太慢就降一檔（只有沒調過的人才會換）。
+//           電腦預設高、手機預設中。沒調過畫質的電腦第一次進房會量幀率，太慢就降一檔。
 //           手機的畫面幀率獨立設定，預設 30；低畫質減少的是陰影與特效。
 const prefStore = (() => { try { return TEST ? window.sessionStorage : window.localStorage; } catch { return null; } })();
 const getPref = (k) => { try { return prefStore ? prefStore.getItem(k) : null; } catch { return null; } };
 const setPref = (k, v) => { try { if (prefStore) prefStore.setItem(k, String(v)); } catch { /* 存不了就下次重調 */ } };
 const mobileShadowClock = new FramePacer();
-const ratioFor = () => (TOUCH ? Math.min(2, window.devicePixelRatio || 1) : Math.round(clamp(window.devicePixelRatio || 1, 1, 1.5) * 10) / 10);
-const RATIO_MAX = Math.round(clamp(window.devicePixelRatio || 1, 1.5, 2) * 10) / 10;
-let BASE_RATIO = ratioFor();
-let ratioSaved = parseFloat(getPref('stormcast.res')) >= 0.5;
-let pixelRatio = ratioSaved ? clamp(parseFloat(getPref('stormcast.res')), 0.5, RATIO_MAX) : BASE_RATIO;
+const mobileRefresh = TOUCH ? new RefreshRateProbe() : null;
+const qualityTiming = TOUCH ? new QualityTiming() : null;
+const savedAdaptive = TOUCH ? getPref('stormcast.adaptiveGfx') : null;
+let adaptiveEnabled = savedAdaptive === 'on', adaptiveAsked = savedAdaptive === 'on' || savedAdaptive === 'off';
+let adaptivePrompt = false;
+let qualityReduction = 0;
+const desktopRatio = () => Math.round(clamp(window.devicePixelRatio || 1, 1, 1.5) * 10) / 10;
+const RATIO_MIN = TOUCH ? 1 : 0.5;
+const RATIO_MAX = TOUCH ? 2 : Math.round(clamp(window.devicePixelRatio || 1, 1.5, 2) * 10) / 10;
+let baseRatio = TOUCH ? 1.6 : desktopRatio();
+const savedRatio = Number(getPref('stormcast.res'));
+let ratioSaved = Number.isFinite(savedRatio) && savedRatio >= 0.5;
+let pixelRatio = ratioSaved ? clamp(savedRatio, RATIO_MIN, RATIO_MAX) : baseRatio;
 // 畫質的每一項都能在設定的「畫質」頁單獨調；三個快速選項（低／中／高）是一整組的預設值，手機和電腦各一套（手機另外固定少畫一些東西，見 TOUCH）。
 // 調過任何一項就變成「自訂」。整組記在瀏覽器（stormcast.gfx4）
 //   shadow 陰影：0 關、1 低（1024、取樣點減半）、2 中（2048）、3 高（3072）、4 最高（4096）
@@ -170,12 +179,16 @@ let gfxSaved = !!(getPref('stormcast.gfx4') || getPref('stormcast.gfx3') || getP
 // 現在這組設定是哪個快速選項（都不像就是 -1：自訂）
 const presetOf = () => PRESETS.findIndex((p) => GS_KEYS.every((k) => p[k] === gs[k]));
 // 其他地方用的是換算好的數值
-const deriveGfx = () => ({
-  name: presetOf() >= 0 ? PRESETS[presetOf()].name : '自訂',
-  shadowOn: gs.shadow > 0, shadow: SHADOW_SIZES[gs.shadow] || 1024, shadowHalf: SHADOW_HALVES[gs.shRange], lite: gs.shadow === 1,
-  grass: GRASS_N[gs.grass], ao: gs.ao, wet: gs.wet, bloom: gs.bloom, rays: gs.rays, refl: gs.refl,
-  haze: VIEW_HAZE[gs.view], far: VIEW_FAR[gs.view], fov: gs.fov,
-});
+const deriveGfx = () => {
+  const q = reducedQuality(gs, qualityReduction), preset = PRESETS[presetOf()];
+  const name = preset?.name ?? '自訂';
+  return {
+    name: qualityReduction ? `${name}（動態）` : name,
+    shadowOn: q.shadow > 0, shadow: SHADOW_SIZES[q.shadow] || 1024, shadowHalf: SHADOW_HALVES[q.shRange], lite: q.shadow === 1,
+    grass: GRASS_N[q.grass], grassLevel: q.grass, ao: q.ao, wet: q.wet, bloom: q.bloom, rays: q.rays, refl: q.refl, msaa: q.msaa,
+    haze: VIEW_HAZE[q.view], far: VIEW_FAR[q.view], fov: q.fov,
+  };
+};
 let gfx = deriveGfx();
 renderer.setPixelRatio(pixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -2671,10 +2684,13 @@ function setPixelRatio(q) {
   $('quality').value = q;
   $('vQuality').textContent = `${q.toFixed(1)}×`;
 }
-$('quality').max = RATIO_MAX;
-$('quality').value = pixelRatio;
+const quality = $('quality');
+quality.min = RATIO_MIN;
+quality.max = RATIO_MAX;
+quality.value = pixelRatio;
 $('vQuality').textContent = `${pixelRatio.toFixed(1)}×`;
-$('quality').addEventListener('input', () => { setPixelRatio(+$('quality').value); ratioSaved = true; setPref('stormcast.res', pixelRatio); });
+if (TOUCH) $('resolutionNote').textContent = `預設 ${baseRatio.toFixed(1)}×。倍率越高，畫面越清楚，繪圖負載也越大。`;
+quality.addEventListener('input', () => { setPixelRatio(quality.valueAsNumber); ratioSaved = true; setPref('stormcast.res', pixelRatio); });
 // 陰影「低」：海面、地形、草的陰影取樣點減半（著色器裡的 LITE），要重新編譯這幾個材質
 function applyLite() {
   scene.traverse((o) => {
@@ -2691,6 +2707,7 @@ function applyLite() {
 let viewReady = false;
 function applyGfx() {
   gfx = deriveGfx();
+  qualityTiming?.reset();
   mobileShadowClock.reset();
   if (SHADOW_HALF !== gfx.shadowHalf) {
     SHADOW_HALF = gfx.shadowHalf;
@@ -2719,12 +2736,12 @@ function applyGfx() {
   harbor.traverse((o) => {
     if (!o.userData.tuft) return;
     o.userData.full ??= o.count;
-    o.count = [0, Math.floor(o.userData.full / 3), o.userData.full][gs.grass] ?? o.userData.full;
+    o.count = [0, Math.floor(o.userData.full / 3), o.userData.full][gfx.grassLevel] ?? o.userData.full;
     o.visible = o.count > 0;
   });
   applyLite();
   // 多重取樣：場景那兩張緩衝區（環境光遮蔽要的深度也在上面）改取樣數，換的時候丟掉舊的，下一幀照新的重做
-  const ms = gs.msaa ? 4 : 0;
+  const ms = gfx.msaa ? 4 : 0;
   if (composer.renderTarget1.samples !== ms) for (const t of [composer.renderTarget1, composer.renderTarget2]) { t.samples = ms; t.dispose(); }
   shared.uHazeK.value = gfx.haze;
   detailUniform.value = gs.tex && !TOUCH ? 1 : 0;
@@ -2803,28 +2820,91 @@ function syncGfxUi() {
   for (const k in gfxCtl) gfxCtl[k]();
 }
 for (const b of $('gfx').children) b.addEventListener('click', () => { b.blur(); setGfx(+b.dataset.v); saveGfx(); });
-let frameLimit = 0;
+let frameLimit = 0, syncFrameChoices;
 if (TOUCH) {
   const row = $('frameLimit');
+  const group = $('frameChoices');
   row.hidden = false;
-  const buttons = [...row.querySelectorAll('button')];
-  const savedLimit = getPref('stormcast.mobileFps');
-  frameLimit = Number(buttons.find((b) => b.dataset.fps === savedLimit)?.dataset.fps ?? 30);
-  const sync = () => {
+  const savedLimit = Number(getPref('stormcast.mobileFps'));
+  let preferredLimit = MOBILE_FRAME_LIMITS.includes(savedLimit) ? savedLimit : MOBILE_FRAME_LIMITS[0];
+  const buttons = MOBILE_FRAME_LIMITS.map((fps) => {
+    const b = group.appendChild(Object.assign(document.createElement('button'), { type: 'button', textContent: `${fps} FPS` }));
+    b.dataset.fps = fps;
+    b.addEventListener('click', () => {
+      preferredLimit = fps;
+      setPref('stormcast.mobileFps', fps);
+      syncFrameChoices();
+    });
+    return b;
+  });
+  syncFrameChoices = () => {
+    frameLimit = MOBILE_FRAME_LIMITS.filter((fps) => fps <= mobileRefresh.hz && fps <= preferredLimit).at(-1);
     for (const b of buttons) {
-      const on = +b.dataset.fps === frameLimit;
-      b.classList.toggle('on', on);
-      b.setAttribute('aria-pressed', String(on));
+      const fps = +b.dataset.fps;
+      b.hidden = fps > mobileRefresh.hz;
+      b.classList.toggle('on', fps === frameLimit);
+      b.setAttribute('aria-pressed', String(fps === frameLimit));
     }
   };
-  for (const b of buttons) b.addEventListener('click', () => {
-    frameLimit = +b.dataset.fps;
-    setPref('stormcast.mobileFps', frameLimit);
-    sync();
+  syncFrameChoices();
+  $('adaptiveGfxRow').hidden = false;
+  $('adaptiveGfx').addEventListener('click', () => {
+    adaptivePrompt = false;
+    cancelAsk('adaptiveGfx');
+    setAdaptiveQuality(!adaptiveEnabled);
   });
-  sync();
+  syncAdaptiveButton();
 }
 applyGfx();
+
+function syncAdaptiveButton() {
+  const btn = $('adaptiveGfx');
+  btn.textContent = adaptiveEnabled ? '開' : '關';
+  btn.classList.toggle('on', adaptiveEnabled);
+  btn.setAttribute('aria-pressed', String(adaptiveEnabled));
+}
+
+function setAdaptiveQuality(enabled) {
+  adaptiveEnabled = enabled;
+  adaptiveAsked = true;
+  setPref('stormcast.adaptiveGfx', enabled ? 'on' : 'off');
+  syncAdaptiveButton();
+  qualityTiming.reset();
+  if (!enabled && qualityReduction) { qualityReduction = 0; applyGfx(); }
+}
+
+function adjustQuality(direction) {
+  const before = reducedQuality(gs, qualityReduction);
+  for (let next = qualityReduction + direction; next >= 0 && next <= MAX_QUALITY_REDUCTION; next += direction) {
+    const after = reducedQuality(gs, next);
+    if (next && GS_KEYS.every((k) => before[k] === after[k])) continue;
+    qualityReduction = next;
+    applyGfx();
+    return;
+  }
+}
+
+function checkAdaptiveQuality(ms) {
+  if (!inGame || !net.online || tabOpen() || fadeIn > 0 || mode === 'sink') { qualityTiming.reset(); return; }
+  const change = qualityTiming.sample(ms, frameLimit);
+  if (adaptiveEnabled) {
+    if (change) adjustQuality(change === 'lower' ? 1 : -1);
+    return;
+  }
+  if (change !== 'lower' || asking() || chat.isOpen || wheel.isOpen || fishing.state === 'fight') return;
+  const lowest = reducedQuality(gs, MAX_QUALITY_REDUCTION);
+  if (GS_KEYS.every((k) => gs[k] === lowest[k])) return;
+  adaptiveAsked = true;
+  adaptivePrompt = true;
+  ask('最近的幀率不穩。要開啟動態畫質，讓遊戲暫時減少部分特效嗎？設定裡可隨時切換。', {
+    yes: '開啟', no: '保持關閉', tag: 'adaptiveGfx',
+  }).then((enabled) => {
+    if (!adaptivePrompt) return;
+    adaptivePrompt = false;
+    setAdaptiveQuality(enabled);
+    if (enabled) adjustQuality(1);
+  });
+}
 // 設定裡換角色：記下來、重新載入（寬限內接回原本的房間）
 for (const b of $('lookSet').children) {
   b.classList.toggle('on', b.dataset.look === myLook());
@@ -2846,16 +2926,17 @@ if (TOUCH && canFullscreen) {
 } else if (TOUCH && !window.navigator.standalone && !window.matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches) {
   $('fullNote').style.display = 'block';
 }
-// 螢幕的縮放比例中途變了（視窗被縮放、拖到另一個螢幕、載入當下抓到的比例不對），解析度要跟著改；
-// 不然畫面是用較低的解析度畫好再放大，邊緣就會糊掉、出現鋸齒。玩家自己調過解析度的話就不動它
-function syncRatio() {
-  const r = ratioFor();
-  if (r === BASE_RATIO) return;
-  BASE_RATIO = r;
-  if (!ratioSaved) setPixelRatio(r);
+// 電腦的預設跟著螢幕縮放比例。手機預設是固定值，手動設定則一直沿用。
+if (!TOUCH) {
+  const syncRatio = () => {
+    const r = desktopRatio();
+    if (r === baseRatio) return;
+    baseRatio = r;
+    if (!ratioSaved) setPixelRatio(r);
+  };
+  window.addEventListener('resize', syncRatio);
+  window.setInterval(syncRatio, 2000);
 }
-window.addEventListener('resize', syncRatio);
-window.setInterval(syncRatio, 2000);
 
 // 離開房間：回到大廳，船留到寬限期結束，下次進房從港口出發。
 $('reset').addEventListener('click', () => {
@@ -4792,7 +4873,7 @@ if (fpsMore) {
 }
 // 第一次進遊戲（還沒自己調過畫質）：進房三秒後量五秒的幀率，平均每幀超過 40 毫秒（每秒不到 25 幀）就降一檔——
 // 手機降到「低」、電腦降到「中」（電腦的高是最高規格，不管效能）。量完就記住，之後不再量
-let probe = !gfxSaved ? { t0: 0, n: 0, sum: 0 } : null;
+let probe = !TOUCH && !gfxSaved ? { t0: 0, n: 0, sum: 0 } : null;
 function probeGfx(ms, rawMs) {
   if (!inGame || document.hidden) { if (probe.t0) probe.t0 = ms; return; }
   if (!probe.t0) { probe.t0 = ms; return; }
@@ -4800,7 +4881,7 @@ function probeGfx(ms, rawMs) {
   probe.n++; probe.sum += rawMs;
   if (ms - probe.t0 < 8000) return;
   const avg = probe.sum / probe.n;
-  const down = TOUCH ? 0 : 1;
+  const down = 1;
   if (avg > 40 && presetOf() > down) { setGfx(down); toast(`畫面有點卡，畫質自動換成「${PRESETS[down].name}」（可在設定裡改回來）`); }
   saveGfx();
   probe = null;
@@ -4870,6 +4951,7 @@ const diag = new URLSearchParams(window.location.search).has('diag') ? (() => {
   };
 })() : null;
 function animate(ms) {
+  if (mobileRefresh?.sample(ms)) syncFrameChoices();
   const drawMs = TOUCH ? drawClock.take(ms, inGame ? frameLimit : 20) : simClock.take(ms);
   // 手機的走路、掌舵和釣魚獨立排程，模擬上限為每秒 60 次。
   const simMs = TOUCH ? simClock.take(ms, inGame ? 60 : 30) : drawMs;
@@ -4878,6 +4960,7 @@ function animate(ms) {
   if (diag) diag(ms);
   if (probe) probeGfx(ms, drawMs);
   drawFrame(Math.min(drawMs / 1000, TOUCH && !inGame ? 0.075 : 0.05), ms);
+  if (TOUCH && (adaptiveEnabled || !adaptiveAsked)) checkAdaptiveQuality(ms);
   if (TOUCH ? hudClock.take(ms, 10) !== null : frame++ % 6 === 0) { updatePrompt(); if (tabOpen()) tablet.update(); }
   if (++fpsN && ms - fpsT >= 1000) {
     const span = ms - fpsT;
@@ -4889,6 +4972,8 @@ function animate(ms) {
 }
 function syncAnimation() {
   simClock.reset(); drawClock.reset(); hudClock.reset(); mobileShadowClock.reset();
+  mobileRefresh?.reset();
+  qualityTiming?.reset();
   shadowElapsed = 0;
   if (probe) { probe.t0 = 0; probe.n = 0; probe.sum = 0; }
   fpsN = 0; fpsT = performance.now();

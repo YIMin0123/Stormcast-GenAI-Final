@@ -24,3 +24,37 @@ export class FramePacer {
     return elapsed;
   }
 }
+
+export const MOBILE_FRAME_LIMITS = [30, 45, 60, 90, 120];
+
+// 取瀏覽器回呼的間隔。修掉幾個過短或漏掉更新的樣本，避免單次抖動誤開高幀率。
+export class RefreshRateProbe {
+  constructor() {
+    this.hz = MOBILE_FRAME_LIMITS[0];
+    this.intervals = [];
+    this.reset();
+  }
+
+  reset() {
+    this.last = null;
+    this.intervals.length = 0;
+  }
+
+  sample(now) {
+    if (this.hz === MOBILE_FRAME_LIMITS.at(-1)) return false;
+    const last = this.last;
+    this.last = now;
+    if (last === null || now <= last) return false;
+    if (now - last >= 250) { this.intervals.length = 0; return false; }
+    this.intervals.push(now - last);
+    if (this.intervals.length < 32) return false;
+    this.intervals.sort((a, b) => a - b);
+    const steady = this.intervals.slice(4, 24);
+    const hz = steady.length * 1000 / steady.reduce((sum, ms) => sum + ms, 0);
+    this.intervals.length = 0;
+    const supported = MOBILE_FRAME_LIMITS.filter((limit) => hz >= limit * 0.97).at(-1);
+    if (supported === undefined || supported <= this.hz) return false;
+    this.hz = supported;
+    return true;
+  }
+}

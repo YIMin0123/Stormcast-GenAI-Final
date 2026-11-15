@@ -77,6 +77,9 @@
     .seg button:first-child { border-radius: 999px 0 0 999px; margin-left: 0; }
     .seg button:last-child { border-radius: 0 999px 999px 0; }
     .seg button.on { background: var(--sea-a); border-color: var(--sea); color: #fff; position: relative; }
+    #frameChoices { display: flex; flex-wrap: wrap; gap: 4px; }
+    #frameChoices button { padding: 4px 10px; }
+    #frameChoices button.on { background: var(--sea-a); border-color: var(--sea); color: #fff; }
     /* 設定裡的「畫質」頁：打開時蓋掉其他區塊 */
     #gfxPage { display: none; }
     #panel.gfx #gfxPage { display: block; }
@@ -351,12 +354,12 @@
         <p class="note">按一下套用整組。畫質可單獨調整，設定會自動記住。</p>
       </div>
       <div class="sec" id="frameLimit" hidden><h4>幀率上限</h4>
-        <div class="seg">
-          <button type="button" data-fps="30">30 FPS</button>
-          <button type="button" data-fps="45">45 FPS</button>
-          <button type="button" data-fps="60">60 FPS</button>
-        </div>
-        <p class="note">30 FPS 較省電，60 FPS 的視角移動較流暢。</p>
+        <div id="frameChoices" role="group" aria-label="幀率上限"></div>
+        <p class="note">依瀏覽器偵測到的更新頻率顯示。上限越高，視角移動越流暢，也更耗電。</p>
+      </div>
+      <div class="sec" id="adaptiveGfxRow" hidden>
+        <div class="line"><span>動態調整畫質</span><button type="button" id="adaptiveGfx" class="sw" aria-label="動態調整畫質" aria-pressed="false">關</button></div>
+        <p class="note">畫面持續不穩時減少特效，穩定後逐檔恢復。</p>
       </div>
       <div id="gfxRows"></div>
       <div class="sec"><h4>解析度</h4>
