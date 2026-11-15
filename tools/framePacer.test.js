@@ -2,20 +2,22 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { FramePacer } from '../src/framePacer.js';
 
-test('a 30 FPS render cap preserves animation time and independent gameplay updates', () => {
-  for (const screenHz of [60, 90, 120, 144]) {
-    const draw = new FramePacer();
-    const sim = new FramePacer();
-    let draws = 0, steps = 0, simulatedMs = 0;
-    for (let i = 0; i <= screenHz * 10; i++) {
-      const now = i * 1000 / screenHz;
-      const dt = sim.take(now, 60);
-      if (draw.take(now, 30) > 0) draws++;
-      if (dt > 0) { steps++; simulatedMs += dt; }
+test('30, 45 and 60 FPS preserve animation time and independent gameplay updates', () => {
+  for (const limit of [30, 45, 60]) {
+    for (const screenHz of [60, 90, 120, 144]) {
+      const draw = new FramePacer();
+      const sim = new FramePacer();
+      let draws = 0, steps = 0, simulatedMs = 0;
+      for (let i = 0; i <= screenHz * 10; i++) {
+        const now = i * 1000 / screenHz;
+        const dt = sim.take(now, 60);
+        if (draw.take(now, limit) > 0) draws++;
+        if (dt > 0) { steps++; simulatedMs += dt; }
+      }
+      assert.equal(draws, limit * 10, `${limit} FPS on ${screenHz} Hz`);
+      assert.equal(steps, 600);
+      assert.equal(simulatedMs, 10000);
     }
-    assert.equal(draws, 300);
-    assert.equal(steps, 600);
-    assert.equal(simulatedMs, 10000);
   }
 });
 

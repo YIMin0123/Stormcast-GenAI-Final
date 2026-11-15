@@ -106,7 +106,6 @@ renderer.domElement.addEventListener('webglcontextlost', (e) => {
 const prefStore = (() => { try { return TEST ? window.sessionStorage : window.localStorage; } catch { return null; } })();
 const getPref = (k) => { try { return prefStore ? prefStore.getItem(k) : null; } catch { return null; } };
 const setPref = (k, v) => { try { if (prefStore) prefStore.setItem(k, String(v)); } catch { /* 存不了就下次重調 */ } };
-let frameLimit = TOUCH ? (getPref('stormcast.mobileFps') === '60' ? 60 : 30) : 0;
 const mobileShadowClock = new FramePacer();
 const ratioFor = () => (TOUCH ? Math.min(2, window.devicePixelRatio || 1) : Math.round(clamp(window.devicePixelRatio || 1, 1, 1.5) * 10) / 10);
 const RATIO_MAX = Math.round(clamp(window.devicePixelRatio || 1, 1.5, 2) * 10) / 10;
@@ -2804,10 +2803,13 @@ function syncGfxUi() {
   for (const k in gfxCtl) gfxCtl[k]();
 }
 for (const b of $('gfx').children) b.addEventListener('click', () => { b.blur(); setGfx(+b.dataset.v); saveGfx(); });
+let frameLimit = 0;
 if (TOUCH) {
   const row = $('frameLimit');
   row.hidden = false;
   const buttons = [...row.querySelectorAll('button')];
+  const savedLimit = getPref('stormcast.mobileFps');
+  frameLimit = Number(buttons.find((b) => b.dataset.fps === savedLimit)?.dataset.fps ?? 30);
   const sync = () => {
     for (const b of buttons) {
       const on = +b.dataset.fps === frameLimit;
@@ -4869,7 +4871,7 @@ const diag = new URLSearchParams(window.location.search).has('diag') ? (() => {
 })() : null;
 function animate(ms) {
   const drawMs = TOUCH ? drawClock.take(ms, inGame ? frameLimit : 20) : simClock.take(ms);
-  // 手機保留每秒 60 次的走路、掌舵和釣魚更新，畫面可獨立以 30 FPS 繪製。
+  // 手機的走路、掌舵和釣魚獨立排程，模擬上限為每秒 60 次。
   const simMs = TOUCH ? simClock.take(ms, inGame ? 60 : 30) : drawMs;
   if (simMs > 0) advance(Math.min(simMs / 1000, 0.05));
   if (drawMs === null) return;
