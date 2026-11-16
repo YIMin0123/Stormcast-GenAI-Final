@@ -6,15 +6,22 @@
 35-229-248-193.sslip.io {
 	encode zstd gzip
 	@admin path /admin /admin/*
-	respond @admin 404
+	handle @admin {
+		respond 404
+	}
 	@ws {
+		path /
 		header Connection *Upgrade*
 		header Upgrade websocket
 	}
 	handle @ws {
 		reverse_proxy 127.0.0.1:8787
 	}
-	handle /status {
+	@status {
+		path /status
+		header !Upgrade
+	}
+	handle @status {
 		rewrite * /
 		reverse_proxy 127.0.0.1:8787
 	}

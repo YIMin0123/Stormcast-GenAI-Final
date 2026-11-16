@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { Room, newPlayer, profileOf, applyProfile, MAX_PLAYERS, TICK, DEV, GRACE } from './room.js';
 import { boxPub } from './fishBoxes.js';
 import { sendRaw } from './wire.js';
+import { Admission, admissionKey } from './admission.js';
 import { Daily } from './daily.js';
 import { Profiles, epochAt } from './profiles.js';
 import { Dexbooks, loadDex } from './dex.js';
@@ -33,6 +34,8 @@ const MERGE_COUNT = +(process.env.MERGE_COUNT_SEC || 30);           // 合併前
 const MERGE_BELOW = 5;
 const SAVE_EVERY = 10;   // 進度幾秒存一次（有變才寫檔）
 const MAX_CONNECTIONS = 256;   // 包含大廳及尚未送 hello 的連線
+const HELLO_TIMEOUT = 10000;
+const admission = DEV ? null : new Admission();
 
 const hub = {
   rooms: new Map(),       // 房號 → Room
@@ -221,13 +224,22 @@ const http = createServer((req, res) => {
 });
 const wss = new WebSocketServer({
   server: http, maxPayload: 16 * 1024,
-  verifyClient: ({ origin }) => !ORIGINS.length || ORIGINS.includes(origin),
+  path: DEV ? undefined : '/',
+  verifyClient: ({ origin, req }, done) => {
+    if (ORIGINS.length && !ORIGINS.includes(origin)) return done(false, 401);
+    if (wss.clients.size >= MAX_CONNECTIONS) return done(false, 503);
+    const code = admission?.upgrade(admissionKey(clientIp(req))) || 0;
+    done(code === 0, code);
+  },
 });
 
 wss.on('connection', (ws, req) => {
   ws.on('error', () => {});
   const meta = { ip: clientIp(req), dev: parseDevice(req.headers['user-agent'], req.headers['sec-ch-ua-mobile']) };   // 活動紀錄用
-  if (wss.clients.size > MAX_CONNECTIONS) { ws.terminate(); return; }
+  const key = admission && admissionKey(meta.ip);
+  if (admission) ws.once('close', admission.opened(key));
+  const helloTimer = setTimeout(() => ws.terminate(), HELLO_TIMEOUT).unref();
+  ws.once('close', () => clearTimeout(helloTimer));
   sendRaw(ws, noticeMsg());   // 新連線：現在有公告就帶上
   ws.alive = true;
   ws.on('pong', () => { ws.alive = true; });
@@ -285,6 +297,7 @@ wss.on('connection', (ws, req) => {
       look = m.look === 'boy' ? 'boy' : 'girl';
       if (!name) return send(ws, { t: 'denied', msg: '請先填好名字' });
       if (isRude(name)) { name = ''; return send(ws, { t: 'denied', msg: '這個名字不能用，換一個吧' }); }
+      clearTimeout(helloTimer);
       token = typeof m.token === 'string' && /^[0-9a-f]{32}$/.test(m.token) ? m.token : '';
       if (resume(now)) return;
       hub.lobby.add(ws);
@@ -307,7 +320,10 @@ wss.on('connection', (ws, req) => {
       if (r.count >= MAX_PLAYERS) return send(ws, { t: 'full', msg: '這間房滿了，挑別間吧', ...lobbyList() });
       if (hub.merge && hub.merge.from === r) return send(ws, { t: 'full', msg: '這間房正要合併到別間，挑別間吧', ...lobbyList() });
       if (resume(now)) return;   // 同一台裝置在別的視窗已經在房裡了：接過來
-      if (!hub.profiles.raw.has(token) && !hub.dexbook.raw.has(token)) token = randomBytes(16).toString('hex');
+      if (!hub.profiles.raw.has(token) && !hub.dexbook.raw.has(token)) {
+        if (admission && !admission.guest(key)) return send(ws, { t: 'denied', msg: '同一網路短時間加入太多訪客，請稍後再試' });
+        token = randomBytes(16).toString('hex');
+      }
       me = newPlayer(hub.nextId++, ws, token, name, look);
       const prof = hub.profiles.get(token);
       if (prof) applyProfile(me, prof);
