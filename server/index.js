@@ -18,6 +18,8 @@ import { sendRaw } from './wire.js';
 import { Daily } from './daily.js';
 import { Profiles, epochAt } from './profiles.js';
 import { Dexbooks, loadDex } from './dex.js';
+import { Activity, parseDevice, clientIp } from './activity.js';
+import { statsPage } from './statsPage.js';
 import { SERVER } from '../src/config.js';
 import { refreshRule } from '../src/announce.js';
 import { cleanName, isRude } from './words.js';
@@ -39,11 +41,12 @@ const hub = {
   daily: new Daily(DATA),
   profiles: new Profiles(DATA),
   dexbook: new Dexbooks(DATA),   // 圖鑑：跟家當分開存，刷新不清
+  activity: new Activity(DATA),  // 玩家活動紀錄（進出、換名、裝置、摘要），給管理網頁看，見 activity.js
   nextId: 1,
   merge: null,            // 正在進行的合併：{ from, to, phase: 'wait' | 'count', left }
   eachRoom(fn) { for (const r of this.rooms.values()) fn(r); },
   // 把這個人現在的進度記下來（存檔在 save 時才寫）
-  keep(p) { if (p.owner && p.token) { this.profiles.put(p.token, profileOf(p)); this.dexbook.put(p.token, p.dex); } },
+  keep(p) { if (p.owner && p.token) { this.profiles.put(p.token, profileOf(p)); this.dexbook.put(p.token, p.dex); this.activity.sample(p, this.profiles.epoch); } },
   refresh,
 };
 // 伺服器關著的時候刷新過了：今日紀錄也一起清
@@ -179,6 +182,21 @@ function admin(req, res, url) {
   const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) && !req.headers['x-forwarded-for'];
   const reply = (code, text) => { res.writeHead(code, { 'content-type': 'text/plain; charset=utf-8' }); res.end(`${text}\n`); };
   if (!local) return reply(403, 'forbidden');
+  const hostOk = ['127.0.0.1', 'localhost', '[::1]'].includes(req.headers.host?.replace(/:\d+$/, ''));
+  // 玩家活動統計：只讀的 GET，用瀏覽器直接開（在本機，或用 deploy/stats.sh 從伺服器抓回來）。
+  // 同樣只收本機、Host 要是本機（擋 DNS 重綁），並拒絕別的網站帶著跨站請求來讀
+  if (req.method === 'GET' && (url.pathname === '/admin/stats' || url.pathname === '/admin/stats.json')) {
+    const site = req.headers['sec-fetch-site'];
+    if (!hostOk || req.headers.origin || (site && !['none', 'same-origin'].includes(site))) return reply(403, 'forbidden');
+    const report = hub.activity.report();
+    const json = url.pathname.endsWith('.json');
+    res.writeHead(200, {
+      'content-type': json ? 'application/json; charset=utf-8' : 'text/html; charset=utf-8',
+      'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
+      'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'",
+    });
+    return void res.end(json ? JSON.stringify(report) : statsPage(report));
+  }
   if (req.headers.origin || req.headers['sec-fetch-site']
     || !['127.0.0.1', 'localhost', '[::1]'].includes(req.headers.host?.replace(/:\d+$/, ''))) return reply(403, 'forbidden');
   if (req.method !== 'POST') { res.setHeader('allow', 'POST'); return reply(405, 'method not allowed'); }
@@ -206,8 +224,9 @@ const wss = new WebSocketServer({
   verifyClient: ({ origin }) => !ORIGINS.length || ORIGINS.includes(origin),
 });
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
   ws.on('error', () => {});
+  const meta = { ip: clientIp(req), dev: parseDevice(req.headers['user-agent'], req.headers['sec-ch-ua-mobile']) };   // 活動紀錄用
   if (wss.clients.size > MAX_CONNECTIONS) { ws.terminate(); return; }
   sendRaw(ws, noticeMsg());   // 新連線：現在有公告就帶上
   ws.alive = true;
@@ -230,6 +249,7 @@ wss.on('connection', (ws) => {
     r.all({ t: 'join', id: me.id, name: me.name, look: me.look, here: true, boat: r.boatInfo(me), quiet: true }, me);
     // 斷線時遇到定時刷新：畫面上的船、魚還是舊的，整包重置再送一次
     if (me.resetMsg) { r.send(me, { t: 'reset', text: me.resetMsg, kit: me.kit, berth: r.berthInfo(me), boards: r.boards() }); me.resetMsg = null; }
+    hub.activity.back(me, meta, r.name);
     console.log(`[back] ${name} 回到 ${r.name}`);
     return true;
   };
@@ -250,7 +270,7 @@ wss.on('connection', (ws) => {
     }
 
     if (me) {
-      if (m.t === 'leave') { const r = me.room; r.quit(me); me = null; ws.close(); tidyRooms(); return; }
+      if (m.t === 'leave') { const r = me.room, p = me; r.quit(me); hub.activity.end(p, 'leave'); me = null; ws.close(); tidyRooms(); return; }
       if (me.room) {
         try { me.room.on(me, m); } catch (err) {
           console.error('[message] handler failed', err);
@@ -294,6 +314,7 @@ wss.on('connection', (ws) => {
       me.dex = loadDex(hub.dexbook.get(token));
       hub.sessions.set(token, me);
       hub.lobby.delete(ws);
+      hub.activity.begin(me, meta, r.name);
       r.enter(me);
       // 有存著的進度：家當、倉庫裡的船、還沒賣的魚還給他，人從港口出發、船停在分到的格子
       const back = prof && r.resumeData(me);
@@ -308,6 +329,7 @@ wss.on('connection', (ws) => {
     hub.lobby.delete(ws);
     if (!me || me.ws !== ws) return;   // 還在大廳、已經按了離開、或被另一個視窗頂掉
     console.log(`[drop] ${me.name} 斷線（${me.room.name}）`);
+    hub.activity.drop(me);
     me.room.drop(me);
   });
 });
@@ -330,10 +352,14 @@ setInterval(() => {
     hub.eachRoom((r) => { for (const p of r.players.values()) hub.keep(p); });
     hub.profiles.save();
     hub.dexbook.save();
+    hub.activity.save();
   }
   if (n % 600 === 0) {
     if (hub.daily.roll()) hub.eachRoom((r) => r.all(r.boards()));   // 午夜：今日紀錄清空
     hub.daily.save();
+    let online = 0;
+    hub.eachRoom((r) => { online += r.active; });
+    hub.activity.tick(online);   // 記線上人數、刪掉超過保留天數的紀錄
   }
 }, TICK * 1000);
 
@@ -355,7 +381,7 @@ function refresh(test) {
   console.log(`[refresh] ${test ? '（測試）' : ''}刷新：重置了 ${k} 人（第 ${hub.profiles.epoch} 期）`);
 }
 
-const stop = () => { hub.eachRoom((r) => { for (const p of r.players.values()) hub.keep(p); }); hub.profiles.save(); hub.dexbook.save(); hub.daily.save(); process.exit(0); };
+const stop = () => { hub.eachRoom((r) => { for (const p of r.players.values()) hub.keep(p); }); hub.profiles.save(); hub.dexbook.save(); hub.daily.save(); hub.activity.stopAll(); process.exit(0); };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
 http.listen(PORT, HOST, () => console.log(`Stormcast 伺服器：ws://${HOST}:${PORT}　今日紀錄、進度存在 ${DATA}`));

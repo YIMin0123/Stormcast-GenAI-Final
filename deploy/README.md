@@ -29,6 +29,7 @@ bash deploy/announce.sh "今晚 10 點維修"      # 發跑馬燈公告（一直
 bash deploy/announce.sh "新版本更新" 60       # 公告＋60 秒倒數，倒數完伺服器存檔重開（玩家斷線後自動接回）
 bash deploy/announce.sh "" 60                  # 只倒數、不寫字
 bash deploy/announce.sh clear                  # 取消公告和倒數
+bash deploy/stats.sh                            # 玩家活動統計：每日人數、進出時間、換名、電腦／手機、IP、遊玩摘要（抓一份存成檔案並開啟；保留 30 天）
 ```
 
 重開 = 伺服器把所有人的進度存好後結束，systemd 幾秒內再開起來（錢、船、裝備、魚都存在檔案裡）。要上線新版又要倒數，直接用 `push.sh --notice "文字" --count 秒數`：先在自己電腦打包、上傳、把新程式換到伺服器上（這時還不重開），**換好之後才發公告開始倒數**，歸零那一刻伺服器重開，只重開一次、不會提早。（不要先發 `announce.sh` 倒數再另外跑不帶 `--count` 的 `push.sh`：`push.sh` 會立刻重開，倒數就被打斷了。）

@@ -277,6 +277,7 @@ export class Room {
   // 時間到了沒回來：收船、騰出停船格、從榜上拿掉
   remove(p) {
     this.hub.keep(p);   // 斷線太久沒回來：進度存回檔案，下次進房還在
+    this.hub.activity?.end(p, 'expire');   // 活動紀錄：這一場結束（按了離開的那場已在 index.js 結束，這裡就沒事）
     p.owner = false;
     if (p.boat && !p.boat.sunk) this.returnPassengers(p);
     this.removeDeckFish(p.id);
