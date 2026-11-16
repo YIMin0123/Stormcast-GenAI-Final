@@ -15,7 +15,7 @@
 
 35-229-248-193.sslip.io {
 	encode zstd gzip
-	header Content-Security-Policy "connect-src 'self' wss://35-229-248-193.sslip.io"
+	header Content-Security-Policy "connect-src 'self' blob: data: wss://35-229-248-193.sslip.io"
 	@admin path /admin /admin/*
 	handle @admin {
 		respond 404
