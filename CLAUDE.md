@@ -3,7 +3,7 @@
 - 回覆一律用繁體中文。
 - 大改動前先跟使用者確認需求，只做講好的範圍，不自己加功能。
 - 參數盡量不要寫死：地圖大小、島與港口的位置與朝向、浪向等都放在 `src/config.js`；座標轉換用 `src/frame.js`。細則見 `docs/座標與地圖規則.md`。
-- 不開分支、不開工作副本：所有 AI 都直接在 `C:\GAMER\海嘯模擬器` 的 `main` 上修改、本地提交（不必問）。只有使用者當次明講要開分支才開，做完要合回 main 並刪掉。上線（網頁＋遊戲伺服器都在 GCP 的 `valheim-tw`，不經過 GitHub）用 `bash deploy/push.sh`，只會上線已提交的內容；要使用者說了才上線，也不要主動問。GitHub 倉庫是私人的、只當備份，推它不會發佈任何東西。
+- 不開分支、不開工作副本：所有 AI 都直接在 `C:\GAMER\海嘯模擬器` 的 `main` 上修改、本地提交（不必問）。只有使用者當次明講要開分支才開，做完要合回 main 並刪掉。上線（網頁＋遊戲伺服器都在 GCP 的 `valheim-tw`，不經過 GitHub）用 `bash deploy/push.sh`，只會上線已提交的內容；要使用者說了才上線，也不要主動問。GitHub 倉庫是公開的，只放原始碼與備份，推它不會上線任何東西；不准提交密鑰、`.env`、玩家資料（`server/data/`）或 `參考專案/`。
 - 多個 AI 同時改：改前先讀現行檔案，只改自己要的範圍，保留別人還沒提交的改動；熱門檔（`src/main.js`、`index.html`、`src/config.js`）動手前先 `git diff -- <檔>` 看有沒有別人的區塊。提交前必跑 `git diff --cached --name-status`，清單只能有自己的檔案；同一檔有別人的區塊時只暫存自己那幾段（`git add -p` 或把自己的改動套到 `git show HEAD:<檔>` 再 `git update-index`）。
 - 伺服器只准一組：網頁 `npm run dev`（5173）＋測試用 `node server/dev.js`（8787），對應 `.claude/launch.json` 的 `web`、`server`。已經在跑就直接用，不准另開其他埠或從別的資料夾開伺服器。
 - 實測另開 `http://localhost:5173/?test` 分頁，不動使用者正在玩的分頁與存檔。
