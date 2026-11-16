@@ -321,7 +321,7 @@ wss.on('connection', (ws, req) => {
       if (hub.merge && hub.merge.from === r) return send(ws, { t: 'full', msg: '這間房正要合併到別間，挑別間吧', ...lobbyList() });
       if (resume(now)) return;   // 同一台裝置在別的視窗已經在房裡了：接過來
       if (!hub.profiles.raw.has(token) && !hub.dexbook.raw.has(token)) {
-        if (admission && !admission.guest(key)) return send(ws, { t: 'denied', msg: '同一網路短時間加入太多訪客，請稍後再試' });
+        if (admission && !admission.guest(key)) return send(ws, { t: 'denied', msg: '目前新增訪客較多，請稍後再試' });
         token = randomBytes(16).toString('hex');
       }
       me = newPlayer(hub.nextId++, ws, token, name, look);

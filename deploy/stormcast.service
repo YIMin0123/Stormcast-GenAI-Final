@@ -16,6 +16,20 @@ Environment=HOST=127.0.0.1
 Environment=ORIGINS=https://35-229-248-193.sslip.io
 # 今日紀錄存在這裡
 Environment=DATA_DIR=/var/lib/stormcast
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/stormcast
+StateDirectory=stormcast
+StateDirectoryMode=0700
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
 # 跟瓦爾海姆共用一台：記憶體給個上限，出事也不會拖垮整台
 MemoryMax=400M
 

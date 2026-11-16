@@ -8,11 +8,11 @@
 set -euo pipefail
 VM=valheim-tw; ZONE=asia-east1-b
 if [ "${1:-}" = "json" ]; then
-  gcloud compute ssh "$VM" --zone "$ZONE" --quiet --command "curl -fsS http://127.0.0.1:8787/admin/stats.json"
+  gcloud compute ssh "$VM" --zone "$ZONE" --tunnel-through-iap --quiet --command "curl -fsS http://127.0.0.1:8787/admin/stats.json"
   exit 0
 fi
 OUT="${TEMP:-${TMPDIR:-/tmp}}/stormcast-stats.html"
-gcloud compute ssh "$VM" --zone "$ZONE" --quiet --command "curl -fsS http://127.0.0.1:8787/admin/stats" > "$OUT"
+gcloud compute ssh "$VM" --zone "$ZONE" --tunnel-through-iap --quiet --command "curl -fsS http://127.0.0.1:8787/admin/stats" > "$OUT"
 echo "已存到 $OUT"
 if command -v cygpath >/dev/null 2>&1; then cmd.exe //c start "" "$(cygpath -w "$OUT")"
 elif command -v open >/dev/null 2>&1; then open "$OUT"

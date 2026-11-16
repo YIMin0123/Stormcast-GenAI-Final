@@ -17,4 +17,4 @@ else
   ENC="$(python -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1], safe=""))' "$TEXT")"
   CMD="curl -fsS -X POST 'http://127.0.0.1:8787/admin/notice?text=${ENC}&restart=${SEC}'"
 fi
-gcloud compute ssh "$VM" --zone "$ZONE" --quiet --command "$CMD"
+gcloud compute ssh "$VM" --zone "$ZONE" --tunnel-through-iap --quiet --command "$CMD"

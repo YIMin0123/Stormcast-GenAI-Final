@@ -28,7 +28,7 @@ REMOTE_STAGE=""
 cleanup() {
   rm -rf -- "$T"
   if [[ -n "$REMOTE_STAGE" ]]; then
-    gcloud compute ssh "$VM" --zone "$ZONE" --quiet --command "rm -rf -- '$REMOTE_STAGE'" || true
+    gcloud compute ssh "$VM" --zone "$ZONE" --tunnel-through-iap --quiet --command "rm -rf -- '$REMOTE_STAGE'" || true
   fi
 }
 trap cleanup EXIT
@@ -44,13 +44,13 @@ if [ "$MODE" != "web" ]; then
   FILES+=("$T/server.tgz")
 fi
 echo "==> 傳到 $VM"
-STAGE="$(gcloud compute ssh "$VM" --zone "$ZONE" --quiet --command 'mktemp -d /tmp/stormcast-deploy.XXXXXXXXXX')"
+STAGE="$(gcloud compute ssh "$VM" --zone "$ZONE" --tunnel-through-iap --quiet --command 'mktemp -d /tmp/stormcast-deploy.XXXXXXXXXX')"
 if [[ ! "$STAGE" =~ ^/tmp/stormcast-deploy\.[A-Za-z0-9]{10}$ ]]; then echo "無法建立上傳目錄"; exit 1; fi
 REMOTE_STAGE="$STAGE"
-gcloud compute scp "${FILES[@]}" "$VM:$REMOTE_STAGE/" --zone "$ZONE" --quiet
+gcloud compute scp "${FILES[@]}" "$VM:$REMOTE_STAGE/" --zone "$ZONE" --tunnel-through-iap --quiet
 WHEN=now; [ "$COUNT" -gt 0 ] && WHEN=later
 echo "==> 在伺服器上更新（$MODE$([ "$COUNT" -gt 0 ] && echo "，倒數 $COUNT 秒" || true)）"
-gcloud compute ssh "$VM" --zone "$ZONE" --quiet --command "sudo bash '$REMOTE_STAGE/remote-update.sh' $MODE $WHEN"
+gcloud compute ssh "$VM" --zone "$ZONE" --tunnel-through-iap --quiet --command "sudo bash '$REMOTE_STAGE/remote-update.sh' $MODE $WHEN"
 if [ "$COUNT" -gt 0 ]; then
   echo "==> 發公告、倒數 $COUNT 秒（新程式已經換好，歸零時伺服器重開）"
   bash deploy/announce.sh "$NOTICE" "$COUNT"

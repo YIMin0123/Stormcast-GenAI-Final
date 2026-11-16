@@ -24,7 +24,7 @@ if [ "$MODE" != "web" ]; then
   rm -rf "$APP.new"; mkdir -p "$APP.new"
   tar -xzf "$STAGE/server.tgz" -C "$APP.new"
   (cd "$APP.new/server" && npm ci --omit=dev --ignore-scripts --silent)
-  chown -R stormcast:stormcast "$APP.new"
+  chown -hR root:root "$APP.new"
   if [ "$WHEN" = "later" ]; then
     # 跑著的伺服器程式已經讀進記憶體，換資料夾不影響它；之後重開（倒數歸零）起來的就是新的
     rm -rf "$APP.old"; [ -d "$APP" ] && mv "$APP" "$APP.old"

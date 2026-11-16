@@ -5,6 +5,8 @@ const MAX_SOURCES = 8192;
 const SOURCE_TTL = 60000;
 const UPGRADE_BURST = 24, UPGRADE_PER_MINUTE = 120;
 const GUEST_BURST = 8, GUEST_PER_MINUTE = 12;
+const TOTAL_UPGRADE_BURST = 256, TOTAL_UPGRADES_PER_MINUTE = 480;
+const TOTAL_GUEST_BURST = 48, TOTAL_GUESTS_PER_MINUTE = 60;
 
 export function admissionKey(ip) {
   if (isIP(ip) !== 6) return ip;
@@ -33,6 +35,9 @@ export class Admission {
     this.now = now;
     this.sources = new Map();
     this.pruneAt = 0;
+    const at = now();
+    this.upgrades = { credit: TOTAL_UPGRADE_BURST, at };
+    this.guests = { credit: TOTAL_GUEST_BURST, at };
   }
 
   // 只在通過 Origin 檢查、伺服器還有名額時呼叫。回傳 0 表示可升級。
@@ -44,13 +49,13 @@ export class Admission {
         if (!source.open && now - Math.max(source.upgrades.at, source.guests.at) >= SOURCE_TTL) this.sources.delete(ip);
       }
     }
-    let source = this.sources.get(key);
+    const source = this.sources.get(key);
+    if (source && (source.open >= MAX_PER_SOURCE || !spend(source.upgrades, UPGRADE_BURST, UPGRADE_PER_MINUTE, now))) return 429;
+    if (!spend(this.upgrades, TOTAL_UPGRADE_BURST, TOTAL_UPGRADES_PER_MINUTE, now)) return 503;
     if (!source) {
       if (this.sources.size >= MAX_SOURCES) return 503;
-      source = { open: 0, upgrades: { credit: UPGRADE_BURST, at: now }, guests: { credit: GUEST_BURST, at: now } };
-      this.sources.set(key, source);
+      this.sources.set(key, { open: 0, upgrades: { credit: UPGRADE_BURST - 1, at: now }, guests: { credit: GUEST_BURST, at: now } });
     }
-    if (source.open >= MAX_PER_SOURCE || !spend(source.upgrades, UPGRADE_BURST, UPGRADE_PER_MINUTE, now)) return 429;
     return 0;
   }
 
@@ -61,6 +66,8 @@ export class Admission {
   }
 
   guest(key) {
-    return spend(this.sources.get(key).guests, GUEST_BURST, GUEST_PER_MINUTE, this.now());
+    const now = this.now();
+    return spend(this.sources.get(key).guests, GUEST_BURST, GUEST_PER_MINUTE, now)
+      && spend(this.guests, TOTAL_GUEST_BURST, TOTAL_GUESTS_PER_MINUTE, now);
   }
 }

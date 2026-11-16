@@ -5,7 +5,7 @@
 
 ## 日常上線
 
-在自己電腦、專案資料夾裡（需要 `gcloud` 已登入）：
+在自己電腦、專案資料夾裡（需要 `gcloud` 已登入且有 IAP TCP 轉送權限）：
 
 ```bash
 bash deploy/push.sh                  # 網頁＋伺服器（伺服器會重開，房裡的人斷線重連；錢、船、魚等進度存在檔案裡不會掉）
@@ -45,14 +45,17 @@ bash deploy/stats.sh                            # 玩家活動統計：每日人
 | 服務 `stormcast` | 開機自動啟動、當掉自動重開（`deploy/stormcast.service`），程式在 `/opt/stormcast`，使用者 `stormcast`（沒有管理權限） |
 | `/var/lib/stormcast` | 今日紀錄、玩家存檔（`profiles.json`、`daily.json`），重開不會掉 |
 | 防火牆規則 `stormcast-allow-web` | TCP 80、443 |
+| 防火牆規則 `valheim-allow-iap-ssh`、`valheim-deny-direct-admin` | 此 VM 的 SSH 只允許來自 Google IAP。封鎖直接連 TCP 22、3389 |
+
+手動管理同一台 VM 時用 `gcloud compute ssh valheim-tw --zone asia-east1-b --tunnel-through-iap`。傳檔使用 `gcloud compute scp` 加相同的 `--zone` 和 `--tunnel-through-iap`。若因防火牆規則無法從 IAP 登入，先在 GCP 查 `valheim-allow-iap-ssh`（優先序 900）是否有效。恢復直連的回復點是停用套用在這台 VM 的 `valheim-deny-direct-admin`（優先序 910）。
 
 改 `Caddyfile` 或 `stormcast.service` 之後要手動放到伺服器：
 
 ```bash
-STAGE="$(gcloud compute ssh valheim-tw --zone asia-east1-b --command 'mktemp -d /tmp/stormcast-config.XXXXXXXXXX')"
+STAGE="$(gcloud compute ssh valheim-tw --zone asia-east1-b --tunnel-through-iap --command 'mktemp -d /tmp/stormcast-config.XXXXXXXXXX')"
 [[ "$STAGE" =~ ^/tmp/stormcast-config\.[A-Za-z0-9]{10}$ ]] &&
-  gcloud compute scp deploy/Caddyfile deploy/stormcast.service "valheim-tw:$STAGE/" --zone asia-east1-b &&
-  gcloud compute ssh valheim-tw --zone asia-east1-b --command "sudo caddy validate --config '$STAGE/Caddyfile' --adapter caddyfile && sudo install -m 644 '$STAGE/Caddyfile' /etc/caddy/Caddyfile && sudo systemctl reload caddy && sudo install -m 644 '$STAGE/stormcast.service' /etc/systemd/system/stormcast.service && sudo systemctl daemon-reload && sudo systemctl restart stormcast && rm -rf -- '$STAGE'"
+  gcloud compute scp deploy/Caddyfile deploy/stormcast.service "valheim-tw:$STAGE/" --zone asia-east1-b --tunnel-through-iap &&
+  gcloud compute ssh valheim-tw --zone asia-east1-b --tunnel-through-iap --command "sudo caddy validate --config '$STAGE/Caddyfile' --adapter caddyfile && sudo install -m 644 '$STAGE/Caddyfile' /etc/caddy/Caddyfile && sudo systemctl reload caddy && sudo install -m 644 '$STAGE/stormcast.service' /etc/systemd/system/stormcast.service && sudo systemctl daemon-reload && sudo systemctl restart stormcast && rm -rf -- '$STAGE'"
 ```
 
 ## 換網域
@@ -60,7 +63,7 @@ STAGE="$(gcloud compute ssh valheim-tw --zone asia-east1-b --command 'mktemp -d 
 目前的 `35-229-248-193.sslip.io` 是把 IP 當網域用的免費服務（IP 一變就失效，所以 GCP 那個外部 IP 要是「靜態」）。買了自己的網域之後：
 
 1. DNS 加一筆 A 記錄指到 `35.229.248.193`。
-2. 改 `deploy/Caddyfile` 第一行、`deploy/stormcast.service` 的 `ORIGINS`、`src/net.js` 的 `PROD_SERVER`。
+2. 改 `deploy/Caddyfile` 的站點網域與 `connect-src`、`deploy/stormcast.service` 的 `ORIGINS`、`src/net.js` 的 `PROD_SERVER`。
 3. 照上面的方式放 Caddyfile 和 service，再 `bash deploy/push.sh` 上線。
 
 ## 在自己電腦上測

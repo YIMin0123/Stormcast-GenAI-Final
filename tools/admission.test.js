@@ -43,16 +43,34 @@ test('sequential upgrades and new visitors have independent budgets that repleni
   close();
 });
 
-test('many sources cannot grow admission state without bound and expired sources free space', () => {
+test('distributed upgrades are bounded and idle sources expire while active ones survive', () => {
   let now = 0;
   const gate = new Admission(() => now);
-  for (let i = 0; i < 8192; i++) assert.equal(gate.upgrade(`2001:db8:${i.toString(16)}::/64`), 0);
-  assert.equal(gate.upgrade('192.0.2.1'), 503);
   const first = '2001:db8:0::/64';
+  assert.equal(gate.upgrade(first), 0);
   const close = gate.opened(first);
-  now = 60000;
+  for (let i = 1; i <= 8192; i++) {
+    assert.equal(gate.upgrade(`2001:db8:${i.toString(16)}::/64`), i < 256 ? 0 : 503);
+  }
+  assert.equal(gate.sources.size, 256);
+  now = 125;
   assert.equal(gate.upgrade('192.0.2.1'), 0);
-  assert.equal(gate.sources.size, 2);
+  assert.equal(gate.upgrade('192.0.2.2'), 503);
+  now = 60000;
+  assert.equal(gate.upgrade('192.0.2.2'), 0);
+  assert.equal(gate.sources.size, 3);
   assert.equal(gate.sources.get(first).open, 1);
   close();
+});
+
+test('rotating IPs do not bypass the shared new visitor budget', () => {
+  let now = 0;
+  const gate = new Admission(() => now);
+  for (let i = 1; i <= 49; i++) {
+    const key = `192.0.2.${i}`;
+    assert.equal(gate.upgrade(key), 0);
+    assert.equal(gate.guest(key), i <= 48);
+  }
+  now = 1000;
+  assert.equal(gate.guest('192.0.2.49'), true);
 });
