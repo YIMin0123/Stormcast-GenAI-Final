@@ -97,7 +97,7 @@ export class BoxWorld {
       const b = this.env.boatOf(d.b);
       if (!b) { m.visible = false; this.env.scene.add(m); return; }
       b.mesh.add(m);
-      m.position.set(d.x, b.spec.deck, d.z);
+      m.position.set(d.x, b.deckLocalY?.(d.x, d.z) ?? b.spec.deck, d.z);
       m.rotation.set(0, -d.yaw, 0);
       return;
     }

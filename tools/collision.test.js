@@ -14,10 +14,14 @@ registerHooks({ resolve(specifier, context, nextResolve) {
   if (context.parentURL?.endsWith('/src/player.js') && specifier === './boat.js') return { url: 'data:text/javascript,export const buildFigure = () => ({})', shortCircuit: true };
   if (context.parentURL?.endsWith('/src/player.js') && specifier === './emotes.js') return { url: 'data:text/javascript,export const ACTION_BY_ID = {}; export const MOOD_TIME = 0', shortCircuit: true };
   if (context.parentURL?.endsWith('/src/boat.js') && specifier === './figure.js') return { url: 'data:text/javascript,export const buildFigure = () => globalThis.__testFigure()', shortCircuit: true };
+  if (context.parentURL?.endsWith('/src/fish.js') && specifier === './fishModel.js') return { url: 'data:text/javascript,export const makeFishModel = () => globalThis.__testFish()', shortCircuit: true };
   return nextResolve(specifier, context);
 } });
+globalThis.__testFish = () => new THREE.Group();
 const { Player } = await import('../src/player.js');
 const { Boat, buildBoatMesh } = await import('../src/boat.js');
+const { FishWorld } = await import('../src/fish.js');
+const { BoxWorld } = await import('../src/fishBox.js');
 
 function testBoat(type, heading = 0) {
   const boat = Object.create(Boat.prototype);
@@ -301,5 +305,69 @@ test('大港每間小屋的門前平台有模型高度，平台外沒有碰撞',
     assert.ok(Math.abs(portFoundation(px, pz, ground) - expected) < 1e-9);
     assert.equal(portWall(px, pz), false);
     assert.equal(portFoundation(...point(0, d / 2 + 1.3), ground), null);
+  }
+});
+
+test('魚與魚箱放在漁船或大漁船艙蓋上時，停在艙蓋頂面而非沉入甲板', () => {
+  for (const type of ['fisher', 'trawler']) {
+    const boat = testBoat(type);
+    boat.mesh = new THREE.Group();
+    const h = boat.spec.hatch;
+    assert.equal(boat.onHatch(h.x, 0), true);
+    assert.equal(boat.onHatch(h.x + h.s / 2 + 0.2, 0), false);
+    assert.ok(Math.abs(boat.deckLocalY(h.x, 0) - (boat.spec.deck + 0.28)) < 1e-9);
+    assert.ok(Math.abs(boat.deckLocalY(h.x + h.s / 2 + 0.2, 0) - boat.spec.deck) < 1e-9);
+
+    const player = { x: h.x - 0.5, z: 0, y: boat.spec.deck, yaw: 0, boat, lx: h.x - 0.5, lz: 0, mesh: new THREE.Group(), carry: false };
+    const env = {
+      boats: [boat], scene: new THREE.Group(), player,
+      ground: () => -30, basketPos: { x: 99, z: 99, y: 0 }, basketR: 0.4,
+      boxes: { each: () => [] }, waveAt: () => 0, splash() {}, toast() {},
+      boatOf: (id) => id === 1 ? boat : null,
+    };
+    const fw = new FishWorld(env);
+
+    // 放下到艙蓋上：停在 spec.deck + 0.28 + thick/2 + 0.02，世界高度亦含 0.28
+    const dropped = fw.spawnHeld('hairtail', 1.2, 1.0, 101, 100);
+    fw.drop();
+    assert.equal(dropped.state, 'boat');
+    assert.ok(boat.onHatch(dropped.lx, dropped.lz));
+    const wp = fw.worldPos(dropped, new THREE.Vector3());
+    assert.ok(Math.abs(dropped.mesh.position.y - (boat.spec.deck + 0.28 + dropped.thick / 2 + 0.02)) < 1e-9);
+    assert.ok(Math.abs(wp.y - (boat.spec.deck + 0.28)) < 1e-9);
+
+    // 高拋落在艙蓋上時於頂面著陸；低飛擦向艙蓋側面時彈回不穿模
+    const thrown = fw.spawnHeld('hairtail', 1.2, 1.0, 102, 100);
+    fw.throwHeld(new THREE.Vector3(h.x, boat.spec.deck + 1.2, 0), new THREE.Vector3(0, 0.5, 0));
+    thrown.lively = 0;
+    for (let i = 0; i < 60 && thrown.fly; i++) fw.update(1 / 60);
+    assert.equal(thrown.fly, null);
+    assert.equal(thrown.state, 'boat');
+    assert.ok(Math.abs(thrown.mesh.position.y - (boat.spec.deck + 0.28 + thrown.thick / 2 + 0.02)) < 1e-9);
+
+    const low = fw.spawnHeld('hairtail', 1.2, 1.0, 103, 100);
+    fw.throwHeld(new THREE.Vector3(h.x - h.s / 2 - 0.15, boat.spec.deck + 0.02, 0), new THREE.Vector3(4, 0, 0));
+    low.lively = 0;
+    fw.update(1 / 20);
+    assert.ok(low.x <= h.x - h.s / 2 || low.fly?.vx < 0, `${type} 低拋應撞艙蓋側面彈開`);
+
+    // 船傾斜滑動時：低甲板上的魚撞到艙蓋邊會停住，不會憑空滑上去；艙蓋上的魚能滑回低甲板
+    boat.normal.set(0.25, Math.sqrt(1 - 0.25 * 0.25), 0);
+    fw.stowDeck(boat, h.x - h.s / 2 - 0.05, 0, 'hairtail', 1.2, 1.0, 104, 100);
+    const slideLow = fw.items.at(-1);
+    for (let i = 0; i < 30; i++) fw.update(1 / 60);
+    assert.equal(boat.onHatch(slideLow.lx, slideLow.lz), false);
+    assert.ok(Math.abs(slideLow.mesh.position.y - (boat.spec.deck + slideLow.thick / 2 + 0.02)) < 1e-9);
+
+    dropped.lively = 0;
+    dropped.lx = h.x + h.s / 2 - 0.05;
+    for (let i = 0; i < 30; i++) fw.update(1 / 60);
+    assert.equal(boat.onHatch(dropped.lx, dropped.lz), false);
+    assert.ok(Math.abs(dropped.mesh.position.y - (boat.spec.deck + dropped.thick / 2 + 0.02)) < 1e-9);
+
+    // 魚箱放在艙蓋上亦應落在 spec.deck + 0.28
+    const bw = new BoxWorld(env);
+    bw.set({ bid: 1, o: 1, k: 'd', b: 1, x: h.x, y: 0, z: 0, yaw: 0, fish: [] });
+    assert.ok(Math.abs(bw.map.get(1).mesh.position.y - (boat.spec.deck + 0.28)) < 1e-9);
   }
 });

@@ -868,12 +868,22 @@ export class Boat {
     return (railRise(S, i / HULL_SEGMENTS) * (1 - f) + railRise(S, (i + 1) / HULL_SEGMENTS) * f) / this.normal.y;
   }
 
+  onHatch(lx, lz) {
+    const h = this.spec.hatch;
+    return !!h && Math.abs(lx - h.x) <= h.s / 2 && Math.abs(lz) <= h.s / 2;
+  }
+
+  // 船身座標 (lx, lz) 處的甲板或艙蓋表面高度（相對於船原點）
+  deckLocalY(lx, lz) {
+    return this.spec.deck + (this.onHatch(lx, lz) ? 0.28 : 0);
+  }
+
   // 艙蓋是甲板上的實體箱蓋；人可以踩上它。
   walkDeckY(x, z) {
-    const y = this.deckY(x, z), h = this.spec.hatch;
-    if (!h) return y;
+    const y = this.deckY(x, z);
+    if (!this.spec.hatch) return y;
     const l = this.toLocal(x, z);
-    return Math.abs(l.x - h.x) <= h.s / 2 && Math.abs(l.z) <= h.s / 2 ? y + 0.28 / this.normal.y : y;
+    return this.onHatch(l.x, l.z) ? y + 0.28 / this.normal.y : y;
   }
 
   blockedLocal(lx, lz) {

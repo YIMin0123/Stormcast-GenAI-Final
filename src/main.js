@@ -1334,7 +1334,7 @@ function putBoxDown(d, water = false) {
     if (s === 'water') { msg = { k: 'w', x, y: 0, z, yaw: player.yaw }; break; }
     if (s.boat) {
       const o = boatOwner(s.boat);
-      if (o === null || Math.abs(s.boat.deckY(x, z) - player.pos.y) > 0.9) continue;
+      if (o === null || Math.abs((s.boat.walkDeckY?.(x, z) ?? s.boat.deckY(x, z)) - player.pos.y) > 0.9) continue;
       msg = { k: 'd', b: o, x: s.lx, y: 0, z: s.lz, yaw: player.yaw - s.boat.heading };
       break;
     }
