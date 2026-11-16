@@ -147,3 +147,15 @@ test('管理網頁：名字裡的 < 不會變成標籤，壞掉的紀錄行會�
     assert.ok(existsSync(join(f.dir, 'activity', 'people.json')) || (f.act.save(), true));
   } finally { f.done(); }
 });
+
+test('測試伺服器（off）不記任何紀錄，報表是空的並標示 off', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'act-off-'));
+  const a = new Activity(dir, { off: true });
+  const p = { token: 'tok', name: '測試', kit: { money: 0 }, dex: {}, room: { name: '1' } };
+  a.begin(p, { ip: '1.2.3.4', dev: { type: 'pc', os: 'Windows', browser: 'Chrome' } }, '1');
+  a.sample(p, 1); a.end(p, 'leave'); a.tick(3); a.save();
+  assert.equal(existsSync(join(dir, 'activity')), false);
+  const r = a.report();
+  assert.equal(r.off, true);
+  assert.equal(r.days.length + r.people.length + r.online.length, 0);
+});

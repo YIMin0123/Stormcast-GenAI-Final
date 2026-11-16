@@ -71,23 +71,27 @@ function gained(before, after) {
 }
 
 export class Activity {
-  constructor(dir, { now = () => Date.now() } = {}) {
+  // off：測試用伺服器（server/dev.js）不記紀錄，只有正式機的玩家才進統計
+  constructor(dir, { now = () => Date.now(), off = false } = {}) {
+    this.off = off;
     this.dir = join(dir, 'activity');
-    mkdirSync(this.dir, { recursive: true });
     this.now = now;
-    this.file = join(this.dir, 'people.json');
+    this.live = new Map();
+    this.lastPop = { n: -1, at: 0 };
     this.people = {};
+    this.dirty = false;
+    if (off) return;
+    mkdirSync(this.dir, { recursive: true });
+    this.file = join(this.dir, 'people.json');
     try {
       const d = JSON.parse(readFileSync(this.file, 'utf8'));
       if (d && typeof d.people === 'object' && d.people) this.people = d.people;
     } catch { /* 沒有檔案、或檔案壞了：從空的開始 */ }
-    this.live = new Map();   // pid → 玩家物件（現在這一場還沒結束的）
-    this.lastPop = { n: -1, at: 0 };
-    this.dirty = false;
     this.log({ t: 'boot' });
   }
 
   log(ev) {
+    if (this.off) return;
     ev.at = this.now();
     try { appendFileSync(join(this.dir, dayOf(ev.at) + '.jsonl'), JSON.stringify(ev) + '\n'); } catch (err) { console.error('[activity] 寫紀錄失敗', err.message); }
   }
@@ -114,7 +118,7 @@ export class Activity {
 
   // 一個人進房（從大廳選了房間）
   begin(p, meta, roomName) {
-    if (!p.token || p.act) return;
+    if (this.off || !p.token || p.act) return;
     const pid = pidOf(p.token), isNew = this._touch(pid, p, meta, true);
     const at = this.now();
     p.act = { pid, at, ip: meta.ip, dev: meta.dev.type, money: p.kit?.money || 0, earned: 0, spent: 0, epoch: undefined, catches0: catchTotal(p.dex), owned0: owned(p) };
@@ -124,7 +128,7 @@ export class Activity {
 
   // 斷線後在寬限內接回來（同一場，不算新場次）
   back(p, meta, roomName) {
-    if (!p.act) return;
+    if (this.off || !p.act) return;
     this._touch(p.act.pid, p, meta, false);
     p.act.ip = meta.ip; p.act.dev = meta.dev.type;
     this.log({ t: 'back', pid: p.act.pid, name: p.name, room: roomName, ip: meta.ip, dev: meta.dev.type });
@@ -160,6 +164,7 @@ export class Activity {
 
   // 每分鐘一次：記線上人數（有變就記，有人在線時至少每 10 分鐘一次），並整理過期的資料
   tick(online) {
+    if (this.off) return;
     const now = this.now();
     if (online !== this.lastPop.n || (online > 0 && now - this.lastPop.at >= POP_BEAT)) {
       this.log({ t: 'pop', n: online });
@@ -178,7 +183,7 @@ export class Activity {
   }
 
   save() {
-    if (!this.dirty) return;
+    if (this.off || !this.dirty) return;
     try {
       writeFileSync(this.file + '.tmp', JSON.stringify({ people: this.people }));
       renameSync(this.file + '.tmp', this.file);
@@ -188,6 +193,7 @@ export class Activity {
 
   // 給管理網頁：把最近 KEEP_DAYS 天的紀錄整理成每日統計、每日時間表、玩家清單、現在在線的人
   report() {
+    if (this.off) return { generatedAt: this.now(), keepDays: KEEP_DAYS, days: [], events: {}, people: [], online: [], off: true };
     const now = this.now(), cut = dayOf(now - KEEP_DAYS * 86400 * 1000);
     let files = [];
     try { files = readdirSync(this.dir).filter((f) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f) && f.slice(0, 10) >= cut).sort(); } catch { /* 沒有就空的 */ }

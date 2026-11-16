@@ -44,7 +44,7 @@ const hub = {
   daily: new Daily(DATA),
   profiles: new Profiles(DATA),
   dexbook: new Dexbooks(DATA),   // 圖鑑：跟家當分開存，刷新不清
-  activity: new Activity(DATA),  // 玩家活動紀錄（進出、換名、裝置、摘要），給管理網頁看，見 activity.js
+  activity: new Activity(DATA, { off: DEV }),  // 玩家活動紀錄（進出、換名、裝置、摘要），給管理網頁看，見 activity.js
   nextId: 1,
   merge: null,            // 正在進行的合併：{ from, to, phase: 'wait' | 'count', left }
   eachRoom(fn) { for (const r of this.rooms.values()) fn(r); },

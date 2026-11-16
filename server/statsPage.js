@@ -26,6 +26,7 @@ input[type=search]{padding:5px 9px;border:1px solid var(--line);border-radius:7p
 </style></head><body><main>
 <h1>Stormcast 玩家活動</h1>
 <div class="sub" id="meta"></div>
+<div id="off" class="warn" hidden>這是測試伺服器，不記錄玩家活動（只統計正式機）。看正式機請在專案資料夾跑 bash deploy/stats.sh。</div>
 <section><h2>現在線上</h2><div id="online"></div></section>
 <section><h2>每日統計（近 <span id="keep"></span> 天，台灣時間；點一天看細節）</h2><div class="wrap"><table id="days"></table></div></section>
 <section><div class="top"><h2 id="dayTitle">當天</h2><div class="chips" id="dayChips"></div></div>
@@ -49,6 +50,7 @@ const NAME={};for(const p of R.people)NAME[p.pid]=p.names.length?p.names[p.names
 function table(node,head,rows,numCols=[]){node.replaceChildren();const th=el('thead'),tr=el('tr');head.forEach((h,i)=>tr.append(el('th',h,numCols.includes(i)?'n':'')));th.append(tr);const tb=el('tbody');rows.forEach((r)=>tb.append(r));node.append(th,tb);return tb}
 function row(cells,numCols=[]){const tr=el('tr');cells.forEach((c,i)=>{const td=el('td');if(numCols.includes(i))td.className='n';if(c instanceof Node)td.append(c);else td.textContent=c;tr.append(td)});return tr}
 
+$('off').hidden=!R.off;
 $('meta').textContent='資料產生於 '+full(R.generatedAt)+'（台灣時間）。重新整理要再跑一次 deploy/stats.sh。';
 $('keep').textContent=R.keepDays;
 
