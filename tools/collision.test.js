@@ -371,3 +371,27 @@ test('魚與魚箱放在漁船或大漁船艙蓋上時，停在艙蓋頂面而�
     assert.ok(Math.abs(bw.map.get(1).mesh.position.y - (boat.spec.deck + 0.28)) < 1e-9);
   }
 });
+
+test('人物站在棧板邊緣與指棧轉角時，站地半徑會撐住而不直接掉進海裡，游在旁邊也不會瞬移上岸', () => {
+  const world = { boats: [], water: () => 0, ground: (wx, wz, under) => under ? -3 : deckY(wx, wz, 0.12) ?? -3 };
+  // 沿母港第一根指棧（z = 6, x = -2..-10, 半寬 0.4 + 凸出木條 0.12 = 0.52）斜切轉角走上指棧板邊
+  const [sx, sz] = toWorld(-1.6, 5.25);
+  const p = new Player(sx, sz, 0);
+  p.animate = () => {}; p.base = p.y = DECK_Y;
+  const [tx, tz] = toWorld(-2.8, 5.55);   // 斜切主棧橋與指棧內角，沿指棧凸出木板邊緣前進
+  const dx = tx - sx, dz = tz - sz;
+  for (let i = 0; i < 25; i++) {
+    p.update(1 / 60, dx, dz, false, false, world);
+    assert.equal(p.onWater, false, '沿指棧轉角與板邊走過去應穩穩站在木板上');
+    assert.ok(Math.abs(p.y - DECK_Y) < 1e-9);
+  }
+  const [ex, ez] = toWorld(-5.0, 5.35), [ox, oz] = toWorld(-5.0, 4.0);   // 站地半徑邊緣（5.48 - 0.13）仍穩站，繼續走出去才會落水
+  const p2 = new Player(ex, ez, 0);
+  p2.animate = () => {}; p2.base = p2.y = DECK_Y;
+  p2.update(1 / 60, 0, 0, false, false, world);
+  assert.equal(p2.onWater, false, '站在木板邊緣半隻腳範圍內不應直接落水');
+  for (let i = 0; i < 30; i++) p2.update(1 / 60, ox - ex, oz - ez, false, false, world);
+  assert.equal(p2.onWater, true, '明顯走出木板外應落水');
+  p2.update(1 / 60, ex - ox, ez - oz, false, false, world);
+  assert.equal(p2.onWater, true, '水裡游近棧板邊不應直接傳送到棧板上');
+});

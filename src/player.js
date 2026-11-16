@@ -15,6 +15,12 @@ const CLIMB_SWIM = 2.7;           // 從水裡攀上船
 const DROP = 0.35;                // 落差比這個大就算踩空，會掉下去
 const HOPS = [0.5, 1.0, 1.5];     // 碼頭與船之間的空隙，一步能跨多遠
 const BODY = 0.32;                // 身體的半徑：牆、柱子、箱子離身體中心這麼近就擋住（不然鏡頭、半個身體會鑽進牆裡）
+const FOOT = 0.18;                // 兩腳站地的半徑：重心略微探出木板邊或轉角時，只要腳底還在可踩表面上就不會馬上踏空落水
+const FOOT_DIRS = [
+  [1, 0], [-1, 0], [0, 1], [0, -1],
+  [Math.SQRT1_2, Math.SQRT1_2], [-Math.SQRT1_2, Math.SQRT1_2],
+  [Math.SQRT1_2, -Math.SQRT1_2], [-Math.SQRT1_2, -Math.SQRT1_2],
+];
 const BODY_SWIM = 0.5;            // 游泳時：人是趴著的、眼睛貼著水面，第一人稱貼到木樁前會整個畫面都是樁，離遠一點
 const SUBMERGE = 0.95;             // 浮在水裡時，腳在水面下多深（只露出頭和肩膀）
 
@@ -89,7 +95,7 @@ export class Player {
       this.base = boat.walkDeckY?.(this.x, this.z) ?? boat.deckY(this.x, this.z);
     } else {
       this.x = x; this.z = z;
-      const s = this._surface(x, z, world);
+      const s = this._pointSurface(x, z, world);
       this.base = s ? s.y : world.ground(x, z);
       this.onWater = !!(s && s.swim);
     }
@@ -101,8 +107,8 @@ export class Player {
     this.mesh.position.copy(this.pos);
   }
 
-  // 船以外的地方：(x, z) 處能待的面。地面比水面下 SUBMERGE 還低就是踩不到底，浮在水裡
-  _surface(x, z, world) {
+  // 船以外的地方：(x, z) 單點處能待的面。地面比水面下 SUBMERGE 還低就是踩不到底，浮在水裡
+  _pointSurface(x, z, world) {
     let g = world.ground(x, z);
     const w = world.water(x, z) - SUBMERGE;
     // 水中或橋面下的人可以從橋底游過；跳得比橋面高時，橋仍是可落腳的面。
@@ -111,6 +117,23 @@ export class Player {
     }
     if (g > 90) return null;
     return g < w ? { boat: null, y: w, swim: true } : { boat: null, y: g, swim: false };
+  }
+
+  // (x, z) 處能待的面：中心點踩不到（水邊或落差）時，檢查腳站半徑 FOOT 內還有沒有可踏的板邊或轉角
+  _surface(x, z, world) {
+    const c = this._pointSurface(x, z, world);
+    if (!c || this.onWater) return c;
+    const feet = this.base + this.h, dropLim = this.h > 0 ? 1.5 : DROP;
+    if (!c.swim && c.y >= feet - DROP) return c;
+    let best = null;
+    for (const [ux, uz] of FOOT_DIRS) {
+      const s = this._pointSurface(x + ux * FOOT, z + uz * FOOT, world);
+      if (!s || s.swim) continue;
+      if (s.y <= feet + (this.h > 0 ? 0.02 : 0.2) && s.y >= feet - dropLim) {
+        if (!best || s.y > best.y) best = s;
+      }
+    }
+    return best ?? c;
   }
 
   // (x, z) 處能待的面；被擋住時回傳 'wall'
@@ -171,8 +194,10 @@ export class Player {
     }
     if (!s.boat && this._bump(tx, tz, dx / len, dz / len, s.swim, world)) return false;
     // 站在碼頭或船上、前面是要掉下去的水：如果只是碼頭和船之間的空隙就一步跨過去；
-    // 跨不過去（前面整片是水）就直接走下去、掉進水裡
-    if (s.swim && !this.onWater && this.h <= 0 && s.y < this.base - DROP) {
+    // 就算站地半徑 FOOT 還踩著板邊，中心已邁向船的那一側時也能順勢跨上船
+    const center = !s.boat && !s.swim && !this.boat && !this.onWater && this.h <= 0 ? this._pointSurface(tx, tz, world) : null;
+    if ((s.swim && !this.onWater && this.h <= 0 && s.y < this.base - DROP)
+      || (center && center.swim && center.y < this.base - DROP)) {
       for (const hop of HOPS) {
         const hx = this.x + (dx / len) * hop, hz = this.z + (dz / len) * hop;
         const t = this._probe(hx, hz, world);

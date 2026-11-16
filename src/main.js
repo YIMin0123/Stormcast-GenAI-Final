@@ -324,6 +324,8 @@ function rockAt(x, z) {
   return top;
 }
 
+const PIER_PLANK_PAD = 0.12;   // 木棧板（尤指指棧）左右凸出的木條寬度（harbor3d 的 skirt + off），讓腳踩範圍跟畫出的木板對齊
+
 // 玩家腳下的高度：棧板、地面，或擋路的牆（回傳很高的值）
 function walkGround(x, z, under = false) {
   const [hx, hz] = toLocal(x, z);   // 商店、牆這些矩形是用港座標寫的
@@ -356,7 +358,7 @@ function walkGround(x, z, under = false) {
   }
   const ly = ladderY(x, z);   // 梯子：落水的人從這裡爬上棧板
   if (ly !== null) return ly;
-  const dy = deckY(x, z);   // 木棧板（岸邊平台、棧橋、指棧、店裡的地板）
+  const dy = deckY(x, z, PIER_PLANK_PAD);   // 木棧板（岸邊平台、棧橋、指棧、店裡的地板）
   if (dy !== null && !under) return dy;   // 棧板比水面高 1 公尺多，游泳的人直接爬不上去（要找梯子），可以從底下游過去
   // 石頭：比地面高不到半公尺的地方（石頭低低的邊緣）直接踩得上去。
   // 再高的地方不能只靠「一步踏不上 0.6 公尺」：石頭表面是連續變高的，一小步一小步會一路走到頂上，所以看玩家的腳（walker）：
@@ -405,7 +407,7 @@ function flyGround(x, z, y) {
   if (g < 90 || y < DECK_Y + 1) return g;
   const [hx, hz] = toLocal(x, z);
   if (BLOCKS.some((r) => inWall(r, hx, hz)) || !SOLIDS.some((c) => c.top === undefined && (x - c.x) ** 2 + (z - c.z) ** 2 < c.r * c.r)) return g;
-  return deckY(x, z) ?? g;
+  return deckY(x, z, PIER_PLANK_PAD) ?? g;
 }
 // 石頭表面在這一點有多陡（高度每公尺變多少）；旁邊沒石頭的方向不算
 function rockSlope(x, z) {
@@ -4607,7 +4609,7 @@ function advance(dt) {
     const stepN = Math.floor(player.phase / Math.PI);
     if (stepN !== lastStep) {
       lastStep = stepN;
-      if (inGame && player.moving && player.h <= 0 && !player.swim && !player.seat) audio.play(player.boat || onDeck(player.x, player.z) ? 'stepWood' : 'stepGrass', keys.shift ? 1 : 0.7);
+      if (inGame && player.moving && player.h <= 0 && !player.swim && !player.seat) audio.play(player.boat || onDeck(player.x, player.z, PIER_PLANK_PAD + 0.18) ? 'stepWood' : 'stepGrass', keys.shift ? 1 : 0.7);
     }
   }
 
@@ -4833,7 +4835,7 @@ function drawFrame(dt, ms = performance.now()) {
   rays.color.setRGB(shared.uSunCol.value.x, shared.uSunCol.value.y, shared.uSunCol.value.z);
   rays.strength = under ? 0 : RAYS * clamp((camera.getWorldDirection(_rf).dot(sunDir) - 0.15) / 0.35, 0, 1) * (1 - 0.8 * gloom);
   // 腳下的暗影
-  const onFloor = !!player.boat || onDeck(player.x, player.z), lift = clamp(1 - (player.h || 0) / 1.2, 0, 1);
+  const onFloor = !!player.boat || onDeck(player.x, player.z, PIER_PLANK_PAD + 0.18), lift = clamp(1 - (player.h || 0) / 1.2, 0, 1);
   blob.visible = onFloor && !player.swim;
   shared.uBlob.value.set(player.x, player.z, onFloor || player.swim ? 0 : lift);
   aoPass.enabled = !under && gfx.ao;   // 水裡一片混濁，不需要；畫質「低」也省掉
