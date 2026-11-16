@@ -4,7 +4,7 @@
 #   bash deploy/stats.sh json      只印原始資料（JSON）
 # 統計頁只在伺服器本機提供（Caddy 把 /admin 擋成 404，外面看不到），所以用 ssh 在伺服器上取回來；
 # 頁面是自給自足的一個 HTML 檔，抓回來之後離線也能開。要更新就再跑一次。
-# 本機開發版直接開 http://localhost:8787/admin/stats 就行。
+# 本機開著 node server/dev.js 的話，開 http://localhost:8787/admin/stats 也一樣看得到正式機的資料（它在背後做同一件事，見 server/prodStats.js）。
 set -euo pipefail
 VM=valheim-tw; ZONE=asia-east1-b
 if [ "${1:-}" = "json" ]; then

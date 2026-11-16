@@ -20,6 +20,7 @@ import { Daily } from './daily.js';
 import { Profiles, epochAt } from './profiles.js';
 import { Dexbooks, loadDex } from './dex.js';
 import { Activity, parseDevice, clientIp } from './activity.js';
+import { prodReport } from './prodStats.js';
 import { statsPage } from './statsPage.js';
 import { SERVER } from '../src/config.js';
 import { refreshRule } from '../src/announce.js';
@@ -191,14 +192,20 @@ function admin(req, res, url) {
   if (req.method === 'GET' && (url.pathname === '/admin/stats' || url.pathname === '/admin/stats.json')) {
     const site = req.headers['sec-fetch-site'];
     if (!hostOk || req.headers.origin || (site && !['none', 'same-origin'].includes(site))) return reply(403, 'forbidden');
-    const report = hub.activity.report();
     const json = url.pathname.endsWith('.json');
-    res.writeHead(200, {
-      'content-type': json ? 'application/json; charset=utf-8' : 'text/html; charset=utf-8',
-      'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
-      'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'",
-    });
-    return void res.end(json ? JSON.stringify(report) : statsPage(report));
+    const send = (report) => {
+      res.writeHead(200, {
+        'content-type': json ? 'application/json; charset=utf-8' : 'text/html; charset=utf-8',
+        'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
+        'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'",
+      });
+      res.end(json ? JSON.stringify(report) : statsPage(report));
+    };
+    // 測試伺服器不記自己的玩家，這頁改向正式機要資料（prodStats.js）；正式機自己回自己的
+    if (DEV) prodReport().then(send, (err) => reply(502, `向正式機要統計失敗：${err.message}
+（要這台電腦的 gcloud 已登入；或改用 bash deploy/stats.sh）`));
+    else send(hub.activity.report());
+    return;
   }
   if (req.headers.origin || req.headers['sec-fetch-site']
     || !['127.0.0.1', 'localhost', '[::1]'].includes(req.headers.host?.replace(/:\d+$/, ''))) return reply(403, 'forbidden');

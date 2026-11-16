@@ -51,7 +51,7 @@ function table(node,head,rows,numCols=[]){node.replaceChildren();const th=el('th
 function row(cells,numCols=[]){const tr=el('tr');cells.forEach((c,i)=>{const td=el('td');if(numCols.includes(i))td.className='n';if(c instanceof Node)td.append(c);else td.textContent=c;tr.append(td)});return tr}
 
 $('off').hidden=!R.off;
-$('meta').textContent='資料產生於 '+full(R.generatedAt)+'（台灣時間）。重新整理要再跑一次 deploy/stats.sh。';
+$('meta').textContent=R.source==='prod'?'資料來自正式機，抓取於 '+full(R.fetchedAt)+'（台灣時間）。重新整理這頁會重新向正式機要（約 5～10 秒，20 秒內用快取）。':'資料產生於 '+full(R.generatedAt)+'（台灣時間）。重新整理要再跑一次 deploy/stats.sh。';
 $('keep').textContent=R.keepDays;
 
 // 現在線上
