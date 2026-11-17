@@ -4139,6 +4139,8 @@ function drawMap(cv, filt, who = null, st = null, viewOpt = null) {
       boat: !myBoat.sinking ? myBoat : null,
     });
   }
+  // 人是白點；名字擠在一起（地圖上 18 像素內）就合成一個「某某 等 N 人」，隊友另外合、用綠字
+  const crowd = [], team = [];
   for (const o of othersView) {
     if (o.boat) { const [bx, by] = P(o.boat.x, o.boat.z); arrow(bx, by, o.boat.heading, 5.5, 3.5, 'rgba(255, 255, 255, 0.75)'); }
     if (!o.here) continue;
@@ -4146,7 +4148,18 @@ function drawMap(cv, filt, who = null, st = null, viewOpt = null) {
     g.beginPath(); g.arc(ox, oy, 3.2, 0, Math.PI * 2);
     g.lineWidth = 2; g.strokeStyle = 'rgba(20, 30, 40, 0.9)'; g.stroke();
     g.fillStyle = '#fff'; g.fill();
-    label(o.name, ox, oy, '#fff', 4);
+    (o.mate ? team : crowd).push({ name: o.name, x: ox, y: oy });
+  }
+  while (crowd.length) {
+    const a = crowd.shift();
+    let n = 1;
+    for (let i = crowd.length - 1; i >= 0; i--) if (Math.hypot(crowd[i].x - a.x, crowd[i].y - a.y) < 18) { crowd.splice(i, 1); n++; }
+    label(n > 1 ? `${a.name} 等 ${n} 人` : a.name, a.x, a.y, '#fff', 4);
+  }
+  while (team.length) {
+    const a = team.shift(), near = [a];
+    for (let i = team.length - 1; i >= 0; i--) if (Math.hypot(team[i].x - a.x, team[i].y - a.y) < 18) near.push(...team.splice(i, 1));
+    label(near.length === 1 ? a.name : near.length === 2 ? `${a.name}、${near[1].name}` : `${a.name} 等 ${near.length} 位隊友`, a.x, a.y, '#7dffad', 3);
   }
   // 自己的魚箱（橘色小方塊）
   if (filt.box) for (const d of boxes.mine(selfId)) {
@@ -4246,6 +4259,7 @@ function drawMap(cv, filt, who = null, st = null, viewOpt = null) {
     const w = g.measureText(l.text).width, h = l.size + 3, gap = 11;
     const tries = l.pri === 5 ? [[l.x - w / 2, l.y]] : [[l.x + gap, l.y], [l.x - gap - w, l.y], [l.x - w / 2, l.y - 15], [l.x - w / 2, l.y + 15]];
     let at = tries.find(([x, y]) => !hit({ x, y: y - h / 2, w, h }));
+    if (!at && l.pri === 4) continue;   // 其他玩家的名字擺不下就不畫（點還在），不往下疊成一長串
     if (!at) { let [x, y] = tries[0]; while (hit({ x, y: y - h / 2, w, h })) y += h; at = [x, y]; }
     taken.push({ x: at[0], y: at[1] - h / 2, w, h });
     g.fillStyle = l.color;

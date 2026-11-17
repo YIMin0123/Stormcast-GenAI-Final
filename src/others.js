@@ -10,21 +10,20 @@ import { disposeTabletMesh } from './tabletLive.js';
 import { restyle } from './figure.js';
 
 // 頭上的名牌：一張小圖，永遠面向鏡頭、遠近都一樣大。左邊是本週稱號的小膠囊（週榜冠軍是金色的），中間名字，右邊等級；
-// 同隊隊友的名牌是綠框，名字前面多一顆星
+// 同隊隊友：名字和等級是綠字（其他跟一般人一樣）
 function nameTag(name, { title = '', gold = false, lv = 0, mate = false } = {}) {
   const cv = document.createElement('canvas'), ctx = cv.getContext('2d');
   const font = '30px "Huninn", "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif';
   const small = 'bold 22px "Huninn", "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif';
-  const label = (mate ? '★ ' : '') + name, lvText = lv > 0 ? `Lv.${lv}` : '';
+  const label = name, lvText = lv > 0 ? `Lv.${lv}` : '';
   ctx.font = small;
   const tw = title ? Math.ceil(ctx.measureText(title).width) + 20 : 0, lw = lvText ? Math.ceil(ctx.measureText(lvText).width) + 8 : 0;
   ctx.font = font;
   const nw = Math.ceil(ctx.measureText(label).width);
   const w = 14 + (tw ? tw + 8 : 0) + nw + (lw ? lw + 6 : 0) + 14, h = 44;
   cv.width = w; cv.height = h;
-  ctx.fillStyle = mate ? 'rgba(206, 246, 214, 0.94)' : 'rgba(191, 232, 248, 0.9)';
+  ctx.fillStyle = 'rgba(191, 232, 248, 0.9)';
   ctx.beginPath(); ctx.roundRect(1.5, 1.5, w - 3, h - 3, (h - 3) / 2); ctx.fill();
-  if (mate) { ctx.strokeStyle = '#27a05a'; ctx.lineWidth = 3; ctx.stroke(); }
   ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
   let x = 14;
   if (title) {
@@ -35,7 +34,7 @@ function nameTag(name, { title = '', gold = false, lv = 0, mate = false } = {}) 
     ctx.fillText(title, x + 6, h / 2 + 1);
     x += tw + 8;
   }
-  ctx.font = font; ctx.fillStyle = mate ? '#156b3a' : '#1d6f9f';
+  ctx.font = font; ctx.fillStyle = mate ? '#16843f' : '#1d6f9f';
   ctx.fillText(label, x, h / 2 + 1);
   x += nw + 6;
   if (lvText) { ctx.font = small; ctx.fillStyle = mate ? '#2a8a52' : '#4a8fb5'; ctx.fillText(lvText, x, h / 2 + 2); }
@@ -103,7 +102,7 @@ export class Others {
     this.env.scene.add(o.tag);
   }
   setTitle(id, title = '', gold = false) { this.setBadge(id, { title, gold }); }
-  // 誰是我的隊友（id 的集合）：名牌換成綠框
+  // 誰是我的隊友（id 的集合）：名牌上的名字換成綠字
   setMates(ids) {
     this.mates = new Set(ids);
     for (const o of this.map.values()) this.setBadge(o.id, { mate: this.mates.has(o.id) });
