@@ -142,6 +142,7 @@ if (ROLE === 'worker') {
     const t0 = Date.now();
     while (sum('joined') < N * 0.98 && Date.now() - t0 < (N / 8 + 30) * 1000) await sleep(1000);
     console.log(`    到了 ${sum('joined')}/${N} 人，開始量 ${HOLD} 秒`);
+    if (sum('joined') < N * 0.98) console.log('    各程序狀態（joined／total／denied／closed／errors）：' + per.map((x) => x && [x.joined, x.total, x.denied, x.closed, x.errors].join('/')).join('  '));
     agg.rtt = []; agg.bytes = 0; agg.msgs = 0;
     const s0 = psSample(), y0 = sysTimes(), tStart = Date.now();
     let hot = 0, maxSys = 0;
