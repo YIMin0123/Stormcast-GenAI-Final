@@ -103,7 +103,7 @@ export function newPlayer(id, ws, token, name, look = 'girl') {
     chatAt: [], msgAt: 0, msgN: 0,
     gone: 0, left: false, suspect: 0,
     actAt: 0,                                   // 客戶端最後一次回報「有在操作」的時間（0 = 沒回報過的舊版客戶端，不判閒置）；見 index.js 的 idleKick
-    owner: true,                                // 進度由這個物件存回檔案（按了離開、被收走之後就不是了，免得蓋掉新進度）
+    owner: true,                               // 進度由這個物件存回檔案（按了離開、被收走之後就不是了，免得蓋掉新進度）
     resetMsg: null,                             // 斷線時遇到定時刷新：接回來時要補講的話
     passengerReturn: null,                      // 斷線期間搭的船被收回：重連時套用回港位置
   };
@@ -151,7 +151,7 @@ export function applyProfile(p, prof) {
   loadBoxes(p, prof.boxes, () => nextUid++);
   loadHatch(p, prof.hatch, () => nextUid++);
   for (const f of Array.isArray(prof.fish) ? prof.fish.slice(0, 200) : []) {
-    if (f && SPECIES[f.id]) p.fish.set(nextUid++, { id: f.id, kg: f.kg, len: f.len, value: f.value, by: f.by && typeof f.by.name === 'string' ? f.by : null });
+    if (f && SPECIES[f.id]) p.fish.set(nextUid++, { id: f.id, kg: f.kg, len: f.len, value: f.value, by: f.by && typeof f.by.name === 'string' ? f.by : null, gift: f.gift && typeof f.gift.name === 'string' ? f.gift : null });
   }
 }
 
@@ -614,18 +614,15 @@ export class Room {
         const haven = m.at === 'haven';
         if (!haven) return this.sellBasket(p);   // 母島：籃子是大家共用的，按一下全部賣掉，每條的錢付給牠的主人
         if (!Array.isArray(m.uids) || !this.near(p, HAVEN_SELL_W.x, HAVEN_SELL_W.z, PORT.sell.reach + 2)) return this.send(p, { t: 'no', msg: '要站在大秤旁邊才能賣' });
-        let total = 0, best = null;
-        const sold = [];
+        const sold = [], fishes = [];
         for (const u of new Set(m.uids.slice(0, 250))) {
           const f = p.fish.get(u);
           if (!f || this.loose.has(u) || inBoxes(p).has(u)) continue;   // 放在外面的魚要先撿起來
-          total += f.value; sold.push(u); p.fish.delete(u);
-          if (!isJunk(f.id) && (!best || f.value > best.value)) best = f;   // 雜物賣得到錢，但不算紀錄
+          sold.push(u); fishes.push(f); p.fish.delete(u);
         }
-        const pay = this.payout(p, total, PORT.bonus);
-        this.send(p, { t: 'sold', total: pay.total, fresh: pay.fresh, uids: sold, kit, at: 'haven' });
-        // 真的賣出去才算紀錄；兩塊榜都是每人只留最好的一條，所以這次賣的裡面只拿最值錢那條去比
-        if (best) this.record(this.creditOf(p, best), best, p.name);
+        // 錢照每條魚的主人付（隊友幫忙拿來賣的付給隊友）；紀錄每人只拿這次最值錢那條去比（payFish 裡算）
+        const pay = this.payFish(p, fishes, PORT.bonus);
+        this.send(p, { t: 'sold', total: pay.total, fresh: pay.fresh, uids: sold, others: pay.others, kit, at: 'haven' });
         return;
       }
 
@@ -655,9 +652,13 @@ export class Room {
         this.loose.delete(m.uid);
         return this.all({ t: 'loose', del: [m.uid] }, p);
       }
-      case 'grab': {   // 撿別人的魚：先到先得，撿到就是你的
+      case 'grab': {   // 拿起別人放在外面的魚：只有魚的主人自己、或主人的隊友能拿（幫忙搬），拿了魚還是主人的（fishOwner）
         const e = this.loose.get(m.uid);
         if (!e || e.owner === p.id) return this.send(p, { t: 'grabNo', uid: m.uid });
+        {
+          const own = this.fishOwner(e.f, this.players.get(e.owner));
+          if (own && own !== p && !this.sameParty(p, own)) return this.send(p, { t: 'grabNo', uid: m.uid, msg: `這是 ${own.name} 的魚，只有他和他的隊友能拿` });
+        }
         const [ex, ez] = this.looseAt(e);
         if (!this.near(p, ex, ez, e.k === 'd' ? SHARE.deckReach : SHARE.reach)) return this.send(p, { t: 'grabNo', uid: m.uid, msg: '太遠了，拿不到' });
         if (p.fish.size >= 200) return this.send(p, { t: 'grabNo', uid: m.uid, msg: '身上的魚太多了' });
@@ -665,7 +666,8 @@ export class Room {
         if (o) o.fish.delete(m.uid);
         this.loose.delete(m.uid);
         p.fish.set(m.uid, e.f);
-        this.send(p, { t: 'grabbed', fish: { uid: m.uid, id: e.f.id, kg: e.f.kg, len: e.f.len, value: e.f.value }, from: o ? o.name : '' });
+        const own = this.fishOwner(e.f, p);
+        this.send(p, { t: 'grabbed', fish: { uid: m.uid, id: e.f.id, kg: e.f.kg, len: e.f.len, value: e.f.value }, from: o ? o.name : '', of: own === p ? '' : own.name });
         if (o) this.send(o, { t: 'taken', uid: m.uid, by: p.name });
         this.all({ t: 'loose', del: [m.uid] }, p);
         return;
@@ -987,7 +989,7 @@ export class Room {
   }
 
   // ---- 放在外面的魚 ----
-  loosePub(e) { return { uid: e.uid, id: e.f.id, kg: e.f.kg, len: e.f.len, value: e.f.value, o: e.owner, k: e.k, x: e.x, y: e.y, z: e.z, yaw: e.yaw, b: e.b }; }
+  loosePub(e) { return { uid: e.uid, id: e.f.id, kg: e.f.kg, len: e.f.len, value: e.f.value, o: e.owner, w: this.fishOwner(e.f, this.players.get(e.owner))?.id ?? e.owner, k: e.k, x: e.x, y: e.y, z: e.z, yaw: e.yaw, b: e.b }; }   // o：誰放的；w：魚是誰的
   looseList() { return [...this.loose.values()].map((e) => this.loosePub(e)); }
   removeDeckFish(boatOwner) {
     const del = [], byOwner = new Map();
@@ -1020,29 +1022,56 @@ export class Room {
     for (const [o, uids] of byOwner) this.send(o, { t: 'expired', uids });
     if (del.length) this.all({ t: 'loose', del });
   }
-  // 母島的籃子：按下按鈕，籃子裡的魚全部賣掉，每條的錢付給牠現在的主人（按的人只是幫忙按）
+  // 一條魚是誰的：釣到的人（f.by）；送過人的魚（f.gift）是最後收下的人的。誰拿著、誰放進籃子、誰按賣出都不算
+  //（隊友只能幫忙拿，見 grab）。那個人不在這間房了（離線、換房）才算現在拿著的人（holder）的
+  fishOwner(f, holder) {
+    const who = f.gift || f.by;
+    if (who) for (const o of this.players.values()) if (o.token === who.key && !o.left) return o;
+    return holder;
+  }
+  // 一批魚（大港大秤、整箱賣）賣掉的錢照魚的主人分開付：p 自己的照 payout 付給 p 並回傳；
+  // 隊友幫忙拿去賣的那幾條付給主人（各自照 payout 算加成與分紅），送 paidFor 告訴他
+  payFish(p, list, port = 0) {
+    const by = new Map();
+    for (const f of list) {
+      const o = this.fishOwner(f, p) || p;
+      const r = by.get(o) ?? by.set(o, { total: 0, n: 0, best: null }).get(o);
+      r.total += f.value; r.n++;
+      if (!isJunk(f.id) && (!r.best || f.value > r.best.value)) r.best = f;   // 雜物賣得到錢，但不算紀錄
+    }
+    let mine = { total: 0, fresh: 0 }, others = 0;
+    for (const [o, r] of by) {
+      const got = this.payout(o, r.total, port);
+      if (o === p) mine = got;
+      else { others += r.n; this.send(o, { t: 'paidFor', from: p.name, n: r.n, total: got.total, kit: o.kit }); }
+      if (r.best) this.record(this.creditOf(o, r.best), r.best, o.name);
+    }
+    return { ...mine, others };
+  }
+  // 母島的籃子：按下按鈕，籃子裡的魚全部賣掉，每條的錢付給牠的主人（fishOwner；按的人只是幫忙按）
   sellBasket(p) {
     if (!this.near(p, SELL_W.button.x, SELL_W.button.z, SELL_REACH)) return this.send(p, { t: 'no', msg: '要站在籃子旁邊才能賣' });
     const list = [...this.loose.values()].filter((e) => e.k === 'b');
     if (!list.length) return this.send(p, { t: 'no', msg: '籃子是空的' });
-    const pay = new Map();   // 主人 → { total, uids, best }
+    const res = new Map();   // 玩家 → { total 拿到的錢, uids 他放在籃子裡被賣掉的魚, best 算紀錄的那條, n 他拿到錢的條數 }
+    const of = (o) => res.get(o) ?? res.set(o, { total: 0, uids: [], best: null, n: 0 }).get(o);
     for (const e of list) {
       this.loose.delete(e.uid);
-      const o = this.players.get(e.owner);
-      if (!o) continue;   // 主人已經走了：魚賣掉，錢沒人收
-      o.fish.delete(e.uid);
-      const r = pay.get(o) ?? { total: 0, uids: [], best: null };
-      r.total += e.f.value; r.uids.push(e.uid);
+      const holder = this.players.get(e.owner);
+      if (holder) { holder.fish.delete(e.uid); of(holder).uids.push(e.uid); }
+      const to = this.fishOwner(e.f, holder);
+      if (!to) continue;   // 釣到的人和放的人都不在了：魚賣掉，錢沒人收
+      const r = of(to);
+      r.total += e.f.value; r.n++;
       if (!isJunk(e.f.id) && (!r.best || e.f.value > r.best.value)) r.best = e.f;   // 雜物賣得到錢，但不算紀錄
-      pay.set(o, r);
     }
     this.all({ t: 'loose', del: list.map((e) => e.uid) });
-    for (const [o, r] of pay) {
-      const got = this.payout(o, r.total, 0);
-      this.send(o, { t: 'sold', total: got.total, fresh: got.fresh, uids: r.uids, kit: o.kit, by: o === p ? undefined : p.name });
+    for (const [o, r] of res) {
+      const got = r.total > 0 ? this.payout(o, r.total, 0) : { total: 0, fresh: 0 };
+      this.send(o, { t: 'sold', total: got.total, fresh: got.fresh, uids: r.uids, n: r.n, kit: o.kit, by: o === p ? undefined : p.name });
       if (r.best) this.record(this.creditOf(o, r.best), r.best, o.name);
     }
-    if (!pay.has(p)) this.send(p, { t: 'sold', total: 0, uids: [], kit: p.kit, helped: true });
+    if (!res.has(p)) this.send(p, { t: 'sold', total: 0, uids: [], kit: p.kit, helped: true });
   }
   // 這條魚的紀錄算誰的：值錢的算釣到的人，其他算賣的人
   creditOf(seller, f) {

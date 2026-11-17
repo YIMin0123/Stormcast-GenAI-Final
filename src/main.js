@@ -2821,7 +2821,8 @@ function interact() {
     }
     case 'item':
       if (a.item.remote) {
-        // 別人的魚：先問伺服器（同時有人去撿的話，先到的拿到），回話見 grabbed / grabNo
+        // 別人放在外面的魚：只有魚的主人、或主人的隊友能拿（伺服器也會擋）。先問伺服器（同時有人去拿，先到的拿到），回話見 grabbed / grabNo
+        if (!canGrab(a.item)) return toast(`這是 ${others.map.get(a.item.mine)?.name ?? '別人'} 的魚，只有他和他的隊友能拿`);
         if (!net.online) return toast('連線中斷，等接回去再撿');
         if (grabbing) return;
         grabbing = a.item.uid;
@@ -2862,7 +2863,7 @@ function interact() {
       return net.send({ t: 'light', zone: a.sw.zone, on });
     }
     case 'button': {
-      // 賣魚：籃子是大家共用的，按一下整籃賣掉，每條的錢由伺服器付給牠的主人（見下面的 sold）
+      // 賣魚：籃子是大家共用的，按一下整籃賣掉，每條的錢由伺服器付給釣到牠的人（送過人的付給收下的人；見下面的 sold）
       if (!fish.basket.length) return;
       if (!net.online) return toast('連線中斷，等接回去再賣');
       return net.send({ t: 'sell' });
@@ -2967,7 +2968,7 @@ function updatePrompt() {
         : towOfId(net.id) ? '按 E 解開拖纜' : `按 E 請 ${ab.owner.name} 拖行你的${myBoat.spec.name}（要停在他船尾 ${TOW.reach} 公尺內）`;
     }
     else if (kind === 'bollard') { const who = a.moor.mate ? ` ${a.moor.boat.owner.name} 的` : ''; text = a.moor.tied ? `按 E 解開${who}${a.moor.boat.spec.name}的纜繩` : `按 E 把${who}${a.moor.boat.spec.name}的纜繩綁在這根樁上`; }
-    else if (kind === 'item') text = a.item.remote ? `按 E 撿起${a.item.sp.name}（${others.map.get(a.item.owner)?.name ?? '沒人'}的，撿到就是你的）` : `按 E 拿起${a.item.can ? itemLabel(a.item) : a.item.sp.name}`;
+    else if (kind === 'item') text = a.item.remote ? remoteFishText(a.item) : `按 E 拿起${a.item.can ? itemLabel(a.item) : a.item.sp.name}`;
     else if (kind === 'fbox') {
       const d = a.box, n = d.fish.length;
       text = d.o === net.id ? `按 E 抱起魚箱（${n ? `${n} 條、${boxes.kg(d).toFixed(1)} 公斤` : '空的'}）`
@@ -5101,6 +5102,14 @@ net.on('loose', (m) => {
   for (const d of m.add ?? []) if (d.o !== net.id) fish.addRemote(d);
   refreshBoard();
 });
+// 別人放在外面的魚（remote）：mine 是魚的主人（釣到的人／收下的人）。自己的、隊友的才能拿；主人走了（不在房裡）誰都能拿
+const canGrab = (it) => it.mine === net.id || party.has(it.mine) || !others.map.has(it.mine);
+function remoteFishText(it) {
+  if (it.mine === net.id) return `按 E 拿回你的${it.sp.name}`;
+  const who = others.map.get(it.mine)?.name;
+  if (!who) return `按 E 撿起${it.sp.name}`;
+  return canGrab(it) ? `按 E 幫 ${who} 拿起${it.sp.name}（還是他的，賣掉的錢給他）` : `${who} 的${it.sp.name}（只有他和他的隊友能拿）`;
+}
 net.on('grabbed', (m) => {
   grabbing = 0;
   const f = m.fish;
@@ -5109,7 +5118,7 @@ net.on('grabbed', (m) => {
   audio.play('pick');
   if (fish.held) fish.stowDeck(myBoat, 0, 0, f.id, f.kg, f.len, f.uid, f.value);   // 手上剛好有東西（按下去之後才拿起來的）：放到自己船上
   else fish.spawnHeld(f.id, f.kg, f.len, f.uid, f.value).lively = 0;
-  toast(`撿到${m.from ? ` ${m.from} 的` : ''}魚，現在是你的了`);
+  toast(m.of ? `幫 ${m.of} 拿著他的魚（賣掉的錢還是給他）` : `拿起${m.from ? ` ${m.from} 放的` : ''}魚`);
 });
 net.on('grabNo', (m) => {
   grabbing = 0;
@@ -5432,24 +5441,35 @@ net.on('caught', (m) => {
 
 // ---- 買賣、換船 ----
 const freshText = (m) => (m.fresh > 0 ? `・急凍魚艙多 ${Math.round(m.fresh * 100)}%` : '');   // 自己或隊友開著遠洋大漁船
+const othersText = (m) => (m.others ? `（其中 ${m.others} 條是隊友的，錢給了他們）` : '');
+// 隊友幫忙把我的魚拿去大港大秤賣、或裝在他的箱子裡整箱賣：錢付給我
+net.on('paidFor', (m) => {
+  applyKit(m.kit);
+  audio.play('coin');
+  toast(`${m.from} 幫你賣了 ${m.n} 條魚，得到 ${cash(m.total)}`);
+});
 net.on('sold', (m) => {
   if (m.box) {   // 抱著魚箱整箱賣（箱子空了由 box 訊息重畫）
     applyKit(m.kit);
-    if (m.total > 0) { audio.play('coin'); toast(`整箱 ${m.uids.length} 條賣出${m.at === 'haven' ? `（大港多 ${Math.round(PORT.bonus * 100)}%）` : ''}${freshText(m)}，得到 ${cash(m.total)}`); }
+    if (m.total > 0) { audio.play('coin'); toast(`整箱 ${m.uids.length} 條賣出${m.at === 'haven' ? `（大港多 ${Math.round(PORT.bonus * 100)}%）` : ''}${freshText(m)}，得到 ${cash(m.total)}${othersText(m)}`); }
+    else if (m.others) toast(`整箱 ${m.uids.length} 條賣出，都是隊友的魚，錢給了他們`);
     return;
   }
   if (m.at === 'haven') {
     // 成交回覆抵達時，魚可能已從手上放到地面或甲板。
     for (const uid of m.uids) fish.removeOwn(uid);
     applyKit(m.kit);
-    if (m.total > 0) { audio.play('coin'); toast(`大港收購價（多 ${Math.round(PORT.bonus * 100)}%${freshText(m)}）：賣出 ${m.uids.length} 條，得到 ${cash(m.total)}`); }
+    if (m.total > 0) { audio.play('coin'); toast(`大港收購價（多 ${Math.round(PORT.bonus * 100)}%${freshText(m)}）：賣出 ${m.uids.length} 條，得到 ${cash(m.total)}${othersText(m)}`); }
+    else if (m.others) toast(`賣出 ${m.uids.length} 條，都是隊友的魚，錢給了他們`);
     return;
   }
-  fish.sell(m.uids);   // 籃子裡自己的魚賣掉了（別人的由 loose 拿掉）
+  fish.sell(m.uids);   // 自己放進籃子的魚賣掉了（別人的由 loose 拿掉）
   applyKit(m.kit);
   refreshBoard();
-  if (m.total > 0) { audio.play('coin'); toast(m.by ? `${m.by} 按了賣出：你籃子裡的魚得到 ${cash(m.total)}` : `賣出${freshText(m)}，得到 ${cash(m.total)}`); }
-  else if (m.helped) toast('幫大家把籃子裡的魚賣掉了（錢付給每條魚的主人）');
+  // 籃子的錢付給釣到那條魚的人（送過人的付給收下的人），不管是誰放進去、誰按的
+  if (m.total > 0) { audio.play('coin'); toast(m.by ? `${m.by} 按了賣出：你釣的 ${m.n} 條魚賣出，得到 ${cash(m.total)}` : `賣出 ${m.n} 條${freshText(m)}，得到 ${cash(m.total)}`); }
+  else if (m.uids.length) toast(`你放進籃子的 ${m.uids.length} 條魚賣掉了，錢歸釣到牠們的人`);
+  else if (m.helped) toast('幫大家把籃子裡的魚賣掉了（錢付給釣到每條魚的人）');
 });
 net.on('chestGot', (m) => {
   applyKit(m.kit);

@@ -14,6 +14,13 @@ let nextBid = 1, nextOid = 1;
 const nums = (a) => a.every((v) => typeof v === 'number' && Number.isFinite(v));
 const dist = (ax, az, bx, bz) => Math.hypot(ax - bx, az - bz);
 const fishPub = (uid, f) => ({ uid, id: f.id, kg: f.kg, len: f.len, value: f.value });
+// 送出去的魚記下收的人（gift）：之後賣掉的錢付給他，不再付給釣到的人（見 room.js 的 fishOwner）。
+// 只有魚的主人送才算數；隊友幫忙拿著的魚轉手給別人，魚還是原本主人的
+const gifted = (f, to, from) => {
+  if (!f) return;
+  const w = f.gift || f.by;
+  if (!w || w.key === from.token) f.gift = { pid: to.id, key: to.token, name: to.name };
+};
 
 // ---- 箱子本身 ----
 export function boxPub(room, bx) {
@@ -137,7 +144,7 @@ export function loadBoxes(p, list, uid) {
     for (const f of Array.isArray(fishes) ? fishes.slice(0, 200) : []) {
       if (!f || !SPECIES[f.id]) continue;
       const u = uid();
-      p.fish.set(u, { id: f.id, kg: f.kg, len: f.len, value: f.value, by: f.by && typeof f.by.name === 'string' ? f.by : null });
+      p.fish.set(u, { id: f.id, kg: f.kg, len: f.len, value: f.value, by: f.by && typeof f.by.name === 'string' ? f.by : null, gift: f.gift && typeof f.gift.name === 'string' ? f.gift : null });
       uids.push(u);
     }
     p.savedBoxes.push(uids);
@@ -149,7 +156,7 @@ export function loadHatch(p, list, uid) {
   for (const f of Array.isArray(list) ? list.slice(0, 200) : []) {
     if (!f || !SPECIES[f.id]) continue;
     const u = uid();
-    p.fish.set(u, { id: f.id, kg: f.kg, len: f.len, value: f.value, by: f.by && typeof f.by.name === 'string' ? f.by : null });
+    p.fish.set(u, { id: f.id, kg: f.kg, len: f.len, value: f.value, by: f.by && typeof f.by.name === 'string' ? f.by : null, gift: f.gift && typeof f.gift.name === 'string' ? f.gift : null });
     p.savedHatch.push(u);
   }
 }
@@ -187,19 +194,17 @@ export function sellBox(room, p, m) {
   const haven = m.at === 'haven', spot = haven ? HAVEN_SELL_W : SELL_W.basket;
   if (!room.near(p, spot.x, spot.z, haven ? PORT.sell.reach + 2 : SELL_REACH + 1)) return room.send(p, { t: 'no', msg: haven ? '要站在大秤旁邊才能賣' : '要站在籃子旁邊才能賣' });
   if (!bx.fish.length) return room.send(p, { t: 'no', msg: '箱子是空的' });
-  let total = 0, best = null;
-  const uids = bx.fish;
+  const uids = bx.fish, fishes = [];
   for (const u of uids) {
     const f = p.fish.get(u);
     if (!f) continue;
-    total += f.value; p.fish.delete(u);
-    if (!isJunk(f.id) && (!best || f.value > best.value)) best = f;
+    fishes.push(f); p.fish.delete(u);
   }
   bx.fish = [];
-  const pay = room.payout(p, total, haven ? PORT.bonus : 0);   // 大港多 15%、急凍魚艙、船隊分紅、經驗都在 payout 算
-  room.send(p, { t: 'sold', total: pay.total, fresh: pay.fresh, uids, kit: p.kit, box: bx.bid, at: haven ? 'haven' : undefined });
+  // 錢照每條魚的主人付（隊友的魚付給隊友）；大港多 15%、急凍魚艙、船隊分紅、經驗都在 payout 算，紀錄在 payFish 裡比
+  const pay = room.payFish(p, fishes, haven ? PORT.bonus : 0);
+  room.send(p, { t: 'sold', total: pay.total, fresh: pay.fresh, uids, others: pay.others, kit: p.kit, box: bx.bid, at: haven ? 'haven' : undefined });
   show(room, bx);
-  if (best) room.record(room.creditOf(p, best), best, p.name);
 }
 
 // ---- 買箱子：最多 FISHBOX.max 個；滿了要先答應清掉最舊的那個（m.replace） ----
@@ -285,7 +290,7 @@ export function onBoxMsg(room, p, m, now) {
       if (bx.hatch && !bx.open) return no('艙蓋關著，先打開');
       const fit = boxFit(bx.fish.map((u) => o.fish.get(u)).filter(Boolean), f.id, f.len, spec);
       if (fit) return no(fit === 'long' ? `這條${SPECIES[f.id].name}太大，放不進${what}` : `${what}滿了`);
-      if (o !== p) { p.fish.delete(m.uid); o.fish.set(m.uid, f); }
+      if (o !== p) { p.fish.delete(m.uid); o.fish.set(m.uid, f); gifted(f, o, p); }   // 放進別人的箱子＝送給他（p 自己的魚才算）
       bx.fish.push(m.uid);
       room.send(p, { t: 'boxedIn', uid: m.uid, bid: bx.bid, to: o === p ? '' : o.name });
       if (o !== p) room.send(o, { t: 'boxGift', from: p.name, id: f.id });
@@ -363,13 +368,13 @@ export function onBoxMsg(room, p, m, now) {
       if (why) { room.send(p, { t: 'no', msg: why }); room.send(g, { t: 'giveNo', msg: why }); return true; }
       if (off.uid) {
         const f = g.fish.get(off.uid);
-        g.fish.delete(off.uid); p.fish.set(off.uid, f);
+        g.fish.delete(off.uid); p.fish.set(off.uid, f); gifted(f, p, g);
         room.send(g, { t: 'gave', uid: off.uid, to: p.name });
         room.send(p, { t: 'gift', fish: fishPub(off.uid, f), from: g.name });
         return true;
       }
       const bx = g.boxes.find((o) => o.bid === off.bid);
-      for (const u of bx.fish) { const f = g.fish.get(u); g.fish.delete(u); if (f) p.fish.set(u, f); }
+      for (const u of bx.fish) { const f = g.fish.get(u); g.fish.delete(u); if (f) { p.fish.set(u, f); gifted(f, p, g); } }
       g.boxes = g.boxes.filter((o) => o !== bx);
       const was = heldBox(p);
       if (was) setDown(room, p, was);

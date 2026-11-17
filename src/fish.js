@@ -309,13 +309,13 @@ export class FishWorld {
   }
 
   // ---- 別人放在外面的魚（伺服器傳來的）----
-  // d：{ uid, id, kg, len, value, o 主人, k 放在哪 g 地上／d 甲板／b 籃子, x, y, z, yaw, b 誰的船 }
+  // d：{ uid, id, kg, len, value, o 誰放的, w 魚是誰的（釣到的人／收下的人）, k 放在哪 g 地上／d 甲板／b 籃子, x, y, z, yaw, b 誰的船 }
   addRemote(d) {
     this.removeRemote(d.uid);
     const sp = SPECIES[d.id];
     if (!sp) return;
     const it = {
-      uid: d.uid, id: d.id, sp, kg: d.kg, value: d.value, len: d.len, thick: d.len * sp.w, remote: true, owner: d.o,
+      uid: d.uid, id: d.id, sp, kg: d.kg, value: d.value, len: d.len, thick: d.len * sp.w, remote: true, owner: d.o, mine: d.w ?? d.o,
       mesh: makeFishMesh(sp, d.len), state: 'ground', boat: null,
       x: d.x, z: d.z, y: d.y, lx: 0, lz: 0, yaw: d.yaw, vx: 0, vz: 0, lively: 0, flopT: 1e9, hop: null, wash: 0, t: 0,
     };
