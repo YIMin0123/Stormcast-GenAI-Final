@@ -274,7 +274,7 @@ export class Room {
     p.room = this;
     this.players.set(p.id, p);
     let moved = null;
-    if (!resume) { p.party = 0; if (p.boat) p.boat.pilot = 0; }   // 船隊只存在原本那間房：新進來、被併過來的人都不在隊裡，船也不再由（已經不是隊友的）人開
+    if (!resume) { p.party = 0; p.props = []; if (p.boat) p.boat.pilot = 0; }   // 船隊只存在原本那間房：新進來、被併過來的人都不在隊裡，船也不再由（已經不是隊友的）人開
     if (fresh) { this.allocBerth(p); this.parkBoat(p); homeBoxes(this, p); } else if (!resume) {
       // 合併過來的：原本那一格在這間房沒人用就照舊；被佔了就換一格，船本來停在格子裡的話跟著移過去（開在外面的不動）
       const old = p.berth, type = p.kit.active, was = old >= 0 ? berthPose(BERTHS[old], type) : null;

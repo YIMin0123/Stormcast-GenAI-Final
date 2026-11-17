@@ -23,6 +23,7 @@ export function leaveParty(room, p, why = '離開了船隊') {
   if (!p.party) return;
   const id = p.party;
   p.party = 0;
+  p.props = [];           // 放在外面的桶子不再給（已經不是隊友的）人看；畫面那邊退隊時自己會收掉
   releaseHelm(room, p);   // 正在幫隊友開船：放手
   for (const o of room.players.values()) if (o.boat && o.boat.pilot && !room.sameParty(o, room.players.get(o.boat.pilot) || {})) endPilot(room, o);   // 他的船正被（已經不是隊友的）人開著：收回來
   const rest = [...room.players.values()].filter((o) => o.party === id);
@@ -95,6 +96,23 @@ export function dropLinks(room, p) {
   towCut(room, p, `${p.name} 離線了，拖纜解開`);
   releaseHelm(room, p);
   if (p.boat && p.boat.pilot) endPilot(room, p);
+  if (p.props && p.props.length) { p.props = []; tellProps(room, p); }
+}
+
+// ---- 隊友看得到彼此放在甲板、地上的油桶和誘魚桶（沒組隊的人看不到） ----
+// p.props：[[種類 0 油桶／1 誘魚桶, 在誰的船上（0 = 地上）, a, b, c]]；在船上 a、c 是船身座標，在地上 a、b、c 是世界座標 x、y、z
+// p 剛接回來（或剛進隊）：把在線隊友的桶子補送給他
+export function tellMateProps(room, p) {
+  for (const o of mates(room, p)) if (o.props && o.props.length) tellProps(room, o, [p]);
+}
+export function tellProps(room, p, to = mates(room, p)) {
+  for (const o of to) room.send(o, { t: 'props', id: p.id, list: p.props || [] });
+}
+function validProps(room, list) {
+  if (!Array.isArray(list) || list.length > PARTY.propsMax) return false;
+  return list.every((e) => Array.isArray(e) && e.length === 5 && (e[0] === 0 || e[0] === 1) && Number.isInteger(e[1]) && e[1] >= 0
+    && [e[2], e[3], e[4]].every((v) => Number.isFinite(v) && Math.abs(v) < 1e5)
+    && (e[1] === 0 || (!!room.players.get(e[1])?.boat && !room.players.get(e[1]).boat.sunk && Math.abs(e[2]) < 20 && Math.abs(e[4]) < 8)));
 }
 
 function askNew(room, kind, from, to, sec, data = {}) {
@@ -155,6 +173,7 @@ export function onPartyMsg(room, p, m, now) {
         p.party = f.party;
         tellParty(room);
         for (const o of partyOf(room, p)) room.send(o, { t: 'sys', text: o === p ? `你加入了 ${f.name} 的船隊` : `${p.name} 加入了船隊`, kind: 'join' });
+        for (const o of partyOf(room, p)) if (o !== p && o.props && o.props.length) tellProps(room, o, [p]);   // 原本隊員放在外面的桶子：讓新來的也看得到
         return true;
       }
       if (a.kind === 'tow') {
@@ -167,6 +186,41 @@ export function onPartyMsg(room, p, m, now) {
         room.all({ t: 'tow', tugId: tug.id, towId: tow.id });
         return true;
       }
+      return true;
+    }
+    case 'props': {   // 我放在甲板、地上的油桶和誘魚桶在哪：只轉給同隊隊友看
+      if (!validProps(room, m.list)) return true;
+      const next = p.party ? m.list : [];
+      if (JSON.stringify(next) === JSON.stringify(p.props || [])) return true;   // 跟上一份一樣：不用再吵隊友（他們每收一次就要重擺一次模型）
+      if (now - (p.propsAt || 0) < PARTY.propsCd * 1000) return true;            // 太密：這一則不收（畫面端每隔幾秒會整份重送，不會一直錯下去）
+      p.propsAt = now;
+      p.props = next;
+      tellProps(room, p);
+      return true;
+    }
+    case 'boatCtl': {
+      // 幫同隊隊友動他的船：開關船燈、集魚燈（人要在那艘船上），綁、解岸上的纜繩（人要在岸上、船旁邊）。
+      // 船是船主（或正在幫他開的副駕）那邊算的，所以只是轉過去請那邊照做
+      const owner = m.forId === p.id ? p : room.players.get(m.forId);
+      if (!owner || !owner.boat || owner.boat.sunk || !['lamp', 'fishLamp', 'moor', 'unmoor'].includes(m.what)) return true;
+      const light = m.what === 'lamp' || m.what === 'fishLamp';
+      // 自己的船：只有正被隊友開著的時候才需要轉（船在副駕那邊算），而且只有燈
+      if (owner === p ? !(light && owner.boat.pilot) : !room.sameParty(p, owner)) return owner === p ? true : no('只有同隊隊友可以動這艘船');
+      if (now - (p.ctlAt || 0) < 250) return true;
+      if (light) {
+        if (!p.pos || p.pos[8] !== owner.id) return no('要站在那艘船上');
+      } else {
+        if (owner.ws && owner.pos && (owner.pos[4] & 32)) return no(`${owner.name} 正在掌舵`);
+        if (!p.pos || p.pos[8]) return no('要下船站在繫纜樁旁邊');
+        if (dist(p.pos[0], p.pos[2], owner.boat.s[0], owner.boat.s[1]) > BOAT_TYPES[owner.boat.type].len / 2 + 14) return no('離那艘船太遠了');
+        if (m.what === 'moor' && (!Number.isInteger(m.i) || m.i < 0 || m.i > 999)) return true;
+        if (owner.boat.pilot) return no('有隊友正在開這艘船');
+      }
+      const sim = owner.boat.pilot ? room.players.get(owner.boat.pilot) : owner;
+      if (!sim || !sim.ws) return no(`${owner.name} 不在線上`);
+      if (sim === p) return true;   // 自己就是正在開這艘船的人：自己那邊直接動就好
+      p.ctlAt = now;
+      room.send(sim, { t: 'boatCtl', forId: owner.id, what: m.what, i: m.what === 'moor' ? m.i : -1, by: p.name });
       return true;
     }
     case 'helm': {

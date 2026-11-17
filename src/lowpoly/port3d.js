@@ -203,7 +203,7 @@ export function buildPort({ P, r, mat, group, groundAt, bedAt, phone = false, sh
     for (const x of [M.x0 + 3, M.x1 - 3]) { beam(fb, V3(x, wy + 0.3, (M.z0 + M.z1) / 2 + 1.5), V3(x, wy - 0.4, (M.z0 + M.z1) / 2 + 1.5), 0.03, 0.03, Q.dark); out.lamps.push([x, wy - 0.5, (M.z0 + M.z1) / 2 + 1.5]); }
   }
 
-  // ---- 東岸高台的海神祈福祭壇：圓石台（外圈一階石階）、鳥居、兩座常夜石燈籠、供桌、祈福銅鐘 ----
+  // ---- 東岸高台的海神祈福祭壇：圓石台（外圈一階石階）、鳥居、兩座常夜石燈籠、供桌 ----
   {
     const A = PORT.altar, y = G + A.lift, T = A.table, red = withSurf(new THREE.Color('#b8322a'), SURF.wood);
     cyl(A.x, A.z, A.r + A.step, A.r + A.step + 0.15, G - 2.6, G + A.lift / 2, P.stone, 14);
@@ -227,12 +227,6 @@ export function buildPort({ P, r, mat, group, groundAt, bedAt, phone = false, sh
       for (const [ux, uz, ox, oz] of [[1, 0, 0, 0.205], [1, 0, 0, -0.205], [0, 1, 0.205, 0], [0, 1, -0.205, 0]]) glows.push({ p: V3(lx + ox, y + 1.31, lz + oz), ux, uz, w: 0.24, h: 0.24 });
       out.lamps.push([lx, y + 1.3, lz]);
     }
-    // 祈福銅鐘：供桌後面一座小鐘架
-    const bx = A.x, bz = A.z - 2.2;
-    for (const sx of [-1, 1]) box(bx + sx * 0.7 - 0.08, bx + sx * 0.7 + 0.08, y, y + 2.1, bz - 0.08, bz + 0.08, P.woodDark);
-    box(bx - 0.95, bx + 0.95, y + 2.1, y + 2.26, bz - 0.14, bz + 0.14, P.woodDark);
-    cyl(bx, bz, 0.2, 0.34, y + 1.25, y + 1.85, Q.brass, 8); cyl(bx, bz, 0.06, 0.2, y + 1.85, y + 1.98, Q.brass, 8); cyl(bx, bz, 0.37, 0.37, y + 1.2, y + 1.26, Q.brass, 8);
-    beam(fb, V3(bx, y + 1.98, bz), V3(bx, y + 2.1, bz), 0.04, 0.04, Q.dark);
   }
 
   // ---- 鑄鐵路燈：廣場一排、主棧橋、丁字碼頭 ----

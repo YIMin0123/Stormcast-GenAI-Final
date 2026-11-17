@@ -20,6 +20,7 @@ import { Daily } from './daily.js';
 import { Profiles, epochAt } from './profiles.js';
 import { Dexbooks, loadDex } from './dex.js';
 import { Guild, syncTitles } from './guild.js';
+import { tellMateProps } from './party.js';
 import { Activity, parseDevice, clientIp } from './activity.js';
 import { prodReport } from './prodStats.js';
 import { statsPage } from './statsPage.js';
@@ -271,6 +272,7 @@ wss.on('connection', (ws, req) => {
     r.send(me, { t: 'joined', resume: r.resumeData(me), ...r.snapshot(me) });
     hub.guild.rename(me.token, me.name);   // 接回來時可能改了名字：功德榜上的名字跟著換
     r.tellJoin(me, true);                   // 稱號、等級要一起帶，不然別人看他的名牌會變空的
+    tellMateProps(r, me);                   // 隊友放在外面的桶子（畫面那邊重連時整個清掉了）
     // 斷線時遇到定時刷新：畫面上的船、魚還是舊的，整包重置再送一次
     if (me.resetMsg) { r.send(me, { t: 'reset', text: me.resetMsg, kit: me.kit, berth: r.berthInfo(me), boards: r.boards() }); me.resetMsg = null; }
     hub.activity.back(me, meta, r.name);

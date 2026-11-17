@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Room, newPlayer, GRACE } from '../server/room.js';
 import { Guild, weekEndsAt, gainExp, expOf } from '../server/guild.js';
-import { expireAsks, stepTows, towOf } from '../server/party.js';
+import { expireAsks, stepTows, towOf, tellMateProps } from '../server/party.js';
 import { Activity } from '../server/activity.js';
 import { QUAY_CENTER_W, ALL_SHELF_W, SITES, HAVEN_SELL_W, SELL_W } from '../src/layout.js';
 import { GUILD, LEVEL, PARTY, TOW, FEEDBACK, levelOf } from '../src/config.js';
@@ -658,5 +658,228 @@ test('亂送訊息：新訊息帶缺欄位、型別錯、NaN、超大、負數�
     for (const p of [a, b, c]) { try { room.on(p, { t: 'askAns', aid, yes }); } catch (e) { errors.push(`askAns ${aid}: ${e.message}`); } }
   }
   try { for (let i = 0; i < 20; i++) room.step(Date.now() + i * 100); } catch (e) { errors.push('step: ' + e.message); }
+  assert.deepEqual(errors, []);
+});
+
+// ======================= 隊友幫忙動船（boatCtl） =======================
+const onLand = (p, owner, dx = 5) => { p.pos = [owner.boat.s[0] + dx, 1.3, owner.boat.s[1], 0, 0, 0, 0, 0, 0, 0, 0, '', '']; };
+const ctl = (room, p, m) => { p.ctlAt = 0; room.on(p, { t: 'boatCtl', ...m }); };   // 每次先把 250ms 冷卻歸零，免得測試互相干擾
+
+test('boatCtl：同隊站在船上開關燈 → 轉給船主；不是隊友、不在船上、怪值都不轉', () => {
+  const { room, ps: [a, b, c] } = fixture(3);
+  team(room, a, b);
+  aboard(b, a); aboard(c, a);
+  clear(a, b, c);
+  ctl(room, b, { forId: a.id, what: 'lamp' });
+  assert.deepEqual(lastOf(a, 'boatCtl'), { t: 'boatCtl', forId: a.id, what: 'lamp', i: -1, by: b.name });
+  ctl(room, b, { forId: a.id, what: 'fishLamp' });
+  assert.equal(lastOf(a, 'boatCtl').what, 'fishLamp');
+  clear(a, b, c);
+  ctl(room, c, { forId: a.id, what: 'lamp' });
+  assert.equal(countOf(a, 'boatCtl'), 0, '非隊友不轉');
+  assert.ok(lastOf(c, 'no'), '非隊友要被告知');
+  b.pos = [a.boat.s[0], 1.3, a.boat.s[1], 0, 0, 0, 0, 0, 0, 0, 0, '', ''];   // 在岸上（pos[8] = 0）
+  ctl(room, b, { forId: a.id, what: 'lamp' });
+  assert.equal(countOf(a, 'boatCtl'), 0, '不在那艘船上不能開燈');
+  aboard(b, c);   // 站在別人（c）的船上
+  ctl(room, b, { forId: a.id, what: 'lamp' });
+  assert.equal(countOf(a, 'boatCtl'), 0, '站在別艘船上不能開燈');
+  aboard(b, a);
+  for (const what of ['horn', '', null, 'LAMP', 'toString', undefined]) ctl(room, b, { forId: a.id, what });
+  for (const forId of [b.id, 0, 99999, '1', null, undefined]) ctl(room, b, { forId, what: 'lamp' });
+  assert.equal(countOf(a, 'boatCtl'), 0, '怪的 what、forId 不轉');
+});
+
+test('boatCtl：綁解纜要在岸上、離船不遠；i 要是 0–999 的整數；unmoor 不帶 i', () => {
+  const { room, ps: [a, b] } = fixture(2);
+  team(room, a, b);
+  onLand(b, a, 5);
+  clear(a, b);
+  ctl(room, b, { forId: a.id, what: 'moor', i: 3 });
+  assert.deepEqual(lastOf(a, 'boatCtl'), { t: 'boatCtl', forId: a.id, what: 'moor', i: 3, by: b.name });
+  ctl(room, b, { forId: a.id, what: 'unmoor', i: 7 });
+  assert.equal(lastOf(a, 'boatCtl').i, -1, 'unmoor 不帶樁號');
+  clear(a, b);
+  for (const i of [-1, 1000, 1.5, '3', null, undefined, NaN, Infinity]) ctl(room, b, { forId: a.id, what: 'moor', i });
+  assert.equal(countOf(a, 'boatCtl'), 0, '樁號怪值不轉');
+  aboard(b, a);
+  ctl(room, b, { forId: a.id, what: 'unmoor' });
+  assert.equal(countOf(a, 'boatCtl'), 0, '人在船上不能綁解岸上的纜');
+  assert.ok(lastOf(b, 'no'));
+  onLand(b, a, BOAT_TYPES[a.boat.type].len / 2 + 15);
+  ctl(room, b, { forId: a.id, what: 'unmoor' });
+  assert.equal(countOf(a, 'boatCtl'), 0, '離船太遠不能綁解');
+});
+
+test('boatCtl：250ms 內連按只轉一次', () => {
+  const { room, ps: [a, b] } = fixture(2);
+  team(room, a, b);
+  aboard(b, a);
+  clear(a);
+  b.ctlAt = 0;
+  for (let i = 0; i < 10; i++) room.on(b, { t: 'boatCtl', forId: a.id, what: 'lamp' });
+  assert.equal(countOf(a, 'boatCtl'), 1);
+});
+
+test('boatCtl：被副駕開著 → 開關燈轉給副駕、綁解纜一律擋；副駕自己送不轉也不罵', () => {
+  const { room, ps: [a, b, c] } = fixture(3);
+  team(room, a, b, c);
+  aboard(c, a); room.on(c, { t: 'helm', forId: a.id, on: true });
+  assert.equal(a.boat.pilot, c.id);
+  aboard(b, a);
+  clear(a, b, c);
+  ctl(room, b, { forId: a.id, what: 'lamp' });
+  assert.equal(countOf(a, 'boatCtl'), 0, '不轉給船主');
+  assert.equal(lastOf(c, 'boatCtl')?.forId, a.id, '轉給副駕');
+  onLand(b, a);
+  clear(a, b, c);
+  for (const what of ['moor', 'unmoor']) ctl(room, b, { forId: a.id, what, i: 2 });
+  assert.equal(countOf(a, 'boatCtl') + countOf(c, 'boatCtl'), 0, '被代駕時綁解纜都擋');
+  assert.ok(lastOf(b, 'no'));
+  clear(a, b, c);
+  ctl(room, c, { forId: a.id, what: 'lamp' });
+  assert.equal(countOf(a, 'boatCtl') + countOf(c, 'boatCtl') + countOf(c, 'no'), 0, '副駕自己按：自己那邊直接動');
+});
+
+test('boatCtl：船主被代駕時自己按船燈 → 應轉給副駕（目前伺服器 owner === p 直接丟掉）', () => {
+  const { room, ps: [a, c] } = fixture(2);
+  team(room, a, c);
+  aboard(c, a); room.on(c, { t: 'helm', forId: a.id, on: true });
+  aboard(a, a);
+  clear(a, c);
+  ctl(room, a, { forId: a.id, what: 'lamp' });
+  assert.equal(lastOf(c, 'boatCtl')?.forId, a.id, '船主在自己船上、船被隊友開著：只有副駕那邊能真的動燈');
+});
+
+test('boatCtl：船主離線（寬限中）、船沉了 → 不轉', () => {
+  const { room, ps: [a, b] } = fixture(2);
+  team(room, a, b);
+  aboard(b, a);
+  offline(room, a);
+  clear(a, b);
+  ctl(room, b, { forId: a.id, what: 'lamp' });
+  assert.equal(countOf(a, 'boatCtl'), 0);
+  assert.ok(lastOf(b, 'no')?.msg.includes('不在線上'));
+  a.ws = { readyState: 1, send: (raw) => a.inbox.push(JSON.parse(raw)) }; a.gone = 0;
+  a.boat.sunk = true;
+  clear(a, b);
+  ctl(room, b, { forId: a.id, what: 'lamp' });
+  assert.equal(countOf(a, 'boatCtl'), 0, '沉了不轉');
+});
+
+// ======================= 隊友看得到彼此的桶子（props） =======================
+const can = (owner, x = 1, z = 0.5) => [0, owner ? owner.id : 0, x, 0, z];
+const ground = (x = 10, y = 1.3, z = 5) => [1, 0, x, y, z];
+
+test('props：只轉給在線同隊隊友；沒組隊的存成空的、誰都不給', () => {
+  const { room, ps: [a, b, c, d] } = fixture(4);
+  team(room, a, b, c);
+  clear(a, b, c, d);
+  const list = [can(a), ground()];
+  room.on(a, { t: 'props', list });
+  assert.deepEqual(lastOf(b, 'props'), { t: 'props', id: a.id, list });
+  assert.deepEqual(lastOf(c, 'props')?.list, list);
+  assert.equal(countOf(d, 'props'), 0, '非隊友看不到');
+  assert.equal(countOf(a, 'props'), 0, '不回給自己');
+  offline(room, c);
+  clear(b, c);
+  a.propsAt = 0;   // 伺服器最快 PARTY.propsCd 秒收一次：測試裡把上一次的時間歸零
+  room.on(a, { t: 'props', list: [ground(1, 1, 1)] });
+  assert.equal(countOf(c, 'props'), 0, '離線隊友不送');
+  assert.equal(countOf(b, 'props'), 1);
+  clear(a, b, c, d);
+  room.on(d, { t: 'props', list: [ground()] });
+  assert.deepEqual(d.props, [], '沒組隊存成空的');
+  assert.equal(countOf(a, 'props') + countOf(b, 'props'), 0);
+});
+
+test('props：怪值整包不收（保留上一份）', () => {
+  const { room, ps: [a, b] } = fixture(2);
+  team(room, a, b);
+  const good = [can(a)];
+  room.on(a, { t: 'props', list: good });
+  clear(b);
+  const bad = [
+    null, 'x', {}, 5,
+    Array(PARTY.propsMax + 1).fill(ground()),
+    [[0, 0, 1, 2]], [[0, 0, 1, 2, 3, 4]], [[2, 0, 1, 1, 1]], [['0', 0, 1, 1, 1]], [[0, -1, 1, 1, 1]], [[0, 1.5, 1, 1, 1]],
+    [[0, 99999, 1, 0, 1]],                          // 不存在的船主
+    [[0, a.id, 25, 0, 0]], [[0, a.id, 0, 0, 9]],    // 船身座標超出
+    [[0, 0, 1e6, 0, 0]], [[0, 0, NaN, 0, 0]], [[0, 0, Infinity, 0, 0]], [[0, 0, '1', 0, 0]], [null], [[0, 0, 1, 1, 1], 'x'],
+  ];
+  for (const list of bad) room.on(a, { t: 'props', list });
+  assert.equal(countOf(b, 'props'), 0, '怪值不轉');
+  assert.deepEqual(a.props, good, '保留上一份');
+  a.propsAt = 0;
+  room.on(a, { t: 'props', list: Array(PARTY.propsMax).fill(ground()) });
+  assert.equal(countOf(b, 'props'), 1, '剛好上限可以');
+  room.on(a, { t: 'props', list: [ground(9, 9, 9)] });
+  assert.equal(countOf(b, 'props'), 1, '太密（PARTY.propsCd 秒內）的那一則不收');
+  a.propsAt = 0;
+  room.on(a, { t: 'props', list: [] });
+  assert.deepEqual(lastOf(b, 'props').list, [], '空清單也要轉（收回桶子）');
+});
+
+test('props：入隊時新人收到原隊員的桶子；退隊、離線、被併房清掉', () => {
+  const f = fixture(4), { room, ps: [a, b, c] } = f;
+  team(room, a, b);
+  room.on(a, { t: 'props', list: [can(a)] });
+  room.on(b, { t: 'props', list: [ground()] });
+  clear(c);
+  team(room, a, c);
+  const got = c.inbox.filter((m) => m.t === 'props');
+  assert.deepEqual(got.map((m) => m.id).sort(), [a.id, b.id].sort(), '新人收到兩位原隊員的');
+  // 退隊
+  room.on(b, { t: 'partyLeave' });
+  assert.deepEqual(b.props, []);
+  clear(a, c);
+  room.on(b, { t: 'props', list: [ground()] });
+  assert.equal(countOf(a, 'props') + countOf(c, 'props'), 0, '退隊後送的不再轉給舊隊友');
+  // 離線：隊友收到空的
+  clear(c);
+  offline(room, a);
+  assert.deepEqual(lastOf(c, 'props'), { t: 'props', id: a.id, list: [] });
+  // 被併房
+  room.on(c, { t: 'props', list: [can(c)] });
+  const room2 = new Room(2, f.hub); f.rooms.set(2, room2);
+  room.players.delete(c.id); room.berths.delete(c.berth);
+  room2.enter(c, { fresh: false, quiet: true });
+  assert.deepEqual(c.props, []);
+});
+
+test('props：斷線接回來的人會再收到隊友的桶子（index.js 的 resume 呼叫 tellMateProps；畫面那邊 applySocial 會先把隊友的桶子全清掉）', () => {
+  const { room, ps: [a, b] } = fixture(2);
+  team(room, a, b);
+  room.on(a, { t: 'props', list: [ground(3, 1, 4)] });
+  offline(room, b);
+  b.ws = { readyState: 1, send: (raw) => b.inbox.push(JSON.parse(raw)) }; b.gone = 0;
+  clear(b);
+  // index.js 的 resume：joined（resumeData＋snapshot）→ tellJoin → tellMateProps
+  const joined = { resume: room.resumeData(b), ...room.snapshot(b) };
+  tellMateProps(room, b);
+  assert.ok(JSON.stringify(joined).includes('[1,0,3,1,4]') || countOf(b, 'props') > 0, '接回來後看不到隊友的桶子，要等隊友的清單變了才會重送');
+});
+
+test('props：同一份清單一直重送，伺服器不該每次都轉（防濫用；目前每則都轉）', () => {
+  const { room, ps: [a, b, c, d] } = fixture(4);
+  team(room, a, b, c, d);
+  clear(b);
+  const list = Array(PARTY.propsMax).fill(ground());
+  for (let i = 0; i < 80; i++) room.on(a, { t: 'props', list });
+  assert.ok(countOf(b, 'props') <= 2, `轉了 ${countOf(b, 'props')} 次（每秒 80 則 × 3 位隊友，隊友端每則都重建全部模型）`);
+});
+
+test('props / boatCtl 亂送不丟例外', () => {
+  const { room, ps: [a, b] } = fixture(2);
+  team(room, a, b);
+  const weird = [undefined, null, NaN, Infinity, -1, 0, 1e308, '1', 'abc', true, {}, [], [[]], [[null, null, null, null, null]], a.id, b.id, 99999, '__proto__'];
+  const errors = [];
+  for (const v of weird) for (const k of ['list', 'forId', 'what', 'i']) {
+    for (const t of ['props', 'boatCtl']) {
+      try { b.ctlAt = 0; room.on(b, { t, forId: a.id, what: 'moor', [k]: v }); } catch (e) { errors.push(`${t} ${k}=${String(v)}: ${e.message}`); }
+    }
+  }
+  b.pos = null;
+  try { room.on(b, { t: 'boatCtl', forId: a.id, what: 'lamp' }); } catch (e) { errors.push('pos null: ' + e.message); }
   assert.deepEqual(errors, []);
 });

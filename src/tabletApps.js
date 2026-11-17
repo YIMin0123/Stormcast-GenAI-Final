@@ -676,7 +676,7 @@ export function makeApps(env, { noStyle = false } = {}) {
       </div>`;
     }).join('');
     const perks = r.canParty ? `<div class="tbc${pt.n ? ' on' : ''}"><h4>⛵ 船隊${pt.n ? `<span class="tbTag g">${pt.n} / ${PARTY.max} 人</span>` : `<span class="r">最多 ${PARTY.max} 人，按「＋ 組隊」邀請</span>`}</h4>
-      <p class="tbNote">同隊好處：經驗 +${Math.round(LEVEL.party * 100)}%、隊友賣魚你也分紅 ${Math.round(PARTY.share * 100)}%、可以幫隊友掌舵和代付修船費、畫面上標出隊友在哪；隊裡有人開${FRESH_BOAT.name}，全隊賣魚再多 ${Math.round(FRESH_BOAT.freshBonus * 100)}%。離開房間就退隊。</p></div>` : '';
+      <p class="tbNote">同隊好處：經驗 +${Math.round(LEVEL.party * 100)}%、隊友賣魚你也分紅 ${Math.round(PARTY.share * 100)}%、可以幫隊友掌舵、開關船燈和集魚燈、綁解纜繩、代付修船費，畫面上標出隊友在哪，隊友放在外面的油桶和誘魚桶會用藍色描邊標出來；隊裡有人開${FRESH_BOAT.name}，全隊賣魚再多 ${Math.round(FRESH_BOAT.freshBonus * 100)}%。離開房間就退隊。</p></div>` : '';
     return `${perks}<div class="tbc" style="padding:0">${rows}</div>
       <p class="tbNote">${esc(r.name)}・目前 ${r.list.length} 人（最多 ${r.max} 人）。灰點代表暫時斷線中，保留進度等待重連。</p>`;
   }, env);

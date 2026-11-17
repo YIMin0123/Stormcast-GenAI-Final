@@ -35,7 +35,7 @@ import { makeHavenFx } from './havenFx.js';
 import { makeWildlife } from './wildlife.js';
 import { HOME_GROUND, ZONE_LABEL } from './lowpoly/harborPlan.js';
 import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SWITCHES_W, ROOFS_W, underRoof, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W } from './layout.js';
-import { fishLabel, FishWorld } from './fish.js';
+import { fishLabel, FishWorld, makeCanMesh, makeChumMesh } from './fish.js';
 import { money as cash, rarityOf, BAITS, SPECIES, castRange } from './fishdata.js';
 import { Fishing } from './fishing.js';
 import { EmoteWheel } from './emotes.js';
@@ -1943,6 +1943,7 @@ function beginCopilot(id, s) {
   if (!b || b.sinking || player.boat !== b || mode !== 'walk') { if (net.online) net.send({ t: 'helm', forId: id, on: false }); return; }
   b.local = true;
   b.speed = s[6]; b.throttle = 0; b.fuel = clamp(s[10], 0, b.spec.tank); b.towK = 1;
+  resetBoatFx(b);
   b.damage.slice().forEach((c) => b.repair(c));
   if (s[11] < 0.995) b.hurt(b.spec.hp * (1 - s[11]));
   for (const k in b.keys) b.keys[k] = false;
@@ -1950,6 +1951,8 @@ function beginCopilot(id, s) {
   grabHelm(b);
   toast(`你在幫 ${b.owner.name} 開船（按 E 放手；船主握方向盤就會收回去）`);
 }
+// 一艘船換一邊算（隊友接手、交還）：上一邊留下的災害狀態、被撞後的滑動都清掉（不然交還後浪頭可能再扣一次、船會自己滑一下）
+function resetBoatFx(b) { b._hz = null; b._shove = null; b._hitSpin = 0; b._surgePeak = 0; }
 // 不幫忙開了（自己放手 tell = true；被船主收回、退隊、船主離線 tell = false）：那艘船交回給船主那邊算
 function endCopilot(tell) {
   if (!copilot) return;
@@ -1960,6 +1963,7 @@ function endCopilot(tell) {
   b.towK = 1;
   if (tell && net.online) { net.send({ t: 'b', forId: id, s: b.netState() }); net.send({ t: 'helm', forId: id, on: false }); }
   b.local = false;
+  resetBoatFx(b);
   b.damage.slice().forEach((c) => b.repair(c));   // 破洞是我這邊算的時候畫的：收掉（別人的船平常不畫破洞）
   if (mode === 'helm' && boat === b) {
     player.place(walkWorld, b.spec.helmX - 0.3, 0, b);
@@ -2058,6 +2062,23 @@ function bollardAt(i) {
   if (b.moor && b.moor.i === i) return { i, boat: b, tied: true };
   return b.moor || b.sinking ? null : moorSpot(i, [b]);
 }
+// 第 i 根樁旁邊有沒有同隊隊友的船可以幫忙綁、解（船主在線上、沒人在開；纜繩實際上由船主那邊綁，見 boatCtl）
+function mateBollard(i) {
+  for (const id of party.ids) {
+    const b = others.boat(id);
+    if (!b || b.sinking || b.local || b.manned || Number.isFinite(b.reclaimAt)) continue;
+    const m = moorSpot(i, [b], MOOR_REACH + (b.tied ? 2 : 0));
+    if (m) return { ...m, tied: !!b.tied, mate: id };
+  }
+  return null;
+}
+// 請算那艘船的那一邊（船主，或正在幫他開的隊友）照做：開關燈、綁解纜繩
+function mateCtl(b, what, text, sound, i = -1) {
+  if (!net.online) return toast('連線中斷，等接回去再試');
+  net.send({ t: 'boatCtl', forId: b === myBoat ? net.id : b.owner.id, what, i });
+  audio.play(sound);
+  toast(text);
+}
 // 人站在哪根繫纜樁旁邊
 function nearBollard() {
   if (player.boat || player.swim) return null;
@@ -2123,21 +2144,43 @@ function collideBoats(b, helm) {
     b._hitSpin *= Math.exp(-dtSim * 3);
     if (Math.abs(b._hitSpin) < 0.002) b._hitSpin = 0;
   }
+  // 上次被撞之後還在被推著橫移：慢慢停下來（不會被推進岸壁、淺灘；綁著纜繩的不動）
+  if (b._shove) {
+    const sv = b._shove, k = Math.exp(-dtSim * BOATHIT.shoveDrag);
+    if (!b.moor && pushBoatSafe(b, sv.x * dtSim, sv.z * dtSim)) moved = true; else sv.x = sv.z = 0;
+    sv.x *= k; sv.z *= k;
+    if (Math.hypot(sv.x, sv.z) < 0.03) b._shove = null;
+  }
+  const tick = b._hitTick = (b._hitTick || 0) + 1, seen = b._hitSeen || (b._hitSeen = new WeakMap());
   for (const o of boats) {
     if (o === b || o.sinking) continue;
+    // 別人的船剛才最快開多快（慢慢忘掉）：它撞上來的時候自己那邊先煞住了，傳到這邊已經幾乎是停的
+    if (o.remote && !o.local) { if (Math.abs(o.speed) >= Math.abs(o._vPeak || 0)) o._vPeak = o.speed; else o._vPeak *= Math.exp(-dtSim * BOATHIT.peakFade); }
     if (Math.hypot(o.x - b.x, o.z - b.z) > (o.spec.len + b.spec.len) / 2 + 1) continue;
     const g = boatGap(b, o);
-    if (g.d >= 0) continue;
+    if (g.d >= BOATHIT.touch) continue;
+    const first = (seen.get(o) ?? -9) < tick - 1;   // 這一幀才碰上（上一幀還沒碰到）
+    seen.set(o, tick);
+    const os = first && o.remote && !o.local ? o._vPeak ?? o.speed : o.speed;   // 剛碰上：用對方撞上來之前的速度；之後照它現在的速度
     const fixed = o.remote && !o.local ? (o.tied || Number.isFinite(o.reclaimAt)) : !!o.moor;   // 對方不會動
     const share = b.moor ? 0 : fixed ? 1 : o.spec.mass / (b.spec.mass + o.spec.mass);
     // 推開（絕不把船擠進棧橋或更淺的岸壁，只擋下速度）
-    if (share > 0 && pushBoatSafe(b, -g.nx * g.d * share, -g.nz * g.d * share)) moved = true;
+    if (g.d < 0 && share > 0 && pushBoatSafe(b, -g.nx * g.d * share, -g.nz * g.d * share)) moved = true;
     const fx = Math.cos(b.heading), fz = Math.sin(b.heading), along = fx * g.nx + fz * g.nz;
-    const rel = (fx * b.speed - Math.cos(o.heading) * o.speed) * g.nx + (fz * b.speed - Math.sin(o.heading) * o.speed) * g.nz;   // 兩艘船互相靠近的速度（負的才是）
-    if (rel < 0 && share > 0) {
+    const rel = (fx * b.speed - Math.cos(o.heading) * os) * g.nx + (fz * b.speed - Math.sin(o.heading) * os) * g.nz
+      + (b._shove ? b._shove.x * g.nx + b._shove.z * g.nz : 0);   // 自己已經被推著滑開的那一份也算（滑得比對方快就不算在靠近了）   // 兩艘船互相靠近的速度（負的才是）
+    if (rel < (g.d < 0 ? 0 : -BOATHIT.touchMin) && share > 0) {
       const hit = -rel * share, lat = -fz * g.nx + fx * g.nz;   // lat：撞擊的力道有多少是橫著來的（往右舷是正的）
       b.speed += (1 + BOATHIT.bounce) * hit * along;            // 擋下來，再往回彈一點
       b._hitSpin = clamp((b._hitSpin || 0) + BOATHIT.yaw * hit * lat * g.lever / (b.spec.len / 2), -0.9, 0.9);   // 斜著擦到：船頭（或船尾）被扭開
+      // 橫著被撞：整艘船往被撞的方向滑開一段（順著船頭的那一份已經算在船速裡）
+      //   只補到「這一下該有的速度」為止：兩艘船頂在一起好幾幀也不會越加越快（跟畫面更新率無關）
+      const ux = g.nx - along * fx, uz = g.nz - along * fz, ul = Math.hypot(ux, uz);
+      if (ul > 1e-3) {
+        const sv = b._shove || (b._shove = { x: 0, z: 0 }), have = (sv.x * ux + sv.z * uz) / ul;
+        const add = Math.min((1 + BOATHIT.bounce) * hit * BOATHIT.shove * ul, BOATHIT.shoveMax) - have;
+        if (add > 0) { sv.x += ux / ul * add; sv.z += uz / ul * add; }
+      }
       b._wr = (b._wr || 0) + Math.min(BOATHIT.roll * hit * 5.5, BOATHIT.rollMax) * (lat >= 0 ? 1 : -1);   // 船身橫搖一下（有上限：不會把甲板上的魚甩出去）
       if (hit > BOATHIT.sound * share && time - bumpAt > 0.6) {
         bumpAt = time;
@@ -2366,6 +2409,7 @@ function syncChums() {
 // 船首集魚燈開關（對準燈按 E，或平板的「船」）
 function toggleFishLamp(b = myBoat) {
   if (!b.mods.lamp || !b.parts.bowLamp) return toast('這艘船沒有船首集魚燈（海上修船屋、大港船塢有賣，小舢舨裝不了）');
+  if (!simmed(b)) return mateCtl(b, 'fishLamp', b.fishLamp ? '集魚燈關掉了' : '集魚燈打開了', 'switch');   // 自己的船正被隊友開著（平板上按的）：請他那邊照做
   b.setFishLamp(!b.fishLamp);
   audio.play('switch');
   toast(b.fishLamp ? `集魚燈打開了：夜裡船邊 25 公尺內趨光魚多 ${b.spec.lampMul} 倍` : '集魚燈關掉了');
@@ -2493,24 +2537,26 @@ function aimTarget() {
     const S = b.spec, D = S.deck, P = b.parts;
     const at = (x, y, z) => new THREE.Vector3(x, y, z).applyMatrix4(b.mesh.matrixWorld);
     const near = (x, z, r) => Math.hypot(player.lx - x, player.lz - z) < r;
-    // 舵、魚箱、油箱、船燈只有自己的船能動；別人的船只能搭（坐下）。破洞海上修不了（要開去修船屋）
+    // 舵、魚箱、油箱只有自己的船能動；別人的船只能搭（坐下），同隊隊友的船另外可以幫忙掌舵、開關燈。破洞海上修不了（要開去修船屋）
     if (b === myBoat) {
       if (near(P.tank.x, P.tank.z, 1.9)) add('tank', at(P.tank.x, P.tank.y, P.tank.z), 0.36, { boat: b, rayMesh: P.tankObj, rayR: 0.65 });
       if (!carrying) {
         if (nearHelm()) add('helm', at(P.helm.x, P.helm.y, P.helm.z), 0.5, { boat: b, rayMesh: P.wheel || P.tiller, rayR: 0.9 });
-        if (near(P.switch.x, P.switch.z, 2.3)) add('lamp', at(P.switch.x, P.switch.y, P.switch.z), P.switchR, { boat: b, rayMesh: P.switchObj, rayR: 0.45 });
-        // 船首集魚燈（裝了才有）
-        if (b.mods.lamp && P.bowLampAt && near(P.bowLampAt.x, P.bowLampAt.z, 2.4)) add('fishLamp', at(P.bowLampAt.x, P.bowLampAt.y, P.bowLampAt.z), P.bowLampR, { boat: b, rayMesh: P.bowLamp, rayR: 0.8 });
       }
     }
     else if (!carrying && party.has(b.owner?.id) && !b.manned && !Number.isFinite(b.reclaimAt) && nearHelm()) add('helm', at(P.helm.x, P.helm.y, P.helm.z), 0.5, { boat: b, rayMesh: P.wheel || P.tiller, rayR: 0.9 });   // 同隊隊友的船：船主在線上、沒在開，可以幫忙掌舵
+    // 船燈、船首集魚燈（裝了才有）：自己的船，或同隊隊友的船（船主在線上）
+    if (!carrying && (b === myBoat || (party.has(b.owner?.id) && !Number.isFinite(b.reclaimAt)))) {
+      if (near(P.switch.x, P.switch.z, 2.3)) add('lamp', at(P.switch.x, P.switch.y, P.switch.z), P.switchR, { boat: b, rayMesh: P.switchObj, rayR: 0.45 });
+      if (b.mods.lamp && P.bowLampAt && near(P.bowLampAt.x, P.bowLampAt.z, 2.4)) add('fishLamp', at(P.bowLampAt.x, P.bowLampAt.y, P.bowLampAt.z), P.bowLampR, { boat: b, rayMesh: P.bowLamp, rayR: 0.8 });
+    }
     if (!carrying) for (const s of P.seats) if (near(s.x, s.z, 1.7)) add('seat', at(s.x, D + s.h + 0.05, s.z), 0.28, { boat: b, seat: s, rayMesh: s.mesh, rayR: 1.15 });
     // 船尾的拖船樁：自己的船去拖別人、解開；別人的船可以請他拖自己的船
     if (!carrying && P.towPost && near(P.towPost.x, P.towPost.z, TOW.postReach)) add('tow', at(P.towPost.x, P.towPost.y, P.towPost.z), P.towR, { boat: b });
   } else if (!b) {
     if (!carrying) BOLLARDS.forEach((p, i) => {
       if (Math.hypot(px - p.x, pz - p.z) > 1.9) return;
-      const m = bollardAt(i);
+      const m = bollardAt(i) || mateBollard(i);
       if (m) add('bollard', new THREE.Vector3(p.x, p.y - 0.05, p.z), 0.36, { moor: m });
     });
     if ((!held || !held.can) && nearBasket()) add('basket', new THREE.Vector3(SELL_W.basket.x, DECK_Y + 0.3, SELL_W.basket.z), 0.5);
@@ -2676,6 +2722,7 @@ function interact() {
     case 'helm': return takeHelm();
     case 'bollard': {
       const mr = a.moor;
+      if (mr.mate) return mateCtl(mr.boat, mr.tied ? 'unmoor' : 'moor', mr.tied ? `幫 ${mr.boat.owner.name} 解開了${mr.boat.spec.name}的纜繩` : `幫 ${mr.boat.owner.name} 把${mr.boat.spec.name}的纜繩綁好了`, 'rope', mr.i);
       if (mr.tied) { mr.boat.moor = null; toast(`解開了${mr.boat.spec.name}的纜繩`); } else { tieBoat(mr); toast(`${mr.boat.spec.name}的纜繩綁好了`); }
       audio.play('rope');
       return;
@@ -2701,10 +2748,13 @@ function interact() {
       if (!net.online) return toast('連線中斷，等接回去再拿');
       return net.send({ t: 'boxOut', bid: a.box.bid, uid: a.fish?.uid });
     case 'lamp':
+      if (!simmed(a.boat)) return mateCtl(a.boat, 'lamp', a.boat === myBoat ? (a.boat.lampOn ? '船燈關掉了' : '船燈打開了') : a.boat.lampOn ? '幫隊友把船燈關掉了' : '幫隊友把船燈打開了', 'switch');   // 隊友的船：請算那艘船的那一邊照做
       a.boat.lampOn = !a.boat.lampOn;
       audio.play('switch');
       return toast(a.boat.lampOn ? '船燈打開了' : '船燈關掉了');
-    case 'fishLamp': return toggleFishLamp(a.boat);
+    case 'fishLamp':
+      if (!simmed(a.boat)) return mateCtl(a.boat, 'fishLamp', a.boat === myBoat ? (a.boat.fishLamp ? '集魚燈關掉了' : '集魚燈打開了') : a.boat.fishLamp ? '幫隊友把集魚燈關掉了' : '幫隊友把集魚燈打開了', 'switch');
+      return toggleFishLamp(a.boat);
     case 'tow':
       if (a.boat === myBoat) return doTow(towAction(myBoat));
       return doTow(towOfId(net.id) ? { cut: true } : { cut: false, to: a.boat.owner.id }, true);   // 別人的船：請他拖我的船
@@ -2820,7 +2870,7 @@ function updatePrompt() {
       text = ab === myBoat ? (act ? `按 E ${act.text}` : `拖船樁　把船尾靠近別人的船（${TOW.reach} 公尺內），就能請求拖行他`)
         : towOfId(net.id) ? '按 E 解開拖纜' : `按 E 請 ${ab.owner.name} 拖行你的${myBoat.spec.name}（要停在他船尾 ${TOW.reach} 公尺內）`;
     }
-    else if (kind === 'bollard') text = a.moor.tied ? `按 E 解開${a.moor.boat.spec.name}的纜繩` : `按 E 把${a.moor.boat.spec.name}的纜繩綁在這根樁上`;
+    else if (kind === 'bollard') { const who = a.moor.mate ? ` ${a.moor.boat.owner.name} 的` : ''; text = a.moor.tied ? `按 E 解開${who}${a.moor.boat.spec.name}的纜繩` : `按 E 把${who}${a.moor.boat.spec.name}的纜繩綁在這根樁上`; }
     else if (kind === 'item') text = a.item.remote ? `按 E 撿起${a.item.sp.name}（${others.map.get(a.item.owner)?.name ?? '沒人'}的，撿到就是你的）` : `按 E 拿起${a.item.can ? itemLabel(a.item) : a.item.sp.name}`;
     else if (kind === 'fbox') {
       const d = a.box, n = d.fish.length;
@@ -3881,7 +3931,7 @@ let fuelWarned = false;
 // 水深過胸就會浮起來游；從碼頭或船上要用跳的才會下水。游泳耗體力，回到岸上或船上會慢慢恢復；
 // 體力用完會溺水：畫面變暗，被救回港口，手上的東西就沒了
 const SWIM_SECONDS = 50;   // 不拿東西、慢慢游，可以游多久
-let stamina = 1, drown = null, wasSwim = false, stamShown = false, surgeToast = false, whirlToast = false, spoutToast = false;
+let stamina = 1, drown = null, wasSwim = false, stamShown = false, surgeToast = false;
 function beginDrown(text) {
   if (devMode) return;   // 開發者模式不會溺水
   drown = { t: 0, text };
@@ -4985,8 +5035,9 @@ net.on('k', (m) => {
     if (q[0] !== net.id) others.setBoatState(q[0], q.slice(1));
     else if (piloted && !myBoat.sinking) {
       // 隊友正在幫我開：我的船照他傳來的位置擺；他那邊撞壞的也算在我的船上
-      const s = q.slice(1), lost = myBoat.hp / myBoat.spec.hp - s[11];
+      const s = q.slice(1), lost = myBoat.hp / myBoat.spec.hp - s[11], lamp = myBoat.fishLamp;
       myBoat.setNet(s);
+      if (lamp !== myBoat.fishLamp && tabOpen()) tablet.update();   // 平板「船」頁的集魚燈按鈕跟著換字
       if (lost > 0.01) myBoat.hurt(lost * myBoat.spec.hp);
     }
   }
@@ -4996,7 +5047,7 @@ net.on('join', (m) => others.add({ id: m.id, name: m.name, title: m.title || '',
 net.on('h', (m) => others.setHold(m.id, m.s));
 net.on('ts', (m) => others.setTabState(m.id, m.d));
 net.on('fl', (m) => others.setLine(m.id, m.s));
-net.on('leave', (m) => others.leave(m.id, m.reclaimMs));
+net.on('leave', (m) => { clearMateProps(m.id); others.leave(m.id, m.reclaimMs); });
 net.on('passengerReturn', returnPassenger);
 net.on('boatGone', (m) => others.boatGone(m.id));
 net.on('boat', (m) => { if (m.id !== net.id) others.setBoat(m.id, m.boat); });
@@ -5011,13 +5062,81 @@ function showBadge() {
   el.classList.toggle('gold', !!myBadge.gold);
 }
 function setParty(of) {
+  if ((of[net.id] || 0) !== party.id) propsSent = '';   // 換了隊（或剛入隊）：伺服器那邊我的桶子清單清掉了，下一次整份重送
   party.id = of[net.id] || 0;
   party.ids = new Set(party.id ? Object.keys(of).map(Number).filter((id) => id !== net.id && of[id] === party.id) : []);
   others.setMates(party.ids);
+  for (const id of [...mateProps.keys()]) if (!party.ids.has(id)) clearMateProps(id);   // 已經不是隊友：他的桶子不再看得到
   if (tabOpen()) tablet.update();
+}
+// ---- 隊友的桶子：同隊的人看得到彼此放在甲板、地上的油桶和誘魚桶，外面一圈藍色粗描邊（只是看得到，拿不走）；沒組隊的人看不到 ----
+const mateProps = new Map();   // 隊友 id → { list 伺服器轉來的清單, objs 擺出來的模型, wait 有東西還擺不出來（那艘船還沒出現） }
+// 描邊的畫法（都不透明，不動畫面的 alpha）：排在其他不透明的東西之後，分三步——
+//   1. 先畫一個大一號的藍色外殼（不寫深度）；2. 再畫桶子本身，蓋在外殼上，四周就露出一圈藍邊；
+//   3. 最後外殼只寫深度不上色：之後才畫的天空就不會把那圈藍邊蓋掉。
+const propOutlineMat = new THREE.MeshBasicMaterial({ color: PARTY.propOutline, side: THREE.DoubleSide, depthWrite: false });
+const propDepthMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, colorWrite: false });
+const PROP_ORDER = { shell: 990, body: 991, depth: 992 };   // 海面是 2、天空是 1e6
+function makeMateProp(chum) {
+  const g = chum ? makeChumMesh() : makeCanMesh(), w = PARTY.propOutlineW;
+  g.traverse((o) => { if (o.isMesh) o.renderOrder = PROP_ORDER.body; });
+  const geo = chum ? new THREE.CylinderGeometry(0.156 + w, 0.15 + w, 0.47 + w * 2, 14) : new THREE.BoxGeometry(0.30 + w * 2, 0.415 + w * 2, 0.18 + w * 2);
+  const shell = new THREE.Mesh(geo, propOutlineMat), depth = new THREE.Mesh(geo, propDepthMat);
+  shell.position.y = depth.position.y = chum ? 0.045 : 0.0275;
+  shell.renderOrder = PROP_ORDER.shell; depth.renderOrder = PROP_ORDER.depth;
+  g.add(shell, depth);
+  return g;
+}
+function clearMateProps(id) {
+  const e = mateProps.get(id);
+  if (!e) return;
+  for (const g of e.objs) {
+    g.removeFromParent();
+    g.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); if (o.material !== propOutlineMat && o.material !== propDepthMat) o.material.dispose(); } });
+  }
+  mateProps.delete(id);
+}
+function setMateProps(id, list) {
+  clearMateProps(id);
+  if (!party.has(id) || !Array.isArray(list) || !list.length) return;
+  const e = { list, objs: [], on: new Map() };   // on：清單裡提到的每艘船（船主 id）→ 擺的當下是哪一艘（null = 那時候還沒有、或正在沉）
+  for (const [kind, oid, a, y, c] of list.slice(0, PARTY.propsMax)) {
+    const b = oid ? propBoat(oid) : null;
+    if (oid) e.on.set(oid, b);
+    if (oid && !b) continue;
+    const g = makeMateProp(kind === 1);
+    if (b) { b.mesh.add(g); g.position.set(a, (b.deckLocalY?.(a, c) ?? b.spec.deck) + 0.22, c); }
+    else { scene.add(g); g.position.set(a, y + 0.22, c); }
+    e.objs.push(g);
+  }
+  mateProps.set(id, e);
+}
+const propBoat = (oid) => { const b = boatOfId(oid); return b && !b.sinking ? b : null; };
+net.on('props', (m) => { if (m.id !== net.id) setMateProps(m.id, m.list); });
+// 把我放在外面的桶子告訴隊友（有變才送；沒組隊就送空的）。順便把之前擺不出來的隊友桶子再試一次
+let propsSent = '[]', propsWait = 0, propsAge = 0;
+function syncProps(dt) {
+  propsWait -= dt;
+  if (propsWait > 0 || !inGame || !net.online) return;
+  propsWait = 0.5;
+  // 隊友的桶子擺在哪艘船上：那艘船換了（換船、被收走又回來）或之前沒有、現在出現了，才整份重擺
+  for (const [id, e] of mateProps) { let stale = false; for (const [oid, was] of e.on) if (propBoat(oid) !== was) { stale = true; break; } if (stale) setMateProps(id, e.list); }
+  const list = [];
+  if (party.id) for (const it of fish.items) {
+    if (!it.can || it.fly || it.remote || list.length >= PARTY.propsMax || (it.state === 'boat' && it.boat.sinking)) continue;
+    if (it.state === 'boat') { const oid = it.boat === myBoat ? net.id : it.boat.owner?.id; if (oid) list.push([it.chum ? 1 : 0, oid, r2(it.lx), 0, r2(it.lz)]); }
+    else if (it.state === 'ground') list.push([it.chum ? 1 : 0, 0, r2(it.x), r2(it.y), r2(it.z)]);
+  }
+  const s = JSON.stringify(list);
+  propsAge += 0.5;
+  if (s === propsSent && (propsAge < PARTY.propsResend || s === '[]')) return;   // 沒變就不送；每隔一陣子整份再送一次（哪一則沒送到也會自己補回來）
+  propsSent = s; propsAge = 0;
+  net.send({ t: 'props', list });
 }
 // 進房、重連、合併時伺服器給的那一包
 function applySocial(j) {
+  for (const id of [...mateProps.keys()]) clearMateProps(id);
+  propsSent = '[]';
   if (j.me) myBadge = { title: j.me.title || '', gold: !!j.me.gold, lv: j.me.lv || 1 };
   if (j.guild !== undefined) guild = j.guild;
   myExp = dexBook?._lv?.exp || 0;
@@ -5065,8 +5184,23 @@ net.on('towCut', (m) => {
 });
 // 副駕
 net.on('helmOk', (m) => beginCopilot(m.forId, m.s));
+// 隊友請我這邊動船（我的船，或我正在幫忙開的那艘）：開關船燈、集魚燈，綁、解岸上的纜繩
+net.on('boatCtl', (m) => {
+  const b = m.forId === net.id ? (piloted ? null : myBoat) : copilot && copilot.id === m.forId ? copilot.boat : null;
+  if (!b || b.sinking) return;
+  const mine = b === myBoat, who = m.by || '隊友';
+  if (m.what === 'lamp') { b.lampOn = !b.lampOn; audio.play('switch'); toast(`${who} ${b.lampOn ? '打開' : '關掉'}了船燈`); }
+  else if (m.what === 'fishLamp') { if (!b.mods.lamp || !b.parts.bowLamp) return; b.setFishLamp(!b.fishLamp); audio.play('switch'); toast(`${who} ${b.fishLamp ? '打開' : '關掉'}了集魚燈`); if (tabOpen()) tablet.update(); }
+  else if (m.what === 'unmoor' && mine) { if (!b.moor) return; b.moor = null; audio.play('rope'); toast(`${who} 幫你解開了${b.spec.name}的纜繩`); }
+  else if (m.what === 'moor' && mine) {
+    const spot = !b.moor && BOLLARDS[m.i] ? moorSpot(m.i, [b], MOOR_REACH + 2) : null;
+    if (!spot) return;
+    tieBoat(spot); audio.play('rope'); toast(`${who} 幫你把${b.spec.name}的纜繩綁好了`);
+  }
+});
 net.on('pilotEnd', (m) => { if (copilot && copilot.id === m.forId) { endCopilot(false); toast('方向盤交回給船主了'); } });
 net.on('pilot', (m) => {
+  resetBoatFx(myBoat);
   if (!m.id) { piloted = null; myBoat.net = null; lastBoatMsg = ''; return; }
   piloted = { id: m.id, name: m.name || '隊友' };
   myBoat.moor = null;   // 隊友要把船開走：岸上的纜繩解開
@@ -5412,7 +5546,66 @@ function enterRoom(j) {
   if (back?.passengerReturn) returnPassenger(back.passengerReturn);
 }
 
-let wakeIdx = 0, wakeTimer = 0, sprayAcc = 0, crestSide = 1, crestI = -1, jetShake = 0, lastStep = 0, dtSim = 0.016;
+let wakeIdx = 0, wakeTimer = 0, sprayAcc = 0, jetShake = 0, lastStep = 0, dtSim = 0.016;
+// 一艘我這邊在算的船（自己的，或正在幫隊友開的那艘）這一幀遇到的海上災害：漩渦與水龍捲的中心、旋臂，湧進港口的浪，巨浪的浪頭與捲舌。
+// helmHere：我正握著這艘船的方向盤（警告只講給掌舵的人聽）。每艘船各記各的狀態（b._hz）
+function boatHazards(b, helmHere, dt) {
+  const hz = b._hz || (b._hz = { crestSide: 1, crestI: -1, whirlToast: false, spoutToast: false });
+  const hazard = !b.sinking;
+  const core = hazard && sea.vortices.length ? sea.coreAt(b.x, b.z) : null;
+  if (core) b.founder(core, 1);   // 被拉進漩渦或水龍捲的中心
+  // 大漩渦與水龍捲：進入白浪旋臂就開始劇烈吸扯、水花四濺並扯傷船板
+  if (hazard && sea.vortices.length) {
+    const w = sea.whirlNear(b.x, b.z), spv = sea.spoutNear(b.x, b.z);
+    if (w.r < 155) {
+      const wk = w.s * ((155 - w.r) / 123) ** 2;
+      b.hurt(b.spec.hp * 0.055 * wk * dt);
+    }
+    if (w.r < 210 && w.s > 0.25 && Math.random() < 16 * w.s * (1 - w.r / 210) * dt) {
+      splash(b.x + (Math.random() - 0.5) * b.spec.len, b.mesh.position.y + 0.45, b.z + (Math.random() - 0.5) * b.spec.beam, 5);
+    }
+    if (helmHere && w.r < 240 && w.s > 0.25 && !hz.whirlToast) { hz.whirlToast = true; toast('捲入大漩渦吸流了！立刻全速往外衝！'); }
+    if (w.r > 320) hz.whirlToast = false;
+    if (helmHere && spv.r < 260 && spv.s > 0.35 && !hz.spoutToast) { hz.spoutToast = true; toast('捲入水龍捲暴風圈！頂風全速拉開距離！'); }
+    if (spv.r > 340) hz.spoutToast = false;
+    if (spv.r < 220 && spv.s > 0.35 && Math.random() < 16 * spv.s * (1 - spv.r / 220) * dt) {
+      splash(b.x + (Math.random() - 0.5) * b.spec.len, b.mesh.position.y + 0.5, b.z + (Math.random() - 0.5) * b.spec.beam, 5);
+    }
+  } else { hz.whirlToast = false; hz.spoutToast = false; }
+  // 巨浪淹進港口：停在岸邊的船被湧進來的水抬起來、退水時摔回去，會撞壞一些
+  for (let once = 0; once < 1; once++) {
+    if (b.sinking || tsuKAt(b.x, b.z) > 0.45) { b._surgePeak = 0; continue; }
+    const h = surgeAt(b.x, b.z);
+    b._surgePeak = Math.max(b._surgePeak || 0, h);
+    if (h < 0.3 && b._surgePeak > 1.2) {
+      b.hurt(b.spec.hp * Math.min(0.1, 0.025 * (b._surgePeak - 1.2)));   // 三道浪加起來大約扣兩成血
+      toast(`${b.spec.name}被湧進港口的浪撞壞了一些`);
+      b._surgePeak = 0;
+    }
+  }
+  if (!sea.tsu.on) surgeToast = false;
+  // 巨浪的浪頭掃過船的那一刻。還沒破的那一段是一道長坡：船頭對準就能翻過去。
+  // 正在捲的那一段不一樣：浪壁是往前倒的（爬不上去），浪頂的水拋出去、落在浪頂前方幾十公尺——
+  // 船在落點上，就是被好幾層樓高的水從上面直接壓下來，船頭對不對準都一樣。浪越高、船越小越撐不住
+  if (sea.tsu.on && hazard) {
+    const tK = tsuKAt(b.x, b.z), c = sea.jetAt(b.x, b.z, tK, shared.uTime.value), side = c.q > c.land ? 1 : -1;
+    if (side < 0 && hz.crestSide > 0 && c.i === hz.crestI && c.q > -20) {
+      const jet = c.Bw * c.Hc / (5 + b.spec.len);         // 捲舌砸下來的力道，1 以上船就沒了
+      const hit = c.B * Math.min(c.k, 1.1) * Math.min(1, tsuHK(tK) / TSU_H.peak);            // 翻白的浪頭拍在船上（還沒捲起來也算）
+      if (jet >= 1 || hit > 0.15) {
+        const aboard = player.boat === b;
+        splash(b.x, b.mesh.position.y + 1, b.z, jet >= 1 ? 90 : 50);
+        if (aboard) jetShake = Math.max(jetShake, clamp(0.5 + jet, 0.5, 1.6));
+        // 巨浪不會一下子把船打沉：砸得再重，一道浪頭最多扣三成耐久。三道都被正面砸中、或船本來就破破爛爛的，耐久歸零才沉
+        b.hurt(b.spec.hp * Math.min(0.3, 0.12 * hit + 0.2 * Math.min(jet, 1.5)));
+        b.jolt = Math.max(b.jolt || 0, 2.5 + jet);   // 甲板上沒收進魚箱的魚會被拋起來
+        if (b.hp <= 0) b.founder('curl', sea.tsu.dx * -Math.sin(b.heading) + sea.tsu.dz * Math.cos(b.heading) > 0 ? 1 : -1);   // 順著浪的方向被掀翻
+        else if (aboard) toast(jet > 0.25 ? '捲下來的浪頭砸在船上！' : '浪頭砸在船上！');
+      }
+    }
+    hz.crestSide = side; hz.crestI = c.i;
+  } else { hz.crestSide = 1; hz.crestI = -1; }
+}
 function advance(dt) {
   time = inGame && clockBase !== null ? clockBase + performance.now() / 1000 : time + dt;
   updateOcean(dt);
@@ -5436,69 +5629,16 @@ function advance(dt) {
   else mb.update(dt, mb === boat ? boatEnv : calmEnv);
   if (cb) {
     cb.update(dt, cb === boat ? boatEnv : calmEnv);
-    const c2 = !cb.sinking && sea.vortices.length ? sea.coreAt(cb.x, cb.z) : null;
-    if (c2) cb.founder(c2, 1);
   }
   others.update(dt);
+  syncProps(dt);
   updateTows(dt);
   if (!piloted) collideBoats(mb, helm && boat === mb);
   if (cb) collideBoats(cb, true);
   updateMooring(dt, helm);
-  const hazard = !mb.sinking && !piloted;   // 隊友在幫我開的時候，漩渦、巨浪的傷害由他那邊算
-  const core = hazard && sea.vortices.length ? sea.coreAt(mb.x, mb.z) : null;
-  if (core) mb.founder(core, 1);   // 被拉進漩渦或水龍捲的中心
-  // 大漩渦與水龍捲：進入白浪旋臂就開始劇烈吸扯、水花四濺並扯傷船板
-  if (hazard && sea.vortices.length) {
-    const w = sea.whirlNear(mb.x, mb.z), spv = sea.spoutNear(mb.x, mb.z);
-    if (w.r < 155) {
-      const wk = w.s * ((155 - w.r) / 123) ** 2;
-      mb.hurt(mb.spec.hp * 0.055 * wk * dt);
-    }
-    if (w.r < 210 && w.s > 0.25 && Math.random() < 16 * w.s * (1 - w.r / 210) * dt) {
-      splash(mb.x + (Math.random() - 0.5) * mb.spec.len, mb.mesh.position.y + 0.45, mb.z + (Math.random() - 0.5) * mb.spec.beam, 5);
-    }
-    if (helm && w.r < 240 && w.s > 0.25 && !whirlToast) { whirlToast = true; toast('捲入大漩渦吸流了！立刻全速往外衝！'); }
-    if (w.r > 320) whirlToast = false;
-    if (helm && spv.r < 260 && spv.s > 0.35 && !spoutToast) { spoutToast = true; toast('捲入水龍捲暴風圈！頂風全速拉開距離！'); }
-    if (spv.r > 340) spoutToast = false;
-    if (spv.r < 220 && spv.s > 0.35 && Math.random() < 16 * spv.s * (1 - spv.r / 220) * dt) {
-      splash(mb.x + (Math.random() - 0.5) * mb.spec.len, mb.mesh.position.y + 0.5, mb.z + (Math.random() - 0.5) * mb.spec.beam, 5);
-    }
-  } else { whirlToast = false; spoutToast = false; }
-  // 巨浪淹進港口：停在岸邊的船被湧進來的水抬起來、退水時摔回去，會撞壞一些
-  for (const b of piloted ? [] : [mb]) {
-    if (b.sinking || tsuKAt(b.x, b.z) > 0.45) { b._surgePeak = 0; continue; }
-    const h = surgeAt(b.x, b.z);
-    b._surgePeak = Math.max(b._surgePeak || 0, h);
-    if (h < 0.3 && b._surgePeak > 1.2) {
-      b.hurt(b.spec.hp * Math.min(0.1, 0.025 * (b._surgePeak - 1.2)));   // 三道浪加起來大約扣兩成血
-      toast(`${b.spec.name}被湧進港口的浪撞壞了一些`);
-      b._surgePeak = 0;
-    }
-  }
-  if (!sea.tsu.on) surgeToast = false;
-  // 巨浪的浪頭掃過船的那一刻。還沒破的那一段是一道長坡：船頭對準就能翻過去。
-  // 正在捲的那一段不一樣：浪壁是往前倒的（爬不上去），浪頂的水拋出去、落在浪頂前方幾十公尺——
-  // 船在落點上，就是被好幾層樓高的水從上面直接壓下來，船頭對不對準都一樣。浪越高、船越小越撐不住
   jetShake *= Math.exp(-dt * 2.2);
-  if (sea.tsu.on && hazard) {
-    const tK = tsuKAt(mb.x, mb.z), c = sea.jetAt(mb.x, mb.z, tK, shared.uTime.value), side = c.q > c.land ? 1 : -1;
-    if (side < 0 && crestSide > 0 && c.i === crestI && c.q > -20) {
-      const jet = c.Bw * c.Hc / (5 + mb.spec.len);         // 捲舌砸下來的力道，1 以上船就沒了
-      const hit = c.B * Math.min(c.k, 1.1) * Math.min(1, tsuHK(tK) / TSU_H.peak);            // 翻白的浪頭拍在船上（還沒捲起來也算）
-      if (jet >= 1 || hit > 0.15) {
-        const aboard = player.boat === mb;
-        splash(mb.x, mb.mesh.position.y + 1, mb.z, jet >= 1 ? 90 : 50);
-        if (aboard) jetShake = Math.max(jetShake, clamp(0.5 + jet, 0.5, 1.6));
-        // 巨浪不會一下子把船打沉：砸得再重，一道浪頭最多扣三成耐久。三道都被正面砸中、或船本來就破破爛爛的，耐久歸零才沉
-        mb.hurt(mb.spec.hp * Math.min(0.3, 0.12 * hit + 0.2 * Math.min(jet, 1.5)));
-        mb.jolt = Math.max(mb.jolt || 0, 2.5 + jet);   // 甲板上沒收進魚箱的魚會被拋起來
-        if (mb.hp <= 0) mb.founder('curl', sea.tsu.dx * -Math.sin(mb.heading) + sea.tsu.dz * Math.cos(mb.heading) > 0 ? 1 : -1);   // 順著浪的方向被掀翻
-        else if (aboard) toast(jet > 0.25 ? '捲下來的浪頭砸在船上！' : '浪頭砸在船上！');
-      }
-    }
-    crestSide = side; crestI = c.i;
-  } else { crestSide = 1; crestI = -1; }
+  if (!piloted) boatHazards(mb, helm && boat === mb, dt);   // 隊友在幫我開的時候，漩渦、巨浪的傷害由他那邊算
+  if (cb) boatHazards(cb, helm && boat === cb, dt);          // 我幫隊友開的那艘：這裡算，耐久跟著位置一起送回去
   updateWreck(dt);
   if (helm && boat.fuel <= 0 && !fuelWarned) toast('沒油了，只能慢慢漂回去');
   fuelWarned = boat.fuel <= 0;
