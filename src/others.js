@@ -9,7 +9,7 @@ import { makeTabletMesh, holdTablet, poseTablet, setTabletScreen } from './table
 import { disposeTabletMesh } from './tabletLive.js';
 import { restyle } from './figure.js';
 
-// 頭上的名牌：一張小圖，永遠面向鏡頭、遠近都一樣大。左邊是本週稱號的小膠囊（週榜冠軍是金色的），中間名字，右邊等級；
+// 頭上的名牌：一張小圖，永遠面向鏡頭、遠近都一樣大。左邊是本週稱號的小膠囊（週榜冠軍是金色的），接著等級（Lv.N），最後是名字；
 // 同隊隊友：名牌加一圈綠框、名字和等級是綠字（其他跟一般人一樣）
 function nameTag(name, { title = '', gold = false, lv = 0, mate = false } = {}) {
   const cv = document.createElement('canvas'), ctx = cv.getContext('2d');
@@ -35,10 +35,9 @@ function nameTag(name, { title = '', gold = false, lv = 0, mate = false } = {}) 
     ctx.fillText(title, x + 6, h / 2 + 1);
     x += tw + 8;
   }
+  if (lvText) { ctx.font = small; ctx.fillStyle = mate ? '#2a8a52' : '#4a8fb5'; ctx.fillText(lvText, x, h / 2 + 2); x += lw + 6; }
   ctx.font = font; ctx.fillStyle = mate ? '#16843f' : '#1d6f9f';
   ctx.fillText(label, x, h / 2 + 1);
-  x += nw + 6;
-  if (lvText) { ctx.font = small; ctx.fillStyle = mate ? '#2a8a52' : '#4a8fb5'; ctx.fillText(lvText, x, h / 2 + 2); }
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, fog: false, sizeAttenuation: false }));
