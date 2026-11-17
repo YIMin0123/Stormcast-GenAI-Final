@@ -1,7 +1,8 @@
 // 三種船的規格。這個檔案不碰畫面，伺服器和瀏覽器共用同一份（船的模型與浮力在 boat.js）。
 // len / beam / draft：長、寬、吃水；deck：甲板離水線的高度；bul：舷牆高；rise：船首翹起的高度
 // speed：極速（公尺/秒）；turnRate：轉向靈活度；tiltK：隨浪搖晃的程度；hurtMul：浪打壞船的程度；waveSlow：大浪讓船慢下來的程度（0 = 不受影響）
-// costK：引擎升級的價錢倍率；cabin：駕駛艙範圍（沒有就是敞船）；helmX：掌舵時站的位置；box：內建魚艙的位置與大小
+// costK：引擎升級的價錢倍率；cabin：駕駛艙範圍（沒有就是敞船）；helmX：掌舵時站的位置；box：放魚箱的位置與大小
+// hatch：前甲板艙口（x 中心、s 邊長）；hold：艙口底下魚艙的長、寬、深（公尺，算容量用；畫面上只看得到艙口）
 // hp：耐久度；tank：油箱容量（公升）；burn：油門全開每秒吃多少油；fuelX：加油的位置（引擎旁）
 // maxCans / maxChums：甲板上放得下幾個油桶、誘魚桶；freshBonus：急凍魚艙讓賣價多幾成（同隊共享）
 // sonarRange：聲納掃多遠（公尺，0 = 裝不了）；lampMul：船首集魚燈讓夜裡趨光魚多幾倍；mass：噸位（船撞船時誰讓誰、拖船快慢）
@@ -19,7 +20,7 @@ export const BOAT_TYPES = {
     id: 'fisher', name: '近海漁船', price: 2500, len: 13, beam: 4.6, draft: 1.0, deck: 0.85, bul: 0.35, rise: 1.1,
     speed: 7.8, turnRate: 1.15, tiltK: 0.90, hurtMul: 0.85, waveSlow: 0.7, costK: 1,
     paint: [0.08, 0.42, 0.44], cabin: { x0: -4.2, x1: -0.8, hw: 1.3, top: 2.3 }, helmX: -2.5, helmR: 1.1,
-    hatch: { x: 2.0, s: 1.8 }, barrel: { x: 3.4, z: 0.9 },
+    hatch: { x: 2.0, s: 1.8 }, hold: { w: 1.5, d: 1.5, h: 0.9 }, barrel: { x: 3.4, z: 0.9 },
     box: { x: 0.5, z: 0, w: 1.05, d: 1.45, h: 0.58 },   // 內建活魚艙
     hp: 130, tank: 65, burn: 0.09, fuelX: -5.45,
     maxCans: 4, maxChums: 4, freshBonus: 0, sonarRange: 160, lampMul: 1.8, mass: 3.5,
@@ -28,7 +29,7 @@ export const BOAT_TYPES = {
     id: 'trawler', name: '遠洋大漁船', price: 9500, len: 18, beam: 6.2, draft: 1.3, deck: 1.05, bul: 0.45, rise: 1.4,
     speed: 8.65, turnRate: 0.92, tiltK: 0.45, hurtMul: 0.65, waveSlow: 0.0, costK: 1.8,
     paint: [0.55, 0.16, 0.12], cabin: { x0: -6.2, x1: -1.8, hw: 1.9, top: 2.5 }, helmX: -3.5, helmR: 1.1,
-    hatch: { x: 2.8, s: 2.5 }, barrel: { x: 5.2, z: 1.4 },
+    hatch: { x: 2.8, s: 2.5 }, hold: { w: 2.2, d: 2.2, h: 1.2 }, barrel: { x: 5.2, z: 1.4 },
     box: { x: -0.5, z: 0, w: 1.45, d: 2.25, h: 0.72 },  // 雙槽急凍魚艙
     hp: 240, tank: 140, burn: 0.15, fuelX: -7.45,
     maxCans: 6, maxChums: 6, freshBonus: 0.10, sonarRange: 240, lampMul: 2.2, mass: 9.0, joltMul: 0.5,

@@ -20,7 +20,7 @@ import { gainExp, lvOf, isGold, guildOf, syncTitles } from './guild.js';
 import { onPartyMsg, leaveParty, dropLinks, towCut, stepTows, expireAsks, partyMap, partyInfo, lfgList, mates } from './party.js';
 import { sendRaw } from './wire.js';
 import { placeOfSpot } from '../src/places.js';
-import { onBoxMsg, boxList, homeBoxes, savedBoxesOf, loadBoxes, dropBoxes, stowBoxes, resetBoxes, sellBox, buyBox, floatBoxes, inBoxes, expireOffers, returnPassengerBoxes, moveDeckBoxes } from './fishBoxes.js';
+import { onBoxMsg, boxList, homeBoxes, savedBoxesOf, loadBoxes, savedHatchOf, loadHatch, clearHatch, hatchOf, dropBoxes, stowBoxes, resetBoxes, sellBox, buyBox, floatBoxes, inBoxes, expireOffers, returnPassengerBoxes, moveDeckBoxes } from './fishBoxes.js';
 
 export const MAX_PLAYERS = 30;
 export const TICK = 0.1;                 // 世界每 0.1 秒算一次
@@ -121,7 +121,7 @@ export function profileOf(p) {
     kit.active = BOAT_ORDER.find((t) => kit.boats[t]);
     fish = [];
   } else if (p.boat) stored[p.boat.type] = { fuel: p.boat.s[10], cracks: p.boat.cracks };
-  return { kit, stored, fish, boxes: savedBoxesOf(p) };   // 圖鑑另外存（dex.js 的 Dexbooks），刷新不清
+  return { kit, stored, fish, boxes: savedBoxesOf(p), hatch: p.boat && p.boat.sunk ? [] : savedHatchOf(p) };   // 圖鑑另外存（dex.js 的 Dexbooks），刷新不清；船沉了魚艙的魚跟著沒了
 }
 const titleOf = (p) => p.wearTitle || '';   // 現在戴的稱號（每週漁會捐款榜算出來的，見 guild.js）
 // 名牌、聊天要顯示的：稱號、是不是金色的特殊稱號、等級
@@ -148,6 +148,7 @@ export function applyProfile(p, prof) {
     p.stored[type] = { fuel, cracks };
   }
   loadBoxes(p, prof.boxes, () => nextUid++);
+  loadHatch(p, prof.hatch, () => nextUid++);
   for (const f of Array.isArray(prof.fish) ? prof.fish.slice(0, 200) : []) {
     if (f && SPECIES[f.id]) p.fish.set(nextUid++, { id: f.id, kg: f.kg, len: f.len, value: f.value, by: f.by && typeof f.by.name === 'string' ? f.by : null });
   }
@@ -516,6 +517,7 @@ export class Room {
       case 'boatLost': {   // 沉完了：這艘船沒了。一艘都不剩的話送一艘小舢舨
         if (!p.boat || !p.boat.sunk) return;
         delete kit.boats[kit.active];
+        clearHatch(this, p);   // 魚艙裡的魚跟著船沉了
         const gift = !Object.keys(kit.boats).length;
         if (gift) kit.boats.skiff = { engineLv: 0 };
         kit.active = BOAT_ORDER.find((t) => kit.boats[t]);
@@ -528,8 +530,11 @@ export class Room {
         if (why) return this.send(p, { t: 'no', msg: why });
         if (!this.berthFreeFor(p, type)) return this.send(p, { t: 'no', msg: '這裡的泊位停不下那艘船（滿了或太小）' });
         if ([...this.loose.values()].some((e) => e.k === 'd' && e.b === p.id)
-          || [...this.boxes.values()].some((b) => b.k === 'd' && b.b === p.id)) {
+          || [...this.boxes.values()].some((b) => b.k === 'd' && b.b === p.id && !b.hatch)) {
           return this.send(p, { t: 'no', msg: '請先把甲板上的漁獲和魚箱搬下船，再換船' });
+        }
+        if (hatchOf(p)?.fish.length) {
+          return this.send(p, { t: 'no', msg: '請先把魚艙裡的魚拿出來，再換船' });
         }
         p.stored[kit.active] = { fuel: p.boat.s[10], cracks: p.boat.cracks };   // 收進倉庫的那艘：油量、破洞記著，下次換出來照舊
         kit.active = type;

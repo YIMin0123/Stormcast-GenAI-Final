@@ -1383,15 +1383,36 @@ function putBoxDown(d, water = false) {
 }
 // 手上的魚放進對準的箱子
 function fishIntoBox(d) {
-  const it = fish.held, why = boxes.fit(d, it.id, it.len);
-  if (why) return toast(why === 'long' ? `這條${it.sp.name}太大，放不進魚箱` : '魚箱滿了');
+  const it = fish.held, why = boxes.fit(d, it.id, it.len), what = d.h ? '魚艙' : '魚箱';
+  if (why) return toast(why === 'long' ? `這條${it.sp.name}太大，放不進${what}` : `${what}滿了`);
   if (!net.online) return toast('連線中斷，等接回去再放');
   net.send({ t: 'boxIn', bid: d.bid, uid: it.uid });
 }
 function boxInText(d) {
-  const it = fish.held, why = boxes.fit(d, it.id, it.len);
-  if (why) return why === 'long' ? `這條${it.sp.name}太大，放不進魚箱` : '魚箱滿了';
-  return d.o === net.id ? `按 E 放進魚箱（已經 ${Math.round(boxes.used(d) * 100)}% 滿）` : `按 E 放進 ${others.map.get(d.o)?.name ?? '別人'} 的魚箱（等於送給他）`;
+  const it = fish.held, why = boxes.fit(d, it.id, it.len), what = d.h ? '魚艙' : '魚箱';
+  if (why) return why === 'long' ? `這條${it.sp.name}太大，放不進${what}` : `${what}滿了`;
+  return d.o === net.id ? `按 E 放進${what}（已經 ${Math.round(boxes.used(d) * 100)}% 滿）` : `按 E 放進 ${others.map.get(d.o)?.name ?? '別人'} 的${what}（等於送給他）`;
+}
+// ---- 魚艙（前甲板的艙口）：艙蓋船主和隊友都能開關；開著才放得進、拿得出 ----
+const hatchMine = (d) => d.o === net.id || party.has(d.o);
+const hatchWho = (d) => (d.o === net.id ? '' : `${others.map.get(d.o)?.name ?? '別人'} 的`);
+function hatchLid(d, open) {
+  if (!hatchMine(d)) return toast(`這是 ${others.map.get(d.o)?.name ?? '別人'} 的魚艙，只有船主和他的隊友能開`);
+  if (!net.online) return toast('連線中斷，等接回去再試');
+  audio.play('drop');
+  net.send({ t: 'hatchLid', bid: d.bid, open });
+}
+// 抱著魚箱對著自己打開的魚艙：箱子有魚就倒進去，空箱子就從艙裡裝滿
+function hatchPour(d) {
+  if (d.o !== net.id) return toast('只能倒進自己的魚艙（魚可以一條一條放進隊友的魚艙）');
+  if (!d.open) return toast('艙蓋關著：先放下魚箱，把艙蓋打開');
+  if (!net.online) return toast('連線中斷，等接回去再試');
+  net.send({ t: 'hatchPour', bid: d.bid });
+}
+function hatchText(d) {
+  const n = d.fish.length, fill = `${n} 條、${Math.round(boxes.used(d) * 100)}% 滿`;
+  if (!hatchMine(d)) return `${hatchWho(d)}魚艙（${d.open ? `${n} 條` : '艙蓋關著'}）`;
+  return d.open ? `按 E 蓋上${hatchWho(d)}艙蓋（魚艙 ${fill}）` : `按 E 打開${hatchWho(d)}艙蓋（魚艙 ${fill}）`;
 }
 // 送東西給對準的人（what：{ uid } 手上的魚、{ bid } 抱著的箱子），對方要按接受
 function giveTo(a, what) {
@@ -2526,7 +2547,7 @@ const _aimO = new THREE.Vector3(), _aimD = new THREE.Vector3(), _aimV = new THRE
 const _aimFbO = new THREE.Vector3(), _aimFbD = new THREE.Vector3();
 const _aimRay = new THREE.Raycaster(), _aimHits = [];
 function aimTarget() {
-  if (mode !== 'walk' || player.swim || drown) return null;
+  if (mode !== 'walk' || player.swim || drown || player.climb) return null;   // 爬梯子途中騰不出手
   const fp = view.walk.fp;
   _aimO.copy(camera.position);
   camera.getWorldDirection(_aimD);
@@ -2534,11 +2555,22 @@ function aimTarget() {
   const hb = heldBox(), held = fish.held, carrying = !!(hb || held);
   const list = [], b = player.boat, px = player.x, pz = player.z;
   const add = (kind, pos, r, data = {}) => list.push({ kind, pos, r, ...data });
-  if (b && !b.sinking && (!carrying || held?.can)) {
+  // 大漁船的二樓瞭望台：上面只能爬梯子下去（甲板上的東西都搆不到）
+  if (b && player.roof === b) {
+    const L = b.parts.ladder;
+    b.mesh.updateMatrixWorld();
+    if (!carrying && Math.hypot(player.lx - L.top.x, player.lz - L.top.z) < 1.4) {
+      add('ladder', L.atTop.clone().applyMatrix4(b.mesh.matrixWorld), 0.5, { boat: b, up: false, rayMesh: b.parts.ladderObj, rayR: 1.4 });
+    }
+  } else if (b && !b.sinking && (!carrying || held?.can)) {
     b.mesh.updateMatrixWorld();
     const S = b.spec, D = S.deck, P = b.parts;
     const at = (x, y, z) => new THREE.Vector3(x, y, z).applyMatrix4(b.mesh.matrixWorld);
     const near = (x, z, r) => Math.hypot(player.lx - x, player.lz - z) < r;
+    // 爬上瞭望台的鐵梯：走到梯子前按 E 才爬（路過不會不小心爬上去）
+    if (!carrying && !player.seat && P.ladder && near(P.ladder.foot.x, P.ladder.foot.z, 1.5)) {
+      add('ladder', at(P.ladder.at.x, P.ladder.at.y, P.ladder.at.z), 0.5, { boat: b, up: true, rayMesh: P.ladderObj, rayR: 1.2 });
+    }
     // 舵、魚箱、油箱只有自己的船能動；別人的船只能搭（坐下），同隊隊友的船另外可以幫忙掌舵、開關燈。破洞海上修不了（要開去修船屋）
     if (b === myBoat) {
       if (near(P.tank.x, P.tank.z, 1.9)) add('tank', at(P.tank.x, P.tank.y, P.tank.z), 0.36, { boat: b, rayMesh: P.tankObj, rayR: 0.65 });
@@ -2600,8 +2632,8 @@ function aimTarget() {
   }
   const pickPass = (orig, dir, minT, maxT) => {
     const candidates = list.slice();
-    if (!hb && (!held || !held.can)) {
-      for (const hit of boxes.pick(orig, dir, player.pos, { fp, myId: net.id, tMin: minT, wantOut: !held && fishing.state === 'idle', putOnly: !!(held && !held.can) })) {
+    if ((!held || !held.can) && !player.roof) {   // 抱著魚箱時只找魚艙（倒進去、裝出來）；在瞭望台上搆不到甲板的箱子
+      for (const hit of boxes.pick(orig, dir, player.pos, { fp, myId: net.id, tMin: minT, wantOut: !hb && !held && fishing.state === 'idle', putOnly: !!(held && !held.can), onlyHatch: !!hb })) {
         candidates.push(hit);
       }
     }
@@ -2664,6 +2696,7 @@ function aimOutlineTargets(a) {
   switch (a.kind) {
     case 'fpile': return { objs: [a.fishMesh], ignore: null };
     case 'fbox': return { objs: [a.mesh], ignore: [a.inner] };
+    case 'hatch': return { objs: [a.mesh], ignore: [a.inner] };
     case 'item': return { objs: [a.item?.mesh], ignore: null };
     case 'chest': return { objs: [a.chest?.mesh], ignore: null };
     case 'player': return { objs: [others.map.get(a.pid)?.fig?.mesh], ignore: null };
@@ -2672,6 +2705,7 @@ function aimOutlineTargets(a) {
     case 'lamp': return { objs: [a.boat?.parts?.switchObj], ignore: null };
     case 'fishLamp': return { objs: [a.boat?.parts?.bowLamp], ignore: null };
     case 'seat': return { objs: [a.seat?.mesh], ignore: null };
+    case 'ladder': return { objs: [a.boat?.parts?.ladderObj], ignore: null };
     default: return null;
   }
 }
@@ -2697,6 +2731,7 @@ function interact() {
       return net.send({ t: 'sell', bid: hb.bid });
     }
     if (kind === 'player') return giveTo(a, { bid: hb.bid });
+    if (kind === 'hatch' && a.box.open) return hatchPour(a.box);
     return putBoxDown(hb);
   }
   if (fish.held && fish.held.can) {
@@ -2712,6 +2747,7 @@ function interact() {
   }
   if (fish.held) {
     if (kind === 'fbox') return fishIntoBox(a.box);
+    if (kind === 'hatch') return a.box.open ? fishIntoBox(a.box) : hatchLid(a.box, true);   // 艙蓋關著：先打開（拿著魚也能用腳踢開）
     if (kind === 'player') return giveTo(a, { uid: fish.held.uid });
     if (kind === 'basket') refreshBoard(fish.toBasket());
     else fish.drop();
@@ -2746,6 +2782,7 @@ function interact() {
       if (a.box.o !== net.id) return toast(`這是 ${others.map.get(a.box.o)?.name ?? '別人'} 的魚箱，只有他搬得動`);
       if (!net.online) return toast('連線中斷，等接回去再搬');
       return net.send({ t: 'boxTake', bid: a.box.bid });
+    case 'hatch': return hatchLid(a.box, !a.box.open);
     case 'fpile':   // 從自己的箱子拿出指到的那一條魚
       if (!net.online) return toast('連線中斷，等接回去再拿');
       return net.send({ t: 'boxOut', bid: a.box.bid, uid: a.fish?.uid });
@@ -2761,6 +2798,7 @@ function interact() {
       if (a.boat === myBoat) return doTow(towAction(myBoat));
       return doTow(towOfId(net.id) ? { cut: true } : { cut: false, to: a.boat.owner.id }, true);   // 別人的船：請他拖我的船
     case 'seat': return sitDown(a.boat, a.seat);
+    case 'ladder': return player.startClimb(a.boat, a.up);
     case 'switch': {
       // 室內燈：先在自己這邊換（按下去馬上有反應），再告訴伺服器，它會轉給同房的每個人
       if (!net.online) return toast('連線中斷，等接回去再按');
@@ -2851,6 +2889,7 @@ function updatePrompt() {
       const hb = heldBox(), n = hb.fish.length;
       text = kind === 'basket' ? (n ? `按 E 整箱賣出（${n} 條，$${boxes.value(hb)}）` : '魚箱是空的')
         : kind === 'player' ? `按 E 把魚箱（${n} 條）送給 ${a.name}（對方要按接受）`
+          : kind === 'hatch' && a.box.o === net.id && a.box.open ? (n ? `按 E 把魚箱裡的 ${n} 條倒進魚艙（艙內 ${a.box.fish.length} 條）` : a.box.fish.length ? `按 E 從魚艙裝魚到魚箱（艙內 ${a.box.fish.length} 條）` : '魚艙和魚箱都是空的')
           : `抱著魚箱（${n} 條、${boxes.kg(hb).toFixed(1)} 公斤${boxes.speed(hb) < 0.99 ? '，走得比較慢' : ''}）　按 E 放下`;
     } else if (fish.held && fish.held.chum) {
       text = `誘魚桶（身上 ${kit.chum || 0} 桶）　右鍵蓄力丟進海裡就施放，按 E 放下`;
@@ -2861,6 +2900,7 @@ function updatePrompt() {
     } else if (fish.held) {
       text = kind === 'basket' ? '按 E 把魚放進籃子'
         : kind === 'fbox' ? boxInText(a.box)
+          : kind === 'hatch' ? (a.box.open ? boxInText(a.box) : hatchMine(a.box) ? `按 E 打開${hatchWho(a.box)}艙蓋` : hatchText(a.box))
           : kind === 'player' ? `按 E 把${fish.held.sp.name}送給 ${a.name}（對方要按接受）`
             : `${fishLabel(fish.held)}　按 E 放下${nearBasket() ? '（對準籃子可以放進去）' : ''}，右鍵蓄力丟出去`;
     } else if (fishing.state === 'wait') text = '等魚上鉤…（按 F 收回）';
@@ -2878,11 +2918,13 @@ function updatePrompt() {
       const d = a.box, n = d.fish.length;
       text = d.o === net.id ? `按 E 抱起魚箱（${n ? `${n} 條、${boxes.kg(d).toFixed(1)} 公斤` : '空的'}）`
         : `${others.map.get(d.o)?.name ?? '別人'} 的魚箱（${n} 條）：只有他搬得動，可以把魚放進去送給他`;
-    } else if (kind === 'fpile') text = `按 E 拿出${a.name || '一條魚'}（箱內 ${a.box.fish.length} 條）`;
+    } else if (kind === 'hatch') text = hatchText(a.box);
+    else if (kind === 'fpile') text = `按 E 拿出${a.name || '一條魚'}（${a.box.h ? '艙' : '箱'}內 ${a.box.fish.length} 條）`;
     else if (kind === 'tank') text = `油箱　${litres(ab.fuel)} / ${ab.spec.tank} 公升（提著油桶對準這裡按 E 加油）`;
     else if (kind === 'lamp') text = ab.lampOn ? '按 E 關掉船燈' : '按 E 打開船燈';
     else if (kind === 'fishLamp') text = ab.fishLamp ? '按 E 關掉船首集魚燈' : `按 E 打開船首集魚燈（夜裡船邊趨光魚多 ${ab.spec.lampMul} 倍）`;
     else if (kind === 'seat') text = player.seat && player.seat.src === a.seat ? '按 E 站起來' : '按 E 坐下';
+    else if (kind === 'ladder') text = a.up ? '按 E 爬上瞭望台' : '按 E 爬下梯子';
     else if (kind === 'button') text = fish.basket.length ? `按 E 按下按鈕賣出（$${fish.basketTotal}）` : '把魚拿過來放進籃子，就會顯示價格';
     else if (kind === 'basket') text = '把魚拿過來放進籃子，就會顯示價格';
     else if (kind === 'switch') text = `按 E ${ROOM_LIGHTS[a.sw.zone].on ? '關掉' : '打開'}${ZONE_LABEL(a.sw.zone)}`;
@@ -2939,8 +2981,10 @@ function updatePrompt() {
   touch.update({
     on: inGame && !tabOpen() && !chat.isOpen && !wheel.isOpen, helm: mode === 'helm', sink: mode === 'sink', held: !!fish.held && !player.swim,
     target: !!a || mode === 'helm' || !!fish.held || !!heldBox() || !!player.seat,
-    act: mode === 'helm' ? '放手' : kind === 'player' ? '送給他' : heldBox() ? (kind === 'basket' ? '賣出' : '放下')
-      : fish.held ? (kind === 'tank' || kind === 'basket' || kind === 'fbox' ? '放進去' : '放下')
+    act: mode === 'helm' ? '放手' : kind === 'player' ? '送給他' : heldBox() ? (kind === 'basket' ? '賣出' : kind === 'hatch' && a.box.open && a.box.o === net.id ? (heldBox().fish.length ? '倒進去' : '裝魚') : '放下')
+      : fish.held ? (kind === 'tank' || kind === 'basket' || kind === 'fbox' || (kind === 'hatch' && a.box.open) ? '放進去' : kind === 'hatch' ? '開艙' : '放下')
+      : kind === 'hatch' ? (a.box.open ? '關艙' : '開艙')
+      : kind === 'ladder' ? (a.up ? '爬上去' : '爬下去')
       : kind === 'fpile' ? '取出' : kind === 'fbox' && a.box.o === net.id ? '抱起' : player.seat && !a ? '站起來' : '互動',
   });
   touchSet($('prompt'), text);   // 字和圖示都沒變時它自己會跳過
@@ -5029,6 +5073,11 @@ net.on('boxedIn', (m) => {
 });
 net.on('boxNo', (m) => { if (pendingIn.has(m.uid)) boxBounce(m.uid, m.msg); else if (m.msg) toast(m.msg); });
 net.on('boxGift', (m) => toast(`${m.from} 放了一條${SPECIES[m.id]?.name ?? '魚'}到你的魚箱`));
+net.on('hatchPoured', (m) => {
+  if (!m.n) return toast(m.into ? '魚艙滿了，倒不進去' : '魚箱裝不下了');
+  audio.play('drop');
+  toast(m.into ? `倒了 ${m.n} 條進魚艙${m.left ? `，箱子裡還剩 ${m.left} 條（艙滿了）` : ''}` : `從魚艙裝了 ${m.n} 條到魚箱${m.left ? `，艙裡還剩 ${m.left} 條` : ''}`);
+});
 net.on('boxOut', (m) => {
   const f = m.fish;
   audio.play('pick');

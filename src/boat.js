@@ -6,6 +6,7 @@ import { buildFigure } from './figure.js';
 export { buildFigure };
 
 import { BOAT_TYPES, MAX_LEVEL, BOAT_PAINTS, CRACK_SLOW } from './boatdata.js';
+import { HATCH_WALL, HATCH_H } from './boxdata.js';
 // 三種船的規格在 boatdata.js（伺服器也用同一份）
 export { BOAT_TYPES, MAX_LEVEL };
 const CRACKS = 6;          // 耐久度分成幾處破洞：全破了船就沉
@@ -284,8 +285,25 @@ function buildCabinBoat(S, g, blocks) {
   stack.position.set(ex - 0.05, D + 1.6, 0.4);
   g.add(stack);
 
-  // ---- 前甲板：艙蓋、靠牆的木箱、木桶、繩圈、浮球 ----
-  g.add(box(S.hatch.s, 0.28, S.hatch.s, darkWood, S.hatch.x, D + 0.14, 0));
+  // ---- 前甲板：魚艙艙口、靠牆的木箱、木桶、繩圈、浮球 ----
+  // 艙口：四片圍板＋塗暗的艙底（看起來很深），上面的蓋子繞鉸鏈翻開（setHatchLid）；艙裡的魚由 fishBox.js 擺
+  const hatchObj = new THREE.Group(), hatchLids = [];
+  {
+    const s = S.hatch.s, hx = S.hatch.x, W = HATCH_WALL, y = D + HATCH_H / 2;
+    hatchObj.add(box(s, HATCH_H, W, darkWood, hx, y, -s / 2 + W / 2), box(s, HATCH_H, W, darkWood, hx, y, s / 2 - W / 2),
+      box(W, HATCH_H, s - W * 2, darkWood, hx - s / 2 + W / 2, y, 0), box(W, HATCH_H, s - W * 2, darkWood, hx + s / 2 - W / 2, y, 0),
+      box(s - W * 2, 0.02, s - W * 2, lambert(0x14181c), hx, D + 0.02, 0));
+    if (S.id !== 'trawler') {   // 近海漁船：一整片木蓋，鉸鏈在靠船頭那一邊，往船頭翻起來
+      const lid = new THREE.Group();
+      lid.position.set(hx + s / 2, D + HATCH_H, 0);
+      lid.add(box(s + 0.04, 0.05, s + 0.04, wood, -s / 2, 0.025, 0));
+      for (const k of [0.25, 0.75]) lid.add(box(0.07, 0.035, s * 0.86, darkWood, -s * k, 0.065, 0));
+      lid.add(box(0.06, 0.05, 0.22, iron, -s + 0.04, 0.07, 0));   // 拉手
+      hatchObj.add(lid);
+      hatchLids.push({ g: lid, axis: 'z', dir: -1, max: 1.95 });
+    }
+  }
+  g.add(hatchObj);
   const crate = lambert(0xa9824e), kx = x1 + 0.4;
   g.add(box(0.55, 0.42, 0.8, crate, kx, D + 0.21, 0.45), box(0.55, 0.42, 0.8, crate, kx, D + 0.63, 0.45),
     box(0.55, 0.42, 0.8, crate, kx, D + 0.21, -0.5));
@@ -352,7 +370,7 @@ function buildCabinBoat(S, g, blocks) {
   // ---- 兩種船各自的樣子：近海漁船是輕快的海釣船（前甲板一頂藍白條紋遮陽棚），遠洋大漁船是雙層艦橋＋船尾 A 字吊架的大船 ----
   const seats = [{ x: sx, z: sz, h: 0.45, yaw: -Math.PI / 2, out: [0, 0.6], mesh: seatMesh }];   // 坐的位置、坐墊高度、面向（相對船首）、站起來時往哪裡挪
   const white = lambert(0xf2f0ea), yellow = lambert(0xe8c13a), black = lambert(0x1d1b1a), steel = lambert(0x8d979c);
-  let radarBar = null;
+  let radarBar = null, roofDeck = null, ladder = null, ladderObj = null;   // roofDeck／ladder：大漁船的二樓瞭望台與鐵梯（按 E 爬上爬下，見 player.js 的 startClimb）
   const searchLamps = [];
   if (S.id === 'fisher') {
     // 遮陽棚：四根細白柱撐著藍白相間的帆布頂
@@ -380,8 +398,10 @@ function buildCabinBoat(S, g, blocks) {
       for (let px = x0 - 0.2; px <= x1 + 0.21; px += (x1 - x0 + 0.4) / 4) g.add(box(0.05, rh, 0.05, rail, px, fy + rh / 2, pz));
     }
     g.add(box(0.05, 0.05, hw * 2 + 0.2, rail, x1 + 0.2, fy + rh, 0), box(0.05, 0.035, hw * 2 + 0.2, rail, x1 + 0.2, fy + rh * 0.5, 0));
-    for (const pz of [-0.32, 0.32]) g.add(box(0.05, top + 0.2, 0.05, rail, x0 - 0.12, D + (top + 0.2) / 2, -hw + 0.5 + pz));
-    for (let y = D + 0.3; y < D + top; y += 0.32) g.add(box(0.04, 0.035, 0.64, rail, x0 - 0.12, y, -hw + 0.5));
+    ladderObj = new THREE.Group();
+    for (const pz of [-0.32, 0.32]) ladderObj.add(box(0.05, top + 0.2, 0.05, rail, x0 - 0.12, D + (top + 0.2) / 2, -hw + 0.5 + pz));
+    for (let y = D + 0.3; y < D + top; y += 0.32) ladderObj.add(box(0.04, 0.035, 0.64, rail, x0 - 0.12, y, -hw + 0.5));
+    g.add(ladderObj);
     // 雷達塔：白色的 T 型塔，頂上一根一直轉的雷達橫桿
     const tx = cx + 0.9, th = 2.3;
     g.add(box(0.14, th, 0.14, white, tx, fy + th / 2, 0), box(0.1, 0.08, 1.5, white, tx, fy + th * 0.7, 0), box(0.5, 0.1, 0.5, white, tx, fy + th + 0.05, 0));
@@ -425,9 +445,13 @@ function buildCabinBoat(S, g, blocks) {
     }
     // 前甲板：藍白雙槽急凍魚艙蓋（冷媒管、扣環）、捲網絞盤、白色圓筒救生筏
     const hs = S.hatch.s, hx = S.hatch.x, lid = lambert(0xe9eef2), frz = lambert(0x2f6fb0);
-    for (const pz of [-hs / 4, hs / 4]) {
-      g.add(box(hs - 0.2, 0.08, hs / 2 - 0.14, lid, hx, D + 0.32, pz), box(hs - 0.1, 0.05, 0.06, frz, hx, D + 0.37, pz));
-      for (const px of [-hs * 0.3, hs * 0.3]) g.add(box(0.1, 0.05, 0.14, steel, hx + px, D + 0.37, pz + (pz > 0 ? 1 : -1) * (hs / 4 - 0.1)));
+    for (const sd of [-1, 1]) {   // 兩片蓋子，鉸鏈在外側（靠船舷），往兩邊翻開
+      const zo = sd * (hs / 2 - 0.07), rel = -sd * (hs / 4 - 0.07), lidG = new THREE.Group();
+      lidG.position.set(hx, D + HATCH_H, zo);
+      lidG.add(box(hs - 0.2, 0.08, hs / 2 - 0.14, lid, 0, 0.04, rel), box(hs - 0.1, 0.05, 0.06, frz, 0, 0.09, rel));
+      for (const px of [-hs * 0.3, hs * 0.3]) lidG.add(box(0.1, 0.05, 0.14, steel, px, 0.09, rel + sd * (hs / 4 - 0.1)));
+      hatchObj.add(lidG);
+      hatchLids.push({ g: lidG, axis: 'x', dir: sd, max: 1.85 });
     }
     g.add(box(hs + 0.04, 0.3, 0.1, frz, hx, D + 0.15, 0), box(0.06, 0.06, hs * 0.8, steel, hx - hs / 2 - 0.06, D + 0.2, 0));
     const wx = hx + hs / 2 + 1.1;
@@ -443,6 +467,17 @@ function buildCabinBoat(S, g, blocks) {
     raft.position.set(rfx, fy + 0.4, rfz);
     g.add(raft, box(0.1, 0.12, 0.7, rail, rfx - 0.3, fy + 0.06, rfz), box(0.1, 0.12, 0.7, rail, rfx + 0.3, fy + 0.06, rfz),
       box(0.06, 0.62, 0.62, lambert(0xc8352a), rfx, fy + 0.4, rfz));
+    // 瞭望台站得到的地方（船身座標）：平台範圍扣掉雷達塔、兩顆探照燈、救生筏、短桅；梯子：腳下站哪、爬哪一條、上去落在哪
+    const lz = -hw + 0.5, walkY = fy + 0.025;
+    roofDeck = {
+      x0: x0 - 0.2, x1: x1 + 0.12, z0: -hw - 0.02, z1: hw + 0.02, y: walkY,
+      blocks: [[tx - 0.17, tx + 0.17, -0.17, 0.17], [x1 - 0.22, x1 + 0.3, -hw - 0.1, -hw + 0.48], [x1 - 0.22, x1 + 0.3, hw - 0.48, hw + 0.1],
+        [rfx - 0.56, rfx + 0.56, rfz - 0.4, rfz + 0.4], [cx - 0.95, cx - 0.65, -0.15, 0.15]],
+    };
+    ladder = {
+      foot: new THREE.Vector3(x0 - 0.55, D, lz), rung: x0 - 0.32, top: new THREE.Vector3(x0 + 0.12, walkY, lz),
+      at: new THREE.Vector3(x0 - 0.12, D + 1.1, lz), atTop: new THREE.Vector3(x0 - 0.12, walkY + 0.45, lz),   // 準心對準哪裡（在下面、在上面）
+    };
     // 右舷再一張釣魚長椅（左舷那張原本就有）：四個人的船隊都坐得下
     const sz2 = -sz, seat2 = new THREE.Group();
     seat2.add(box(1.3, 0.06, 0.36, wood, sx, D + 0.42, sz2));
@@ -515,7 +550,7 @@ function buildCabinBoat(S, g, blocks) {
   helmsman.position.set(wheelPos.x - HELM_GAP, D, 0);
   g.add(helmsman);
   return {
-    sonar, sonarCtx, sonarTex, bowLamp, bowLampLens: lampLens, bowLampPool: pool, searchLamps, radarBar,
+    sonar, sonarCtx, sonarTex, bowLamp, bowLampLens: lampLens, bowLampPool: pool, searchLamps, radarBar, hatchObj, hatchLids, roofDeck, ladder, ladderObj,
     bowLampAt: new THREE.Vector3(blx + 0.1, bly + 0.55, 0), bowLampR: 0.5,     // 準心要對準哪裡才能開關集魚燈
     wheel, wheelPos, throttle, helmsman, lantern, lever, pilot, tankObj, switchObj, roofPaintMat: paint,
     helm: wheelPos,                                       // 準心要對準哪裡才能掌舵：方向盤
@@ -1221,9 +1256,24 @@ export class Boat {
     return !!h && Math.abs(lx - h.x) <= h.s / 2 && Math.abs(lz) <= h.s / 2;
   }
 
+  // 大漁船的二樓瞭望台：(lx, lz) 站不站得上去；站在上面時腳下的高度（世界座標）
+  roofContains(lx, lz) {
+    const R = this.parts.roofDeck;
+    return !!R && lx > R.x0 && lx < R.x1 && lz > R.z0 && lz < R.z1 && !R.blocks.some((r) => lx > r[0] && lx < r[1] && lz > r[2] && lz < r[3]);
+  }
+  roofWalkY(x, z) { return this.deckY(x, z) + (this.parts.roofDeck.y - this.spec.deck) / this.normal.y; }
+
+  // 艙口上面多高：蓋著是蓋子，打開了是艙底
+  hatchTop() { return this.hatchOpen ? 0.03 : HATCH_H; }
+  // 魚艙的蓋子翻開幾成（0 蓋著、1 全開）；open：開著時人和魚踩在艙底
+  setHatchLid(k, open) {
+    this.hatchOpen = !!open;
+    for (const l of this.parts.hatchLids || []) l.g.rotation[l.axis] = l.dir * l.max * k;
+  }
+
   // 船身座標 (lx, lz) 處的甲板或艙蓋表面高度（相對於船原點）
   deckLocalY(lx, lz) {
-    return this.spec.deck + (this.onHatch(lx, lz) ? 0.28 : 0);
+    return this.spec.deck + (this.onHatch(lx, lz) ? this.hatchTop() : 0);
   }
 
   // 艙蓋是甲板上的實體箱蓋；人可以踩上它。
@@ -1231,7 +1281,7 @@ export class Boat {
     const y = this.deckY(x, z);
     if (!this.spec.hatch) return y;
     const l = this.toLocal(x, z);
-    return this.onHatch(l.x, l.z) ? y + 0.28 / this.normal.y : y;
+    return this.onHatch(l.x, l.z) ? y + this.hatchTop() / this.normal.y : y;
   }
 
   blockedLocal(lx, lz) {

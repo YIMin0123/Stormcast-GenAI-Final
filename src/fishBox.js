@@ -1,12 +1,13 @@
 // 魚箱（瀏覽器這邊）：照伺服器傳來的狀態把每個箱子畫出來——抱在誰手上、放在地上、甲板上、浮在海上，裡面有哪些魚。
 // 箱子怎麼動都由伺服器決定（見 server/fishBoxes.js），這裡只畫、只回答「哪個箱子在哪、裝得下嗎」。
 // 自己的箱子離人太遠時，畫面上標出它在哪。
+// 魚艙（d.h 是船主開的船種）：不畫木箱，魚擺在那艘船的艙口裡；艙蓋照 d.open 慢慢翻開／蓋上（boat.setHatchLid），蓋著時看不到裡面的魚
 // env：scene、figureOf(id) 某個玩家的人物模型、boatOf(id) 某個玩家的船、waveAt(x, z) 浪高、myId() 自己的編號
 import * as THREE from 'three';
 import { FISHBOX } from './config.js';
 import { SPECIES } from './fishdata.js';
 import { makeFishMesh } from './fish.js';
-import { BOX_WALL, boxFit, boxUsed, boxSpeed, pickBoxLocal } from './boxdata.js';
+import { BOX_WALL, boxFit, boxUsed, boxSpeed, pickBoxLocal, BOX_SPEC, hatchSpec } from './boxdata.js';
 
 const WALL = BOX_WALL;   // 箱壁厚度
 const wood = new THREE.MeshLambertMaterial({ color: 0xa9824e });
@@ -40,17 +41,28 @@ export class BoxWorld {
     for (const d of list || []) this.set(d);
   }
 
+  // 這個箱子的尺寸：魚艙照船主開的船（沒有艙口的船是 null：不畫、不能用）
+  spec(d) { return d.h ? hatchSpec(d.h) : BOX_SPEC; }
+
   set(d) {
     let e = this.map.get(d.bid);
     if (!e) {
-      const crateMesh = crate(), mesh = new THREE.Group(), inner = new THREE.Group();
+      const mesh = new THREE.Group(), inner = new THREE.Group();
       inner.position.y = WALL;
-      mesh.add(crateMesh, inner);
-      e = { d, mesh, crate: crateMesh, inner, fishBoxes: [], key: '' };
+      if (d.h) {   // 魚艙：cover 蓋著時藏起來（裡面的魚堆高了會穿出蓋子）
+        const cover = new THREE.Group();
+        cover.add(inner);
+        mesh.add(cover);
+        e = { d, mesh, crate: null, cover, inner, fishBoxes: [], key: '', lid: 0, boat: null };
+      } else {
+        const crateMesh = crate();
+        mesh.add(crateMesh, inner);
+        e = { d, mesh, crate: crateMesh, inner, fishBoxes: [], key: '' };
+      }
       this.map.set(d.bid, e);
     }
     e.d = d;
-    const key = d.fish.map((f) => f.uid).join(',');
+    const key = `${d.h || ''}|${d.fish.map((f) => f.uid).join(',')}`;
     if (key !== e.key) { e.key = key; this._fill(e); }
     this._place(e);
   }
@@ -67,16 +79,16 @@ export class BoxWorld {
   // 箱子裡的魚：一條一條平躺著往上疊（太長的斜著放），高度照已經佔掉的體積算
   _fill(e) {
     for (const c of [...e.inner.children]) c.removeFromParent();
-    const list = e.d.fish, boxes = [];
+    const list = e.d.fish, boxes = [], S = this.spec(e.d) || BOX_SPEC;
     list.forEach((f, i) => {
       const sp = SPECIES[f.id];
       if (!sp) return;
       const m = makeFishMesh(sp, f.len);
       m.userData.uid = f.uid;
-      const k = boxUsed(list.slice(0, i)), slant = f.len > FISHBOX.w * 0.95 ? Math.atan2(FISHBOX.d, FISHBOX.w) : 0;
-      const room = Math.max(0, FISHBOX.w - f.len * Math.cos(slant)) / 2;
-      const x = ((i * 0.37) % 1 - 0.5) * 2 * room, z = ((i * 0.61) % 1 - 0.5) * Math.max(0, FISHBOX.d - f.len * Math.sin(slant) - 0.15);
-      m.position.set(x, f.len * sp.w / 2 + k * FISHBOX.h * 0.9, z);
+      const k = boxUsed(list.slice(0, i), S), slant = f.len > S.w * 0.95 ? Math.atan2(S.d, S.w) : 0;
+      const room = Math.max(0, S.w - f.len * Math.cos(slant)) / 2;
+      const x = ((i * 0.37) % 1 - 0.5) * 2 * room, z = ((i * 0.61) % 1 - 0.5) * Math.max(0, S.d - f.len * Math.sin(slant) - 0.15);
+      m.position.set(x, f.len * sp.w / 2 + k * S.h * 0.9, z);
       m.rotation.set(Math.PI / 2, 0, (i % 2 ? Math.PI : 0) + (i % 2 ? -slant : slant));
       m.updateMatrix();
       const b = new THREE.Box3().setFromObject(m);
@@ -91,6 +103,16 @@ export class BoxWorld {
   _place(e) {
     const d = e.d, m = e.mesh;
     m.visible = true;
+    if (d.h) {   // 魚艙：放在船主那艘船的艙口
+      const b = this.env.boatOf(d.b);
+      if (e.boat && e.boat !== b) e.boat.setHatchLid?.(0, false);
+      e.boat = b && b.spec.hatch && this.spec(d) ? b : null;
+      if (!e.boat) { m.visible = false; this.env.scene.add(m); return; }
+      b.mesh.add(m);
+      m.position.set(b.spec.hatch.x, b.spec.deck, 0);
+      m.rotation.set(0, 0, 0);
+      return;
+    }
     if (d.k === 'hand') {
       const fig = this.env.figureOf(d.o);
       if (!fig) { m.visible = false; this.env.scene.add(m); return; }
@@ -114,8 +136,20 @@ export class BoxWorld {
 
   // 每幀：浮在海上的跟著浪起伏；人物、船換了（剛進來、換船）就重新掛上去
   update(time) {
+    const dt = Math.min(0.1, Math.max(0, time - (this._t ?? time)));
+    this._t = time;
     for (const e of this.map.values()) {
       const d = e.d;
+      if (d.h) {
+        const b = this.env.boatOf(d.b);
+        if (b !== e.boat || (b && e.mesh.parent !== b.mesh)) this._place(e);
+        if (!e.boat) continue;
+        e.lid += Math.max(-dt * 1.6, Math.min(dt * 1.6, (d.open ? 1 : 0) - e.lid));   // 大約 0.6 秒翻開
+        const k = e.lid * e.lid * (3 - 2 * e.lid);
+        e.boat.setHatchLid(k, d.open);
+        e.cover.visible = e.lid > 0.02;
+        continue;
+      }
       if (d.k === 'w') {
         const y = this.env.waveAt(d.x, d.z);
         e.mesh.position.set(d.x, y - FISHBOX.h * 0.45 + 0.04 * Math.sin(time * 1.7 + d.bid), d.z);
@@ -128,22 +162,24 @@ export class BoxWorld {
   // ---- 查詢 ----
   get(bid) { return this.map.get(bid)?.d ?? null; }
   all() { return [...this.map.values()].map((e) => e.d); }
-  mine(id) { return this.all().filter((d) => d.o === id); }
+  mine(id) { return this.all().filter((d) => d.o === id && !d.h); }   // 魚箱（不含魚艙）
+  hatch(id) { return this.all().find((d) => d.o === id && d.h) ?? null; }
   // 自己抱著的箱子
   held(id) { return this.all().find((d) => d.o === id && d.k === 'hand') ?? null; }
   kg(d) { return d.fish.reduce((s, f) => s + f.kg, 0); }
   value(d) { return d.fish.reduce((s, f) => s + f.value, 0); }
-  used(d) { return boxUsed(d.fish); }
+  used(d) { const S = this.spec(d); return S ? boxUsed(d.fish, S) : 1; }
   // 這條魚放得進去嗎：'' 可以；'long' 太長；'full' 滿了
-  fit(d, id, len) { return boxFit(d.fish, id, len); }
+  fit(d, id, len) { const S = this.spec(d); return S ? boxFit(d.fish, id, len, S) : 'full'; }
   // 抱著這個箱子走路的速度倍數
   speed(d) { return boxSpeed(this.kg(d)); }
-  // 準心對準箱子／箱內的魚：回傳每個可及箱子的最佳命中（{ obb: true, kind: 'fbox'|'fpile', box, mesh, fishMesh, fish, name, t, off, r }）
-  pick(origin, dir, reachOrigin, { fp = true, myId = null, tMin = 0, wantOut = false, putOnly = false } = {}) {
+  // 準心對準箱子／箱內的魚：回傳每個可及箱子的最佳命中（{ obb: true, kind: 'fbox'|'fpile'|'hatch', box, mesh, fishMesh, fish, name, t, off, r }）
+  // 魚艙對準艙口是 hatch（開著時對準裡面的魚是 fpile）；onlyHatch：只找魚艙（抱著魚箱時）
+  pick(origin, dir, reachOrigin, { fp = true, myId = null, tMin = 0, wantOut = false, putOnly = false, onlyHatch = false } = {}) {
     const out = [];
     for (const e of this.map.values()) {
-      const d = e.d;
-      if (d.k === 'hand' || !e.mesh.visible) continue;
+      const d = e.d, S = this.spec(d), open = !d.h || d.open;
+      if (d.k === 'hand' || !e.mesh.visible || !S || (onlyHatch && !d.h)) continue;
       e.mesh.updateMatrixWorld(true);
       _inv.copy(e.mesh.matrixWorld).invert();
       _rO.copy(origin).applyMatrix4(_inv);
@@ -152,12 +188,14 @@ export class BoxWorld {
       const hit = pickBoxLocal(
         { ox: _rO.x, oy: _rO.y, oz: _rO.z, dx: _rD.x, dy: _rD.y, dz: _rD.z, tMin },
         _pL,
-        d.o === myId ? e.fishBoxes : [],
-        { fp, wantOut, putOnly },
+        d.o === myId && open ? e.fishBoxes : [],
+        { fp, wantOut: wantOut && open, putOnly },
+        S,
       );
       if (hit) {
+        if (d.h && hit.kind === 'fbox') hit.kind = 'hatch';
         const fishMesh = hit.kind === 'fpile' ? e.inner.children.find((m) => m.userData.uid === hit.fish?.uid) ?? null : null;
-        out.push({ obb: true, ...hit, box: d, mesh: e.crate, inner: e.inner, fishMesh });
+        out.push({ obb: true, ...hit, box: d, mesh: d.h ? e.boat.parts.hatchObj : e.crate, inner: e.inner, fishMesh });
       }
     }
     return out;
@@ -171,14 +209,14 @@ export class BoxWorld {
   // 箱口的範圍：丟出去的魚從口掉下去就算放進去。回傳 { rim 口的高度, into 箱子 bid（滿了、太長、打在邊上是 null）}
   over(x, z, it) {
     for (const e of this.map.values()) {
-      const d = e.d;
-      if (d.k === 'hand' || !e.mesh.visible) continue;
+      const d = e.d, S = this.spec(d);
+      if (d.k === 'hand' || !e.mesh.visible || !S || (d.h && !d.open)) continue;
       const p = e.mesh.getWorldPosition(_v), dx = x - p.x, dz = z - p.z;
-      const c = Math.cos(d.yaw + (d.k === 'd' ? this.env.boatOf(d.b)?.heading ?? 0 : 0)), s = Math.sin(d.yaw + (d.k === 'd' ? this.env.boatOf(d.b)?.heading ?? 0 : 0));
+      const yaw = (d.yaw || 0) + (d.k === 'd' ? this.env.boatOf(d.b)?.heading ?? 0 : 0), c = Math.cos(yaw), s = Math.sin(yaw);
       const ax = Math.abs(dx * c + dz * s), az = Math.abs(-dx * s + dz * c);
-      if (ax > FISHBOX.w / 2 + 0.1 || az > FISHBOX.d / 2 + 0.1) continue;
-      const inside = ax < FISHBOX.w / 2 && az < FISHBOX.d / 2 && !it.can && !this.fit(d, it.id, it.len);
-      return { rim: p.y + FISHBOX.h + WALL, into: inside ? d.bid : null };
+      if (ax > S.w / 2 + 0.1 || az > S.d / 2 + 0.1) continue;
+      const inside = ax < S.w / 2 && az < S.d / 2 && !it.can && !this.fit(d, it.id, it.len);
+      return { rim: p.y + S.h + WALL, into: inside ? d.bid : null };
     }
     return null;
   }

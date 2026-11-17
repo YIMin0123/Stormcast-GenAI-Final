@@ -5,6 +5,7 @@ import { buildFigure } from './boat.js';
 import { ACTION_BY_ID, MOOD_TIME } from './emotes.js';
 
 const WALK = 3.2, RUN = 6.0;
+const CLIMB_SEC = 2.2;   // 爬一趟梯子幾秒
 const SWIM = 1.6, SWIM_FAST = 2.3;
 const GRAVITY = 18, JUMP = 6.0;   // 跳起來約 1 公尺高
 const JUMP_SWIM = 7.2;            // 從水裡跳：要先把泡在水裡的身體拔出來，所以要更用力
@@ -57,6 +58,8 @@ export class Player {
     this.load = 1;   // 走路速度的倍數：抱著裝滿魚的箱子會變慢（main.js 照箱子的重量設）   // 跳起來時哪隻腳在前（每跳一次換一邊）
     this.lookYaw = 0; this.lookPitch = 0;  // 鏡頭看的方向（頭會跟著轉）
     this.eyeH = 1.25;                      // 眼睛離腳多高（游泳時只剩頭露出水面）
+    this.roof = null;                      // 站在哪艘船的二樓瞭望台上（只在那個平台上走，見 boat.roofContains）
+    this.climb = null;                     // 正在爬梯子：{ boat, up, t 0–1, sx, sz 起點 }
     this.seat = null;                      // 坐在船上的哪個位子：{ boat, x, z, h 坐墊高度, yaw 面向（相對船首） }；沒坐是 null
     // 動作與表情（輪盤選的）：act 正在播的動作、actT 播了幾秒；emoteW 動作接管身體的程度（0–1，淡入淡出）；
     // mood 玩家選的表情、moodLeft 還剩幾秒
@@ -89,6 +92,7 @@ export class Player {
   place(world, x, z, boat = null) {
     this.boat = boat;
     this.seat = null;
+    this.roof = null; this.climb = null;
     this.onWater = this.swim = false;
     if (boat) {
       this.lx = x; this.lz = z;
@@ -140,6 +144,10 @@ export class Player {
 
   // (x, z) 處能待的面；被擋住時回傳 'wall'
   _probe(x, z, world) {
+    if (this.roof) {   // 在瞭望台上：只能在平台上走（四周有護欄）
+      const b = this.roof, l = b.toLocal(x, z);
+      return b.roofContains(l.x, l.z) ? { boat: b, lx: l.x, lz: l.z, y: b.roofWalkY(x, z), swim: false } : 'wall';
+    }
     for (const b of world.boats) {
       if (b.sinking) continue;
       const l = b.toLocal(x, z);
@@ -262,6 +270,8 @@ export class Player {
   update(dt, dirX, dirZ, run, jump, world, rise = 0) {
     const fly = this.fly && !this.seat;
     // 坐著：釘在位子上，不能走、不能跳；屁股在坐墊的高度（整個人放低），面向位子的方向
+    if (this.climb) return this._climbStep(dt);
+    if (this.roof && (this.roof !== this.boat || this.boat.sinking)) this.roof = null;
     if (this.seat && (this.seat.boat !== this.boat || this.boat.sinking)) this.seat = null;
     const seat = this.seat;
     if (seat) {
@@ -273,7 +283,8 @@ export class Player {
     if (this.boat) {
       const w = this.boat.toWorld(this.lx, this.lz);
       this.x = w.x; this.z = w.z;
-      this.base = (this.boat.walkDeckY?.(this.x, this.z) ?? this.boat.deckY(this.x, this.z)) + (seat ? seat.h - 0.38 : 0);
+      this.base = this.roof ? this.roof.roofWalkY(this.x, this.z)
+        : (this.boat.walkDeckY?.(this.x, this.z) ?? this.boat.deckY(this.x, this.z)) + (seat ? seat.h - 0.38 : 0);
       this.onWater = false;
     } else {
       const feet = this.base + this.h;
@@ -357,6 +368,44 @@ export class Player {
     if (this.h <= 0) this.airVX = this.airVZ = 0;
     this.y = this.base + this.h;
     this.run = run;
+    this.animate(dt);
+  }
+
+  // ---- 爬梯子（大漁船上二樓瞭望台的鐵梯）：按 E 開始，大約 CLIMB_SEC 秒爬完，途中不能動 ----
+  // 路線（船身座標）：走到梯子前 → 沿著梯子直直往上 → 跨過頂端站上平台；往下就倒著走一遍
+  startClimb(boat, up) {
+    if (!boat.parts.ladder || this.climb) return false;
+    this.climb = { boat, up, t: 0, sx: this.lx, sz: this.lz, sy: this.y - boat.deckY(this.x, this.z) };
+    this.boat = boat; this.seat = null; this.roof = null;
+    this.h = 0; this.vy = 0; this.airVX = this.airVZ = 0;
+    return true;
+  }
+  _climbStep(dt) {
+    const c = this.climb, b = c.boat, L = b.parts.ladder, D = b.spec.deck;
+    if (b.sinking || !b.parts.ladder) { this.climb = null; return; }
+    c.t = Math.min(1, c.t + dt / CLIMB_SEC);
+    // 走到起點（前 15%）：往上爬的起點是梯腳，往下爬的起點是梯頂
+    const lerp = (a, z, k) => a + (z - a) * k, top = L.top.y - D, hi = top - 0.25;
+    const path = (s) => (s < 0.12 ? [lerp(L.foot.x, L.rung, s / 0.12), 0]
+      : s < 0.85 ? [L.rung, lerp(0, hi, (s - 0.12) / 0.73)]
+        : [lerp(L.rung, L.top.x, (s - 0.85) / 0.15), lerp(hi, top, (s - 0.85) / 0.15)]);
+    let lx, ly, lz = L.foot.z;
+    if (c.t < 0.15) {
+      const k = c.t / 0.15, [px, py] = path(c.up ? 0 : 1);
+      lx = lerp(c.sx, px, k); lz = lerp(c.sz, L.foot.z, k); ly = lerp(c.sy, py, k);
+    } else {
+      const s = (c.t - 0.15) / 0.85;
+      [lx, ly] = path(c.up ? s : 1 - s);
+    }
+    const w = b.toWorld(lx, lz), f = b.toWorld(lx + 1, lz);
+    this.lx = lx; this.lz = lz; this.x = w.x; this.z = w.z;
+    this.yaw = Math.atan2(f.z - w.z, f.x - w.x);   // 面向梯子（船頭方向）
+    this.base = b.deckY(w.x, w.z) + ly / b.normal.y;
+    this.h = 0; this.y = this.base;
+    this.moving = c.t > 0.15 && c.t < 0.98;
+    if (this.moving) this.phase += dt * 6;
+    this.run = false; this.onWater = this.swim = false;
+    if (c.t >= 1) { this.climb = null; this.roof = c.up ? b : null; }
     this.animate(dt);
   }
 

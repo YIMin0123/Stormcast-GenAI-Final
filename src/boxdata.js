@@ -1,6 +1,7 @@
 // 魚箱的容量（瀏覽器和伺服器共用，只有算式）：照魚模型的實際大小放，魚越大越快滿；比箱子長的放不進去
 import { SPECIES } from './fishdata.js';
 import { FISHBOX } from './config.js';
+import { BOAT_TYPES } from './boatdata.js';
 
 // 一條魚佔多少體積（立方公尺）：身長 × 身高 × 身寬，魚是紡錘形，大約只佔外框的一半
 export function fishVolume(id, len) {
@@ -13,14 +14,26 @@ export const BOX_VOLUME = FISHBOX.w * FISHBOX.d * FISHBOX.h * FISHBOX.fill;
 // 最長放得進去的魚：斜斜放在箱底的對角線
 export const BOX_LONGEST = Math.hypot(FISHBOX.w, FISHBOX.d);
 
-// 這條魚放不放得進這個箱子。list：箱子裡已經有的魚 [{ id, len }]。回傳 '' 放得進去；'long' 太長；'full' 滿了
-export function boxFit(list, id, len) {
-  if (len > BOX_LONGEST) return 'long';
+// 一般魚箱的尺寸：w／d／h 箱口與看得到的深度（瞄準、擺魚用），vol 容積、longest 最長放得進去的魚，reach 伸手範圍
+export const BOX_SPEC = { w: FISHBOX.w, d: FISHBOX.d, h: FISHBOX.h, vol: BOX_VOLUME, longest: BOX_LONGEST, reach: FISHBOX.reach };
+// 船上的魚艙（艙口在前甲板，固定在船上）：艙口內緣多大、看得到多深；容量照艙口底下的魚艙（boatdata 的 hold）算
+export const HATCH_WALL = 0.07;    // 艙口圍板的厚度
+export const HATCH_H = 0.28;       // 艙口圍板高出甲板多少（跟 boat.js 的艙蓋、走在艙蓋上的高度一致）
+export function hatchSpec(type) {
+  const S = BOAT_TYPES[type];
+  if (!S || !S.hatch || !S.hold) return null;
+  const w = S.hatch.s - HATCH_WALL * 2, H = S.hold;
+  return { w, d: w, h: HATCH_H - BOX_WALL, vol: H.w * H.d * H.h * FISHBOX.fill, longest: Math.hypot(H.w, H.d), reach: FISHBOX.reach + 0.4 };
+}
+
+// 這條魚放不放得進這個箱子。list：箱子裡已經有的魚 [{ id, len }]；spec：箱子的尺寸（預設一般魚箱）。回傳 '' 放得進去；'long' 太長；'full' 滿了
+export function boxFit(list, id, len, spec = BOX_SPEC) {
+  if (len > spec.longest) return 'long';
   const used = list.reduce((s, f) => s + fishVolume(f.id, f.len), 0);
-  return used + fishVolume(id, len) > BOX_VOLUME ? 'full' : '';
+  return used + fishVolume(id, len) > spec.vol ? 'full' : '';
 }
 // 箱子滿了幾成（0–1）
-export const boxUsed = (list) => Math.min(1, list.reduce((s, f) => s + fishVolume(f.id, f.len), 0) / BOX_VOLUME);
+export const boxUsed = (list, spec = BOX_SPEC) => Math.min(1, list.reduce((s, f) => s + fishVolume(f.id, f.len), 0) / spec.vol);
 // 抱著這箱魚走路是平常的幾倍速度
 export const boxSpeed = (kg) => Math.max(FISHBOX.slowest, 1 - (1 - FISHBOX.slowest) * Math.min(1, kg / FISHBOX.heavy));
 
@@ -63,11 +76,11 @@ export function distRayToAabb(ox, oy, oz, dx, dy, dz, x0, x1, y0, y1, z0, z1, lo
  * - 先撞到四面木板壁、把手或頂部框緣（4cm 木壁）→ fbox，木板遮住後方的魚不互相干擾
  * - 視線由上口直接望進開口內且命中魚身（或寬容範圍內）→ fpile 並帶出命中的那一條魚
  */
-export function pickBoxLocal(ray, pLocal, fishBoxes = [], { fp = true, wantOut = false, putOnly = false } = {}) {
+export function pickBoxLocal(ray, pLocal, fishBoxes = [], { fp = true, wantOut = false, putOnly = false } = {}, spec = BOX_SPEC) {
   const { ox, oy, oz, dx, dy, dz, tMin = 0 } = ray;
-  const hx = FISHBOX.w / 2 + BOX_WALL, hz = FISHBOX.d / 2 + BOX_WALL, H = FISHBOX.h + BOX_WALL;
+  const hx = spec.w / 2 + BOX_WALL, hz = spec.d / 2 + BOX_WALL, H = spec.h + BOX_WALL;
   const rx = Math.max(0, Math.abs(pLocal.x) - hx), rz = Math.max(0, Math.abs(pLocal.z) - hz);
-  if (Math.hypot(rx, rz) > FISHBOX.reach || Math.abs(pLocal.y) > 2.2) return null;
+  if (Math.hypot(rx, rz) > spec.reach || Math.abs(pLocal.y) > 2.2) return null;
 
   const exact = rayAabb(ox, oy, oz, dx, dy, dz, -hx, hx, 0, H, -hz, hz, tMin);
   const h1 = rayAabb(ox, oy, oz, dx, dy, dz, -hx - 0.01, hx + 0.01, H * 0.50, H * 0.74, -hz - 0.04, -hz, tMin);
@@ -77,11 +90,11 @@ export function pickBoxLocal(ray, pLocal, fishBoxes = [], { fp = true, wantOut =
 
   if (wantOut && !putOnly && fishBoxes.length && exact && !handleEarlier) {
     const ey = oy + dy * exact.tIn, ex = ox + dx * exact.tIn, ez = oz + dz * exact.tIn;
-    const mx = FISHBOX.w / 2, mz = FISHBOX.d / 2;
+    const mx = spec.w / 2, mz = spec.d / 2;
     const enterMouth = exact.tIn > tMin + 1e-4 && oy > H - 0.05 && dy < -0.02
       && Math.abs(ey - H) < 2e-3 && Math.abs(ex) <= mx && Math.abs(ez) <= mz;
     if (enterMouth) {
-      const cav = rayAabb(ox, oy, oz, dx, dy, dz, -FISHBOX.w / 2, FISHBOX.w / 2, BOX_WALL, H + 0.12, -FISHBOX.d / 2, FISHBOX.d / 2, exact.tIn);
+      const cav = rayAabb(ox, oy, oz, dx, dy, dz, -spec.w / 2, spec.w / 2, BOX_WALL, H + 0.12, -spec.d / 2, spec.d / 2, exact.tIn);
       const tEnd = cav ? cav.tOut : exact.tOut;
       const fPad = fp ? 0.045 : 0.095;
       let bestFish = null, bestDirect = false, bestT = Infinity, bestScore = 1;
