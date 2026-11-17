@@ -85,7 +85,7 @@ export const berthFits = (berth, type) => BOAT_TYPES[type].len <= berth.max;
 export const inHarbor = (x, z) => { const [lx, lz] = toLocal(x, z); return lz > -8 && pierDist(lx, lz) < 30; };
 
 // ---- 看板 -------------------------------------------------------------------
-// 商店正面東半邊一排：漁會功德榜（以前停船位置牌的位置）、本房紀錄、今日紀錄。都面向海（+z）
+// 商店正面東半邊一排：漁會捐贈榜（以前停船位置牌的位置）、本房紀錄、今日紀錄。都面向海（+z）
 export const BOARD_Z = S.z1 + 0.3;
 export const BOARDS = { donate: { x: H.BOARDS[0].x, w: 1.4 }, room: { x: H.BOARDS[1].x, w: 2.8 }, daily: { x: H.BOARDS[2].x, w: 2.8 } };
 export const BOARD_H = 2.3, BOARD_Y0 = DECK_Y + 0.5;   // 排行榜看板的高度、底邊離地多高

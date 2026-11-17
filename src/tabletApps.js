@@ -607,7 +607,7 @@ export function makeApps(env, { noStyle = false } = {}) {
       </div>`;
   }, env);
 
-  // ---- 6. 榜單（Desktop 2）：本房紀錄、今日全服紀錄、漁會功德榜（捐款、每週稱號） ----
+  // ---- 6. 榜單（Desktop 2）：本房紀錄、今日全服紀錄、漁會捐贈榜（捐款、每週稱號） ----
   const rank = htmlApp({
     id: 'rank', name: '榜單', icon: 'trophy', color: '#d89628',
     tab: 'room', amt: '',
@@ -619,11 +619,11 @@ export function makeApps(env, { noStyle = false } = {}) {
     const tabs = `<div class="tbTabs">
       <button class="${this.tab === 'room' ? 'on' : ''}" data-act="subTab" data-arg="room">🏆 本房大魚榜</button>
       <button class="${this.tab === 'daily' ? 'on' : ''}" data-act="subTab" data-arg="daily">🌎 今日全服榜</button>
-      <button class="${this.tab === 'guild' ? 'on' : ''}" data-act="subTab" data-arg="guild">📜 漁會功德榜・稱號</button>
+      <button class="${this.tab === 'guild' ? 'on' : ''}" data-act="subTab" data-arg="guild">📜 漁會捐贈榜・稱號</button>
     </div>`;
     if (this.tab === 'guild') {
       const left = G.endsAt ? countdownText(G.endsAt - Date.now()) : '', min = G.min || GUILD.min, owned = new Set(G.titles || []);
-      const me = `<div class="tbc gold"><h4>📜 漁會功德榜<span class="tbTag gold r">${left ? `${esc(left)}後重置` : '每週一清晨 5 點重置'}</span></h4>
+      const me = `<div class="tbc gold"><h4>📜 漁會捐贈榜<span class="tbTag gold r">${left ? `${esc(left)}後重置` : '每週一清晨 5 點重置'}</span></h4>
         <p class="tbNote">這一週你捐了 <b>${cash(G.amount)}</b>${G.rank ? `，排第 <b>${G.rank}</b> 名` : ''}。每週一清晨 5 點（台灣時間）榜單和稱號一起重新算，大家從零開始。</p></div>`;
       const give = !rk.guild ? '' : rk.atBox
         ? `<div class="tbc on"><h4>🪙 捐給漁會<span class="r">身上 ${cash(rk.money)}</span></h4>
@@ -647,7 +647,7 @@ export function makeApps(env, { noStyle = false } = {}) {
       }).join('');
       return `${tabs}${me}${give}<div class="tbSec"><span>基本稱號（自己這一週捐滿就有，挑一個戴）</span></div><div class="tbBaits">${basic}</div>
         <div class="tbSec"><span>特殊稱號（週榜前三名，被超過就換人）</span></div><div class="tbBaits">${special}</div>
-        <div class="tbSec"><span>本週功德榜（所有房間合計）</span></div><div class="tbc" style="padding:2px 0">${rows}</div>`;
+        <div class="tbSec"><span>本週捐贈榜（所有房間合計）</span></div><div class="tbc" style="padding:2px 0">${rows}</div>`;
     }
     const list = this.tab === 'daily' ? (rk.daily || []) : (rk.room || []);
     const note = this.tab === 'daily' ? '所有房間合計・每人取最高價一條・每日午夜重置' : '本房間內賣出單條最值錢的魚前 10 名';

@@ -2119,7 +2119,7 @@ function openStation(id) {
   }
   if (id === 'title' && net.online) net.send({ t: 'guild' });   // 捐款箱：先要一份最新的榜
   const appId = id === 'title' ? 'rank' : id === 'altar' ? 'shrine' : 'boat', app = tablet.apps.find((a) => a.id === appId);
-  if (app && id === 'title') app.tab = 'guild';     // 榜單的「漁會功德榜・稱號」那一頁
+  if (app && id === 'title') app.tab = 'guild';     // 榜單的「漁會捐贈榜・稱號」那一頁
   if (app && id === 'paint') { app.tab = 'custom'; app.pv = null; }   // 船的「改裝與塗裝」那一頁（預覽從船現在的顏色看起）
   tablet.show(appId);
 }
@@ -3008,7 +3008,7 @@ function updatePrompt() {
     else if (kind === 'shelf') {
       const id = a.shelf.id, o = offer(id);
       text = id === 'repair' ? repairText(a.shelf)
-        : id === 'title' ? '按 E 打開【漁會捐款箱】（自由捐獻，每週功德榜奪稱號）'
+        : id === 'title' ? '按 E 打開【漁會捐款箱】（自由捐獻，每週捐贈榜奪稱號）'
           : id === 'mailbox' ? '按 E 投遞【漁會意見信箱】'
             : id === 'altar' ? '按 E 向海神祈福（黃金魚潮／風暴海神祭）'
               : id === 'paint' ? '按 E 打開船殼塗裝預覽（五種顏色）'

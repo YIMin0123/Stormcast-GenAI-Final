@@ -107,7 +107,7 @@ export const TOW = {
   postReach: 2.2,    // 人離船尾拖船樁多近才按得到
 };
 
-// 漁會：捐款箱、每週功德榜、稱號（稱號表在 boatdata.js）
+// 漁會：捐款箱、每週捐贈榜、稱號（稱號表在 boatdata.js）
 export const GUILD = {
   min: 100,          // 一次最少捐多少
   max: 1000000,      // 一次最多捐多少

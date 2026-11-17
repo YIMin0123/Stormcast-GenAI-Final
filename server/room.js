@@ -262,7 +262,7 @@ export class Room {
   roster(except) {
     return [...this.players.values()].filter((p) => p !== except).map((p) => ({ id: p.id, name: p.name, ...badge(p), look: p.look, here: !!p.ws, pos: p.ws ? p.pos : null, boat: this.boatInfo(p), hold: p.ws ? p.hold : null, tab: p.ws ? p.tab : null, line: p.ws ? p.line : null }));
   }
-  // 看板：本房紀錄、今日紀錄、這一週的漁會功德榜（全服共用）
+  // 看板：本房紀錄、今日紀錄、這一週的漁會捐贈榜（全服共用）
   boards() {
     // 圖鑑榜：這間房裡誰釣過的魚種最多（同數量比等級）
     const dex = [...this.players.values()].map((p) => ({ name: p.name, n: Object.keys(p.dex || {}).filter((k) => !k.startsWith('_')).length, lv: lvOf(p) }))
@@ -688,7 +688,7 @@ export class Room {
         this.send(p, { t: 'kit', kit });
         return this.all({ t: 'repaired', id: owner.id, by: p.name, byId: p.id, cost });
       }
-      case 'donate': {   // 漁會捐款箱（母港魚市場、大港榜亭各一座）：捐多少自己填，累積在這一週的功德榜
+      case 'donate': {   // 漁會捐款箱（母港魚市場、大港榜亭各一座）：捐多少自己填，累積在這一週的捐贈榜
         const g = this.hub.guild;
         if (!g) return;
         if (!ALL_SHELF_W.some((s) => s.id === 'title' && this.near(p, s.stand.x, s.stand.z, 5))) return this.send(p, { t: 'no', msg: '要站在漁會捐款箱前面才能捐' });

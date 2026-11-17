@@ -190,7 +190,7 @@ export function goodGeo(id, { P, boatGeo = null, seed = 1 }) {
       for (const sx of [-1, 1]) box(sx * 0.48 - 0.03, sx * 0.48 + 0.03, 1.04, 1.9, -0.3, -0.24, P.woodDark);
       break;
     }
-    case 'title': {   // 漁會捐款箱：木座台上的紅木箱（四角金邊、頂上黑鐵投幣口、正面金色鎖頭、背後立著功德牌）
+    case 'title': {   // 漁會捐款箱：木座台上的紅木箱（四角金邊、頂上黑鐵投幣口、正面金色鎖頭、背後立著捐贈牌）
       box(-0.42, 0.42, 0, 0.72, -0.4, 0.4, P.woodDark, P.woodDark);
       box(-0.46, 0.46, 0.72, 0.8, -0.42, 0.42, P.wood, P.woodDark);
       const y = 0.8;
@@ -200,7 +200,7 @@ export function goodGeo(id, { P, boatGeo = null, seed = 1 }) {
       for (const yy of [y + 0.02, y + 0.33]) { box(-0.31, 0.31, yy, yy + 0.03, 0.2, 0.212, Q.gold, Q.gold, 0.02); box(-0.31, 0.31, yy, yy + 0.03, -0.212, -0.2, Q.gold, Q.gold, 0.02); }
       box(-0.11, 0.11, y + 0.42, y + 0.435, -0.035, 0.035, Q.iron); box(-0.08, 0.08, y + 0.435, y + 0.44, -0.012, 0.012, Q.black, Q.black, 0.01);   // 投幣口
       box(-0.05, 0.05, y + 0.12, y + 0.22, 0.2, 0.235, Q.gold, Q.gold, 0.02); torus(0, y + 0.24, 0.218, 0.035, 0.01, Q.gold, 0);                     // 鎖頭
-      box(-0.28, 0.28, y + 0.42, y + 0.92, -0.2, -0.17, Q.roseDark, Q.roseDark); box(-0.24, 0.24, y + 0.5, y + 0.86, -0.17, -0.165, Q.gold, Q.gold, 0.02);   // 功德牌
+      box(-0.28, 0.28, y + 0.42, y + 0.92, -0.2, -0.17, Q.roseDark, Q.roseDark); box(-0.24, 0.24, y + 0.5, y + 0.86, -0.17, -0.165, Q.gold, Q.gold, 0.02);   // 捐贈牌
       box(-0.3, 0.3, y + 0.92, y + 0.97, -0.22, -0.15, Q.gold, Q.gold, 0.02);
       break;
     }

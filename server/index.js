@@ -273,7 +273,7 @@ wss.on('connection', (ws, req) => {
     hub.lobby.delete(ws);
     const r = me.room;
     r.send(me, { t: 'joined', resume: r.resumeData(me), ...r.snapshot(me) });
-    hub.guild.rename(me.token, me.name);   // 接回來時可能改了名字：功德榜上的名字跟著換
+    hub.guild.rename(me.token, me.name);   // 接回來時可能改了名字：捐贈榜上的名字跟著換
     r.tellJoin(me, true);                   // 稱號、等級要一起帶，不然別人看他的名牌會變空的
     tellMateProps(r, me);                   // 隊友放在外面的桶子（畫面那邊重連時整個清掉了）
     // 斷線時遇到定時刷新：畫面上的船、魚還是舊的，整包重置再送一次
@@ -404,10 +404,10 @@ setInterval(() => {
     hub.guild.save();
     hub.activity.save();
   }
-  // 每週一次（GUILD 設的那一天那個鐘點）：漁會功德榜清空，稱號跟著收回
+  // 每週一次（GUILD 設的那一天那個鐘點）：漁會捐贈榜清空，稱號跟著收回
   if (n % 100 === 0 && hub.guild.roll(now)) {
     syncTitles(hub);
-    hub.eachRoom((r) => { r.all(r.boards()); r.sys('📜 新的一週開始了：漁會功德榜重新計算，上週的稱號已收回', 'record'); for (const p of r.players.values()) r.on(p, { t: 'guild' }); });
+    hub.eachRoom((r) => { r.all(r.boards()); r.sys('📜 新的一週開始了：漁會捐贈榜重新計算，上週的稱號已收回', 'record'); for (const p of r.players.values()) r.on(p, { t: 'guild' }); });
     hub.guild.save();
   }
   if (n % 600 === 0) {
