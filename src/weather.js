@@ -270,7 +270,7 @@ export class Sea {
     if (kind === 'storm' || kind === 'spout') {
       this.phase = 'storm';
       this.dur = rand(170, 230);
-      this.goal = { ...CALM, storm: rand(0.9, 1.3), gloom: 0.9, rumble: 0.35, rain: 0.7, thunder: 0.35, swell: 0.3, veer: rand(-0.3, 0.3) };
+      this.goal = { ...CALM, storm: rand(0.9, 1.3), gloom: 0.9, rumble: 0.35, rain: 0.7, thunder: 0.35, swell: 0.3, veer: rand(-SEA_VEER.storm, SEA_VEER.storm) };
       if (kind === 'spout' && this._spawn('spout', env)) { this.spoutLeft = 0; this.spoutIn = Infinity; }
       else { this.spoutLeft = kind === 'spout' || Math.random() < 0.7 ? 1 : 0; this.spoutIn = kind === 'spout' ? 6 : rand(45, 95); }
     } else if (kind === 'thunder') {
@@ -283,7 +283,7 @@ export class Sea {
       // 先醞釀七分鐘：風浪一點一點變大、天色越來越沉，然後才是最猛的五分鐘
       this.phase = 'brew';
       this.dur = 420; this.slow = 5;
-      this.goal = { ...CALM, storm: 0.6, gloom: 0.7, lull: 1.2, rumble: 0.3, rain: 0.4, surge: 0.35, swell: 0.5, veer: -0.35 };
+      this.goal = { ...CALM, storm: 0.6, gloom: 0.7, lull: 1.2, rumble: 0.3, rain: 0.4, surge: 0.35, swell: 0.5, veer: SEA_VEER.after };
       this.typhoonIn = rand(5400, 9000);
     } else if (kind === 'whirl') {
       if (!this._spawn('whirl', env)) return false;
@@ -356,7 +356,7 @@ export class Sea {
     } else if (p === 'brew') {
       if (this.t > this.dur) {
         this.phase = 'typhoon'; this.t = 0; this.dur = 300; this.slow = 1.3;
-        this.goal = { storm: 1.7, gloom: 1, lull: 1.3, rumble: 0.6, rain: 1, surge: 1, thunder: 0.6, swell: 1, veer: 0.75 };   // 颱風從旁邊過去：風向一路轉過來
+        this.goal = { storm: 1.7, gloom: 1, lull: 1.3, rumble: 0.6, rain: 1, surge: 1, thunder: 0.6, swell: 1, veer: SEA_VEER.typhoon };   // 颱風從旁邊過去：風向一路轉過來
         this.spoutLeft = 2; this.spoutIn = rand(40, 80);
       }
     } else if (p === 'omen') {
@@ -393,7 +393,7 @@ export class Sea {
     }
 
     // 每樣東西變化的快慢不同（秒）：天色先變，海才跟著變；風暴來得慢，巨浪前的平靜來得比較快
-    const tau = { storm: this.goal.storm > this.storm ? 32 : 20, gloom: 14, lull: 9, rumble: 12, rain: 14, surge: 30, thunder: 10, swell: 26, veer: 110 };
+    const tau = { storm: this.goal.storm > this.storm ? 32 : 20, gloom: 14, lull: 9, rumble: 12, rain: 14, surge: 30, thunder: 10, swell: 26, veer: SEA_VEER.tau };
     for (const key in tau) if (this.goal[key] !== undefined) this[key] = (this[key] || 0) + (this.goal[key] - (this[key] || 0)) * (1 - Math.exp(-dt / (tau[key] * this.slow)));
   }
 
@@ -570,8 +570,13 @@ export class Sea {
 // ---- 時間與平常的天氣 -------------------------------------------------------
 // 白天（6 點到 18 點）15 分鐘、夜晚 15 分鐘。每天清晨決定當天的風浪強弱、晴陰雨、有沒有晨霧
 export const HOUR = 75;   // 遊戲裡的一小時是幾秒
-// 每天的風向偏離盛行風向的範圍（弧度，正負都有：0.9 ≈ 52 度；π = 全角度隨機，什麼方向都可能）、多少秒轉到今天的風向
-export const VEER = { range: Math.PI, ease: 150 };
+// 每天的風向偏離盛行風向的範圍（弧度，正負都有：0.35 ≈ 20 度）、多少秒轉到今天的風向（指數趨近的時間常數）。
+// 風向一轉，整片風浪是繞著地圖正中央（原點）轉的（每個人的浪要一模一樣，不能各自繞自己轉），
+// 離原點約 800 公尺的港口，浪會整片橫著滑「距離 × 每秒轉幾弧度」那麼快。以前全角度、150 秒，換風向那幾分鐘港口的浪每秒橫滑十幾公尺；
+// 現在每天換風向最多每秒 0.6 公尺左右，碰上風暴同時在偏也只到每秒 1 公尺左右。要放寬就一起看 SEA_VEER
+export const VEER = { range: 0.35, ease: 900 };
+// 風暴、颱風把風向帶偏多少（弧度）、多少秒偏過去（理由同上，偏太多、太快港口的浪會整片滑）
+export const SEA_VEER = { storm: 0.25, after: -0.25, typhoon: 0.35, tau: 900 };
 
 export class Climate {
   constructor() {
