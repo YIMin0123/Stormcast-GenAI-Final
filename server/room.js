@@ -10,7 +10,7 @@ import { PORT } from '../src/lowpoly/havenPlan.js';
 import { HOTSPOT, CHESTS } from '../src/extrasPlan.js';
 import { Extras } from './extras.js';
 import { BOAT_TYPES, BOAT_ORDER, BOAT_MODS, BOAT_PAINTS, HONOR_TITLES, CHUM_SPEC, BLESSINGS, newKit, shopItem, baitCount, repairCost } from '../src/boatdata.js';
-import { SPECIES, BAITS, isJunk, rollCatch, biteDelay, castRange, money } from '../src/fishdata.js';
+import { SPECIES, BAITS, BAIT_PRICE, baitPriceOf, baitBought, baitSettled, isJunk, rollCatch, biteDelay, castRange, money } from '../src/fishdata.js';
 import { REEL_PROTOCOL, newFishFight, stepFishFight } from '../src/fishFight.js';
 import { dangerAt, isWater, fishingSpot } from './world.js';
 import { mask } from './words.js';
@@ -178,6 +178,9 @@ export class Room {
     this.extras = new Extras();   // 魚群熱點、漂流寶箱、誘魚桶
     this.blessingUntil = 0;       // 全服黃金魚潮到期時間（ms）
     this.pendingBless = { tide: 0, storm: 0 };   // 祭壇倒數到期時間（ms）
+    // 餌的動態物價（fishdata.js 的 BAIT_PRICE）：原始價（小數），賣的時候取整；baitAt：上次自然回穩的時間（ms）
+    this.baitRaw = Object.fromEntries(Object.keys(BAITS).map((k) => [k, BAIT_PRICE.base]));
+    this.baitAt = Date.now();
     this._stormPos = null;
     this.lights = Object.fromEntries(LIGHT_ZONES.map((z) => [z, true]));
     // 放在外面的魚（大家看得到、誰先撿到算誰的）：uid → { uid, owner 誰的（0 = 主人已經走了）, f 魚, k 放在哪 g 地上／d 甲板／b 籃子, x, y, z, yaw, b 哪個人的船, at 什麼時候放的 }
@@ -215,10 +218,20 @@ export class Room {
   }
   sys(text, kind = 'info', except) { this.all({ t: 'sys', text, kind }, except); }
 
+  // 餌現在賣多少（取整過的）
+  baitPrices() { return Object.fromEntries(Object.keys(BAITS).map((k) => [k, baitPriceOf(this.baitRaw[k])])); }
+  // 換一張原始價格表；取整之後的售價有變才告訴大家（價格牌、提示馬上跟著變）
+  setBaitRaw(raw) {
+    const before = JSON.stringify(this.baitPrices());
+    this.baitRaw = raw;
+    const prices = this.baitPrices();
+    if (JSON.stringify(prices) !== before) this.all({ t: 'baitPrices', prices });
+  }
+
   worldState(now = Date.now()) {
     const sea = this.sea;
     return {
-      t: 'world', time: this.t, lights: { ...this.lights }, extras: this.extras.state(),
+      t: 'world', time: this.t, lights: { ...this.lights }, extras: this.extras.state(), baitPrices: this.baitPrices(),
       blessingLeft: Math.max(0, Math.round((this.blessingUntil - now) / 1000)),
       tideWait: this.pendingBless.tide ? Math.max(1, Math.ceil((this.pendingBless.tide - now) / 1000)) : 0,
       stormWait: this.pendingBless.storm ? Math.max(1, Math.ceil((this.pendingBless.storm - now) / 1000)) : 0,
@@ -383,6 +396,9 @@ export class Room {
   step(now) {
     for (const p of [...this.players.values()]) if (p.gone && now - p.gone >= GRACE) this.remove(p);
     this.syncClock(now);
+    // 餌價自然回穩：每 settleSec 秒往基準價收一次（沒人在也照收）
+    const settled = Math.floor((now - this.baitAt) / (BAIT_PRICE.settleSec * 1000));
+    if (settled > 0) { this.baitAt += settled * BAIT_PRICE.settleSec * 1000; this.setBaitRaw(baitSettled(this.baitRaw, settled)); }
     if (!this.active) { this.stepAt = 0; return; }   // 沒人連著：海暫停（時間照走）
     // 照實際過了多久來推進（計時器不會剛好每 0.1 秒叫一次，用固定的 0.1 秒去加，房間的時鐘會越走越慢，大家的浪就對不起來）
     const dt = this.stepAt ? Math.min(Math.max((now - this.stepAt) / 1000, 0), 0.5) : TICK;
@@ -791,7 +807,7 @@ export class Room {
         // 三個據點的商品（母港漁具行、海上修船屋、大港灣島）：要站在賣這樣東西的攤位前面
         const stalls = ALL_SHELF_W.filter((s) => s.id === baseId);
         if (!stalls.length || baseId === 'repair' || baseId === 'title' || baseId === 'mailbox' || baseId === 'altar') return;   // 修船、捐款、意見信箱、祭壇不是買東西（各有自己的訊息）
-        const o = shopItem(m.id, kit);
+        const o = shopItem(m.id, kit, this.baitPrices());   // 餌照這間房現在的動態物價
         const it = stalls.find((s) => this.near(p, s.stand.x, s.stand.z, 4));
         if (!(o.swap && baseId === 'paint')) {   // 換回買過的塗裝不用站在攤位前（平板上隨時能換）
           if (!it || (p.pos && p.pos[8])) return this.send(p, { t: 'no', msg: m.id !== baseId ? '要在海上修船屋或大港船塢的塗裝櫃前面才能買' : '要站在攤位前面才能買' });
@@ -816,6 +832,7 @@ export class Room {
         }
         kit.money -= o.price;
         o.apply(kit);
+        if (baseId.startsWith('bait_')) this.setBaitRaw(baitBought(this.baitRaw, baseId.slice(5)));   // 買了這種餌：它漲、其餘三種降
         if ((baseId === 'paint' || baseId === 'engine' || baseId.startsWith('mod_')) && p.boat) this.all({ t: 'boat', id: p.id, boat: this.boatInfo(p) }, p);   // 別人看得到的：塗裝、改裝、引擎等級
         this.send(p, { t: 'bought', id: m.id, price: o.price, repair: !!o.repair, cheap: !!o.cheap, swap: !!o.swap, paint: o.paint?.name, kit });
         return;
@@ -989,7 +1006,7 @@ export class Room {
     const hot = inNatHot || (!blessing && inChum);
     f.fish = rollCatch({ ...spot, hot, bait: f.baitUsed, blessing, lamp, vortex });
     f.at = placeOfSpot(spot);   // 圖鑑記「在哪釣到」
-    const delay = biteDelay({ rain: Math.max(this.sea.rain, c.rain), hot, caveRain: spot.zone === 'cave' && spot.rain > 0.2, fish: f.fish });
+    const delay = biteDelay({ rain: Math.max(this.sea.rain, c.rain), hot, caveRain: spot.zone === 'cave' && spot.rain > 0.2, fish: f.fish, bait: f.baitUsed });
     f.biteAt = now + 1000 * delay;
     const sp = SPECIES[f.fish.id];
     const pNibble = sp && (sp.rarity === 'rare' || f.fish.kg > sp.kg[1]) ? 0.75 : 0.50;

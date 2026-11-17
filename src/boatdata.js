@@ -118,13 +118,14 @@ export const baitCount = (kit, id) => (kit.baits && kit.baits[id]) || 0;
 // 商品架上的一樣東西現在賣多少、買了會怎樣。回傳 { price, apply(kit) }；price 為 null 表示沒得買（why：原因）
 // 引擎是裝在「現在放在世界裡的那艘船」上（每艘船各升各的）；魚箱、油桶、誘魚桶是拿在手上的道具（伺服器另外處理）
 // 修船（repair）、漁會捐款箱（title）不是買東西，另外的訊息處理（見 server/room.js 的 repairBoat、donate）
-export function shopItem(id, kit) {
+// baitPrices：這間房現在餌的售價（{ shrimp: 105, ... }，伺服器的動態物價）；沒給就照基準價
+export function shopItem(id, kit, baitPrices = null) {
   const cur = kit.boats[kit.active], S = BOAT_TYPES[kit.active];
   if (id === 'fuel') return { price: PRICE.fuel, apply() {} };
   if (id.startsWith('bait_') && BAITS[id.slice(5)]) {   // 餌：一次買一份，每種最多囤 BAIT_MAX 個
     const t = id.slice(5), B = BAITS[t];
     if (baitCount(kit, t) + B.pack > BAIT_MAX) return { price: null, why: 'full' };
-    return { price: B.price, apply(k) { k.baits = { ...k.baits }; k.baits[t] = baitCount(k, t) + B.pack; if (!k.bait) k.bait = t; } };
+    return { price: baitPrices?.[t] ?? B.price, apply(k) { k.baits = { ...k.baits }; k.baits[t] = baitCount(k, t) + B.pack; if (!k.bait) k.bait = t; } };
   }
   if (id === 'chum') {
     if ((kit.chum || 0) >= Math.min(CHUM_SPEC.max, S.maxChums)) return { price: null, why: 'full', max: Math.min(CHUM_SPEC.max, S.maxChums) };   // 帶得了幾桶看現在這艘船

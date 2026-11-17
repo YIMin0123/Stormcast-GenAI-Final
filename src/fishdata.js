@@ -13,15 +13,39 @@
 //   twilight：清晨與黃昏的加成倍數；nightK：夜裡的加成倍數
 //   rain / before / after：下雨、風暴來之前、風暴過後的加成倍數；need：'after' 只有風暴過後才出現
 export const KG_PRICE = 100;
-// 餌：商店買、一份有 pack 個，每拋一次竿用掉一個。越貴的餌，釣到少見、稀有魚的機率越高（luck：該稀有度的權重乘上幾倍；普通魚與雜物不變）
+// 餌：商店買、一份有 pack 個，每拋一次竿用掉一個。四種同價、各有各的用法（不是越右邊越強，見 docs/bait_and_market_plan.md）：
+//   luck：該稀有度的權重乘上幾倍（普通魚與雜物不變）；prefer／preferK：偏好的魚種權重再乘上幾倍
+//   biteK：等咬餌的時間乘上幾倍；sizeK：釣起來的魚重量乘上幾倍（身長跟著立方根變）；strK：收線時魚的掙扎力道乘上幾倍
+//   junkK：釣到雜物的機率乘上幾倍；smallK：沿岸普通小魚（普通、最大不到 SMALL_KG 公斤）的權重乘上幾倍
+// price 是基準價：實際賣多少由房間的動態物價決定（BAIT_PRICE，伺服器 room.baitRaw）
 // 沒有餌（或用完了）就是基本餌：不加成，也不花錢
-export const BAIT_MAX = 40;   // 每種餌最多囤幾個
+export const BAIT_MAX = 40;   // 每種餌最多囤幾個（一份 8 個，最多 5 份）
+export const SMALL_KG = 1.6;
 export const BAITS = {
-  shrimp: { name: '蝦餌', pack: 10, price: 40, luck: { uncommon: 1.5, rare: 2 }, desc: '稍微容易釣到稀有魚' },
-  minnow: { name: '小魚餌', pack: 10, price: 60, luck: { uncommon: 2, rare: 3.5 }, desc: '比較容易釣到稀有魚' },
-  squid: { name: '花枝餌', pack: 8, price: 90, luck: { uncommon: 2.5, rare: 5 }, desc: '很容易釣到稀有魚' },
-  lure: { name: '特級亮片餌', pack: 6, price: 120, luck: { uncommon: 3, rare: 8 }, desc: '最容易釣到稀有魚' },
+  shrimp: { name: '蝦餌', pack: 8, price: 100, luck: { uncommon: 1.25, rare: 1.15 }, biteK: 0.8, preferK: 1.5,
+    prefer: ['bream', 'flounder', 'grouper', 'snapper', 'puffer', 'stonebream', 'trout', 'ayu', 'moonfish', 'glassfish'], desc: '咬餌較快 · 礁石與秘境魚偏好' },
+  minnow: { name: '小魚餌', pack: 8, price: 100, luck: { uncommon: 1.25, rare: 1.15 }, sizeK: 1.12, preferK: 1.5,
+    prefer: ['bonito', 'tuna', 'yellowfin', 'mahi', 'amberjack', 'spanish', 'seabass', 'eel'], desc: '魚體型+12% · 外海迴游魚偏好' },
+  squid: { name: '花枝餌', pack: 8, price: 100, luck: { uncommon: 1.25, rare: 1.25 }, junkK: 0.6, smallK: 0.6, preferK: 1.5,
+    prefer: ['hairtail', 'swordfish', 'glowsquid', 'lanternfish', 'grouperGiant', 'wreckEel', 'shark', 'oarfish', 'octopus'], desc: '減少小雜魚 · 夜釣與深海魚偏好' },
+  lure: { name: '特級亮片餌', pack: 8, price: 100, luck: { uncommon: 1.35, rare: 1.6 }, strK: 0.9, desc: '稀有魚率提升 · 收線掙扎-10%' },
 };
+// 餌的動態物價（每間房各自一套）：買一份 X，X 漲 up、其餘三種各降 down（零和蹺蹺板：架上永遠有熱銷的也有特價的）；
+// 每 settleSec 秒偏離基準價的部分剩 settleK（自然回穩）；實際售價照 step 四捨五入、夾在 min～max。
+// 價格牌：≤ sale 標「特價↓」，≥ hot 標「熱銷↑」
+export const BAIT_PRICE = { base: 100, min: 60, max: 160, step: 5, up: 12, down: 4, settleSec: 60, settleK: 0.98, sale: 90, hot: 110 };
+export const baitPriceOf = (raw) => Math.min(BAIT_PRICE.max, Math.max(BAIT_PRICE.min, Math.round(raw / BAIT_PRICE.step) * BAIT_PRICE.step));
+// 一張價格表（{ shrimp: 原始價, ... }）：買了 id 一份之後的樣子
+export function baitBought(raw, id) {
+  const out = {};
+  for (const k of Object.keys(BAITS)) {
+    const v = (raw[k] ?? BAIT_PRICE.base) + (k === id ? BAIT_PRICE.up : -BAIT_PRICE.down);
+    out[k] = Math.min(BAIT_PRICE.max, Math.max(BAIT_PRICE.min, v));
+  }
+  return out;
+}
+// 過了 n 個 settleSec 之後的價格表
+export const baitSettled = (raw, n = 1) => Object.fromEntries(Object.keys(BAITS).map((k) => [k, BAIT_PRICE.base + ((raw[k] ?? BAIT_PRICE.base) - BAIT_PRICE.base) * BAIT_PRICE.settleK ** n]));
 
 export const RARITY = {
   common: { label: '普通', w: 40 },
@@ -145,7 +169,11 @@ function spotWeight(id, sp, spot, c, d) {
   if (c.storm === 'before' && sp.before) w *= sp.before;
   if (c.storm === 'after' && sp.after) w *= sp.after;
   const bait = BAITS[c.bait];
-  if (bait && sp.kind !== 'junk') w *= bait.luck[sp.rarity] ?? 1;   // 越貴的餌，越容易釣到少見、稀有的魚
+  if (bait && sp.kind !== 'junk') {   // 餌的加成（各餌的用法見 BAITS）
+    w *= bait.luck[sp.rarity] ?? 1;
+    if (bait.prefer?.includes(id)) w *= bait.preferK;
+    if (bait.smallK && (sp.rarity ?? 'common') === 'common' && sp.kg[1] < SMALL_KG) w *= bait.smallK;
+  }
   if (sp.kind !== 'junk') {
     const rar = sp.rarity === 'uncommon' || sp.rarity === 'rare';
     if (c.blessing && rar) w *= 2.0;
@@ -181,7 +209,7 @@ export function junkChance(c) {
 // hour：現在幾點；storm：'before' 風暴快來了、'after' 風暴剛過、其餘 null；bait：掛的餌（'' 是基本餌）
 export function pickSpecies(depth, island, off, night = false, zone = null, rain = 0, hour = night ? 23 : 12, storm = null, bait = '', extra = null) {
   const c = { depth, island, off, night, zone, rain, hour, storm, bait, blessing: !!extra?.blessing, lamp: extra?.lamp || 0, vortex: !!extra?.vortex };
-  if (Math.random() < junkChance(c)) { const j = pickFrom(c, true); if (j) return j; }
+  if (Math.random() < junkChance(c) * (BAITS[bait]?.junkK ?? 1)) { const j = pickFrom(c, true); if (j) return j; }
   return pickFrom(c, false) ?? 'mackerel';
 }
 
@@ -212,14 +240,16 @@ export function rollCatch({ depth, island, off, night, rough, zone = null, rain 
   // 雜物不看離岸距離變大；魚群熱點與渦流外圍裡的魚個頭更大一截；小河和洞穴的魚不照離岸距離變大
   const flat = special || isJunk(id);
   const f = rollFish(id, flat ? 0 : clamp(0.7 * far + 0.5 * (off >= 120 ? rough : 0) + (hot ? 0.45 : 0) + (vortex ? 0.35 : 0), 0, 1.15), flat ? 0 : clamp((off - 250) / 300, 0, 1)), [a, b] = SPECIES[id].kg;
+  const B = isJunk(id) ? null : BAITS[bait];
+  if (B?.sizeK) { f.kg = +(f.kg * B.sizeK).toFixed(2); f.len = +(f.len * Math.cbrt(B.sizeK)).toFixed(2); }   // 小魚餌：魚大一點（重量 × sizeK）
   const value = fishValue(id, f.kg);
   const tough = clamp(Math.log(value / 20) / Math.log(40), 0, 1);
-  return { id, ...f, value, strength: SPECIES[id].strength * (0.85 + 0.3 * clamp((f.kg - a) / (b - a), 0, 1.6)) * (0.8 + 0.55 * tough) };
+  return { id, ...f, value, strength: SPECIES[id].strength * (0.85 + 0.3 * clamp((f.kg - a) / (b - a), 0, 1.6)) * (0.8 + 0.55 * tough) * (B?.strK ?? 1) };
 }
 
 // 等魚咬的時間（秒）：升級釣竿不再縮短等待；大魚/稀有魚更謹慎，保底至少 2.5 秒
-export function biteDelay({ rain = 0, hot = false, caveRain = false, fish = null } = {}) {
-  let t = 4.5 + Math.random() * 8.0;
+export function biteDelay({ rain = 0, hot = false, caveRain = false, fish = null, bait = '' } = {}) {
+  let t = (4.5 + Math.random() * 8.0) * (BAITS[bait]?.biteK ?? 1);   // 蝦餌咬得快一點
   t *= 1 - 0.28 * clamp(rain / 0.5, 0, 1);
   if (hot) t *= 0.58;
   if (caveRain) t *= 0.65;

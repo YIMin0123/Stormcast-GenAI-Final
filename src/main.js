@@ -36,7 +36,7 @@ import { makeWildlife } from './wildlife.js';
 import { HOME_GROUND, ZONE_LABEL } from './lowpoly/harborPlan.js';
 import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SWITCHES_W, ROOFS_W, underRoof, SELL_W, LIGHTHOUSE_W, SHELF_W, SPAWN_W, QUAY_EDGE_Z, QUAY_CENTER_W, HARBOR_CENTER_W } from './layout.js';
 import { fishLabel, FishWorld, makeCanMesh, makeChumMesh } from './fish.js';
-import { money as cash, rarityOf, BAITS, SPECIES, castRange } from './fishdata.js';
+import { money as cash, rarityOf, BAITS, BAIT_PRICE, SPECIES, castRange } from './fishdata.js';
 import { Fishing } from './fishing.js';
 import { REEL_PROTOCOL } from './fishFight.js';
 import { EmoteWheel } from './emotes.js';
@@ -2419,7 +2419,7 @@ function offer(id) {
   if (id === 'title') return { name: '漁會捐款箱', lines: ['漁會捐款箱', '自由捐獻・週榜奪稱號', `最低 $${GUILD.min}`], price: null, station: true };
   if (id === 'mailbox') return { name: '漁會意見信箱', lines: ['意見信箱', 'Bug・建議・卡頓', '投遞'], price: null, station: true };
   if (id === 'altar') return { name: '海神祈福祭壇', lines: ['海神祈福', '魚潮・風暴召喚', `$${BLESSINGS.tide.price}`], price: null, station: true };
-  const o = shopItem(id, kit), cur = kit.boats[kit.active] ?? { engineLv: 0 }, bn = BOAT_TYPES[kit.active].name;
+  const o = shopItem(id, kit, baitPrices), cur = kit.boats[kit.active] ?? { engineLv: 0 }, bn = BOAT_TYPES[kit.active].name;
   if (id === 'fuel') return { name: `一桶油（${CAN} 公升）`, lines: [`油桶 ${CAN}公升`, '提到船尾倒進油箱', `$${o.price}`], price: o.price };
   if (id === 'chum') {
     if (o.price === null) return { name: '誘魚桶', lines: ['誘魚桶', `這艘船最多帶 ${o.max ?? CHUM_SPEC.max} 桶`, '已滿'], price: null };
@@ -2454,11 +2454,20 @@ function offer(id) {
   if (id.startsWith('bait_')) {
     const B = BAITS[id.slice(5)];
     if (o.price === null) return { name: B.name, lines: [B.name, '已經囤滿了', '售完'], price: null };
-    return { name: `${B.name}（${B.pack} 個）`, lines: [`${B.name} ${B.pack}個`, B.desc, `$${o.price}`], price: o.price };
+    // 動態物價：便宜到 sale 以下標特價、貴到 hot 以上標熱銷（BAIT_PRICE）
+    const mark = o.price <= BAIT_PRICE.sale ? ' (特價↓)' : o.price >= BAIT_PRICE.hot ? ' (熱銷↑)' : '';
+    return { name: `${B.name}（${B.pack} 個）`, lines: [`${B.name} ${B.pack}個`, B.desc, `$${o.price}${mark}`], price: o.price };
   }
   const S = BOAT_TYPES[id];
   if (o.price === null) return { name: S.name, lines: [S.name, '已經買了', kit.active === id ? '現在開的這艘' : '收在倉庫'], price: null };
   return { name: S.name, lines: [S.name, id === 'fisher' ? '輕快・遮陽棚海釣艇' : '雙層艦橋・急凍魚艙', `$${S.price}`], price: S.price, note: '新船引擎是 Lv.0（每艘分開升）；現在這艘收進倉庫' };
+}
+// 這間房餌現在的售價（伺服器的動態物價，進房、世界狀態、有人買餌時更新）；還沒收到就照基準價
+let baitPrices = null;
+function setBaitPrices(p) {
+  if (!p || JSON.stringify(p) === JSON.stringify(baitPrices)) return;
+  baitPrices = { ...p };
+  refreshTags();
 }
 // 價格牌：母港的照 SHELF 的順序（harbor.js 的 setTag）；修船屋、大港的由各自的模型提供（seascape.tags，照 SITE_SHELF_W 的順序）
 function refreshTags() {
@@ -5044,6 +5053,7 @@ function syncTime(roomT, snap) {
 }
 // 伺服器每半秒送一次時間、天氣、海上事件：照著蓋過去（兩次之間這邊自己往前推）
 function applyWorld(w, snap = false) {
+  if (w.baitPrices) setBaitPrices(w.baitPrices);
   if (w.lights) applyRoomLights(w.lights);
   if (w.extras) havenFx.sync(w.extras);
   if (typeof w.blessingLeft === 'number') blessingUntilMs = performance.now() + w.blessingLeft * 1000;
@@ -5246,6 +5256,7 @@ net.on('k', (m) => {
   }
 });
 net.on('world', (m) => applyWorld(m));
+net.on('baitPrices', (m) => setBaitPrices(m.prices));
 net.on('join', (m) => others.add({ id: m.id, name: m.name, title: m.title || '', gold: m.gold, lv: m.lv, look: m.look, here: m.here, boat: m.boat }));
 net.on('h', (m) => others.setHold(m.id, m.s));
 net.on('ts', (m) => others.setTabState(m.id, m.d));
