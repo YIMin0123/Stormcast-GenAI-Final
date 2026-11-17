@@ -34,7 +34,6 @@ const MERGE_AFTER = +(process.env.MERGE_AFTER_SEC || 600) * 1000;   // 兩間房
 const MERGE_COUNT = +(process.env.MERGE_COUNT_SEC || 30);           // 合併前倒數幾秒
 const MERGE_BELOW = 5;
 const SAVE_EVERY = 10;   // 進度幾秒存一次（有變才寫檔）
-const MAX_CONNECTIONS = 256;   // 包含大廳及尚未送 hello 的連線
 const HELLO_TIMEOUT = 10000;
 const admission = DEV ? null : new Admission();
 
@@ -234,7 +233,6 @@ const wss = new WebSocketServer({
   path: DEV ? undefined : '/',
   verifyClient: ({ origin, req }, done) => {
     if (ORIGINS.length && !ORIGINS.includes(origin)) return done(false, 401);
-    if (wss.clients.size >= MAX_CONNECTIONS) return done(false, 503);
     const code = admission?.upgrade(admissionKey(clientIp(req))) || 0;
     done(code === 0, code);
   },
