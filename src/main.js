@@ -1707,9 +1707,9 @@ function applyViewSettings() {
 // 只有第一人稱顯示畫面中央準心；第三人稱隱藏準心（改由綠框＋互動提示顯示目前選中的物件，滑鼠照舊拖曳不鎖）
 let tablet = null;   // 平板（下面「平板」那一段建出來）：拿出來的時候遊戲的按鍵不動、滑鼠放開
 const tabOpen = () => !!tablet && tablet.open;
-const lookAllowed = () => inGame && !tabOpen() && !chat.isOpen && !$('panel').open;
+const lookAllowed = () => inGame && !tabOpen() && !chat.isOpen && !$('panel').open && !feedbackOpen();
 const aiming = () => lookAllowed() && mode !== 'sink' && view[mode].fp;
-const crosshair = () => !tabOpen() && !!view[mode]?.fp;
+const crosshair = () => !tabOpen() && !feedbackOpen() && !!view[mode]?.fp;
 const locked = () => document.pointerLockElement === canvas;
 function grabMouse() {
   if (TOUCH || locked() || !canvas.requestPointerLock) return;
@@ -2092,7 +2092,8 @@ function openStation(id) {
   if (id === 'mailbox') {
     return openFeedback({
       send(kind, text) { if (!net.online) { toast('連線中斷，等接回去再投'); return false; } net.send({ t: 'feedback', kind, text }); return true; },
-      onOpen() { for (const k in keys) keys[k] = false; closeWheel(false); },
+      onOpen() { for (const k in keys) keys[k] = false; closeWheel(false); syncAim(); },   // 滑鼠從遊戲裡放開，才點得到卡片
+      onClose() { syncAim(); },
     });
   }
   if (id === 'title' && net.online) net.send({ t: 'guild' });   // 捐款箱：先要一份最新的榜
