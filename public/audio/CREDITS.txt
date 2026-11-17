@@ -8,3 +8,9 @@ steps-wood ← Walk on Pontoon (1845)　steps-grass ← Steps in the short grass
 coins ← Coins #1 (0193)　hammer ← Nail and Hammer #1 (0005)　pour ← Flowing water (1522)　thud ← Canvas bag on floor (0576)
 wind ← Wind (0595)　gale ← Strong wind #4 (0154)　roar ← Small dam (0871)
 night ← Field cricket (1020)　trees ← Strong wind and trees #1 (1450)
+
+背景音樂（music/）來自 OpenTracks（舊名 DOVA-SYNDROME，https://opentracks.com/），依該站音源利用ライセンス使用，轉成 128kbps mp3，未改編曲子。
+不是 CC0：僅供在本遊戲中聆聽，禁止擷取檔案另作他用、再散佈或拿去做 AI 學習。
+tropical-sea ← Tropical Sea／のる（https://opentracks.com/bgm/detail/22361）
+unabara-waltz ← 海原のワルツ／こうだつの（https://opentracks.com/bgm/detail/19269）
+yasashii-umibe ← 優しい海辺／蒲鉾さちこ（https://opentracks.com/bgm/detail/20733）

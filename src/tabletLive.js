@@ -57,7 +57,7 @@ ${APPS_CSS}
 `;
 
 function renderSettingsHtml(st, look) {
-  const lv = st?.gfxLv ?? 1, snd = st?.sound !== false, vol = Math.round((st?.vol ?? 1) * 100);
+  const lv = st?.gfxLv ?? 1, snd = st?.sound !== false, vol = Math.round((st?.vol ?? 1) * 100), mus = Math.round((st?.musicVol ?? 0.6) * 100);
   const segGfx = ['低', '中', '高'].map((t, i) => `<button class="${i === lv ? 'on' : ''}">${t}</button>`).join('');
   if (st?.gfxPage) {
     return `<div id="panel" class="inTab gfx"><div id="gfxPage">
@@ -68,7 +68,7 @@ function renderSettingsHtml(st, look) {
   return `<div id="panel" class="inTab">
     <div class="sec main"><h4>畫面</h4><div class="line"><span>畫質</span><button class="sw">${['低', '中', '高'][lv]} ›</button></div><p class="note">光影、視野、特效、解析度都在這裡調</p></div>
     <div class="sec main"><h4>角色</h4><div class="line"><span>外觀</span><div class="seg"><button class="${look !== 'boy' ? 'on' : ''}">♀ 女</button><button class="${look === 'boy' ? 'on' : ''}">♂ 男</button></div></div></div>
-    <div class="sec main"><h4>聲音</h4><div class="line"><span>遊戲音效</span><button class="sw${snd ? ' on' : ''}">${snd ? '開' : '關'}</button></div><div class="line" style="margin-top:9px"><span>音量</span><b>${vol}%</b></div></div>
+    <div class="sec main"><h4>聲音</h4><div class="line"><span>遊戲音效</span><button class="sw${snd ? ' on' : ''}">${snd ? '開' : '關'}</button></div><div class="line" style="margin-top:9px"><span>音量</span><b>${vol}%</b></div><div class="line" style="margin-top:9px"><span>背景音樂</span><b>${mus}%</b></div></div>
     <div class="sec main"><h4>操作說明</h4><p class="note">WASD 移動・E 互動・F 釣魚・B 換餌・Tab 平板・M 地圖</p></div></div>`;
 }
 

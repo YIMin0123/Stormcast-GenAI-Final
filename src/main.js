@@ -49,6 +49,7 @@ import { makeGroundDetail, makeGrassGeometry, WIND, SIGHT } from './foliage.js';
 import { Spray } from './spray.js';
 import { makeRainSplash } from './rainSplash.js';
 import { OceanAudio } from './audio.js';
+import { Music } from './music.js';
 import { Sea, Climate, computeDanger, computeOffshore, computeTsuK, TSU, SWELL, swellAt, WAVE_LOOP, windWave, seaLevel, seaOpen, shoreSea, openOf, windSpeed, tideAt, tsuHK, TSU_H } from './weather.js';
 import { Rain, Bolt, Spindrift, Spout, WaveSpray } from './skyfx.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -3104,6 +3105,7 @@ function updateKeybar() {
 
 // ---- 介面 -----------------------------------------------------------------
 const audio = new OceanAudio();
+const music = new Music(audio);   // 背景音樂：平常留白，偶爾才來一首（src/music.js）
 // 魚群熱點、漂流寶箱的畫面（什麼時候有、在哪裡，照伺服器說的）
 const havenFx = makeHavenFx({
   scene, shade, splash, waterY, flood: () => flood, mist: (x, y, z, vx, vy, vz, life, size) => spray.emit(x, y, z, vx, vy, vz, life, size),
@@ -3493,10 +3495,16 @@ const soundBtn = () => { $('sound').textContent = audio.on ? '開' : '關'; $('s
 // 音量（0–1，記在 stormcast.vol）：乘在總音量上
 let soundVol = clamp(parseFloat(getPref('stormcast.vol') ?? '1') || 0, 0, 1);
 const applyVol = () => { if (audio.on && audio.master) audio.master.gain.value = 0.9 * soundVol; $('vVol').textContent = `${Math.round(soundVol * 100)}%`; };
-const soundStart = () => { audio.start(); applyVol(); };
+// 背景音樂音量（0–1，記在 stormcast.musicVol，預設 60%）：再乘上總音量；0 就不放音樂
+let musicVol = clamp(parseFloat(getPref('stormcast.musicVol') ?? '0.6') || 0, 0, 1);
+const applyMusicVol = () => { music.setVol(musicVol); $('vMusic').textContent = `${Math.round(musicVol * 100)}%`; };
+const soundStart = () => { audio.start(); music.start(); applyVol(); applyMusicVol(); };
 $('vol').value = soundVol;
 applyVol();
 $('vol').addEventListener('input', () => { soundVol = +$('vol').value; setPref('stormcast.vol', soundVol); applyVol(); });
+$('musicVol').value = musicVol;
+applyMusicVol();
+$('musicVol').addEventListener('input', () => { musicVol = +$('musicVol').value; setPref('stormcast.musicVol', musicVol); applyMusicVol(); });
 $('sound').addEventListener('click', () => {
   if (audio.on) audio.stop(); else soundStart();
   setPref('stormcast.sound', audio.on ? 'on' : 'off');
@@ -4709,7 +4717,7 @@ function collectTabState() {
     rodLv, rodBrk: rodBroken, bait: kit.bait && baitCount(kit, kit.bait) > 0 ? kit.bait : '', baits,
     chum: kit.chum || 0, mods: kit.mods || {}, paint: kit.paint || 'default',
     title: myBadge.title || '', titles: guild?.titles || [], boxes: boxesMine, stored, money,
-    gfxLv: lv >= 0 ? lv : 1, gfxPage: $('panel').classList.contains('gfx'), sound: audio.on, vol: soundVol,
+    gfxLv: lv >= 0 ? lv : 1, gfxPage: $('panel').classList.contains('gfx'), sound: audio.on, vol: soundVol, musicVol,
   };
 }
 function flushTabState(force = false) {
@@ -6130,6 +6138,12 @@ function drawFrame(dt, ms = performance.now()) {
       pitch: boat.spec.id === 'skiff' ? 1.25 : boat.spec.id === 'fisher' ? 1 : 0.82,
       reel: fishing.state === 'fight' && fishing.reel ? 1 : 0,
     });
+    // 背景音樂：在哪（據點、離岸多遠）、幾點、海上危不危險（海嘯、颱風、漩渦、水龍捲、大雨時讓位給風浪）
+    const big = sea.tsu.on || sea.phase === 'waves' || sea.phase === 'typhoon' || sea.phase === 'whirl' ? 1 : 0;
+    music.update(dt, {
+      site: inGame ? siteAt(cp.x, cp.z) : null, off, aboard: !!player.boat, hour: climate.hour,
+      danger: Math.max(big, sea.rumble * 0.6, 1.5 * crestRoar, 1.45 * whirlRoar, spoutNear), rain: rainNow,
+    });
   }
 
   shared.uTime.value = time;
@@ -6383,7 +6397,7 @@ warmUp().then(() => {
 window.__sim = {
   advance, drawFrame, get boat() { return boat; }, boats, addBoat, offer, refreshTags, boxes, heldBox, nearShelf, SHELF,
   get rodLv() { return rodLv; }, get rodBroken() { return rodBroken; },
-  aimTarget, wheel, closeWheel, sitDown, standUp, offAt, audio, player, ocean, keys, view, bedAt, walkGround, walkWorld, shelterAt, nearHelm, interact, toggleFp,
+  aimTarget, wheel, closeWheel, sitDown, standUp, offAt, audio, music, player, ocean, keys, view, bedAt, walkGround, walkWorld, shelterAt, nearHelm, interact, toggleFp,
   fish, fishing, isWater, SELL: SELL_W, get money() { return money; },
   // 多人
   net, others, chat, boards, garage, enterRoom, applyWorld, myFishUids, takeHelm, releaseHelm, touch, setGfx, setPixelRatio,
