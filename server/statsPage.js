@@ -68,7 +68,7 @@ function drawDay(){const d=R.days.find((x)=>x.date===day);$('dayTitle').textCont
 $('dayChips').replaceChildren();if(d){[['不同玩家',d.players],['電腦',d.pc],['手機',d.mobile],['新玩家',d.fresh],['場次',d.sessions],['同時最高',d.peak]].forEach(([k,v])=>{const c=el('div','','chip');c.append(el('b',v),el('span',' '+k,'muted'));$('dayChips').append(c)})}
 const max=Math.max(1,...(d?d.hourly:[0]));$('chart').replaceChildren();$('axis').replaceChildren();
 for(let h=0;h<24;h++){const v=d?d.hourly[h]:0,b=el('i');b.style.height=(v/max*100)+'%';b.title=pad(h)+':00 最高 '+v+' 人';$('chart').append(b);$('axis').append(el('span',h%3===0?pad(h):''))}
-const ev=(R.events[day]||[]).filter((e)=>e.t!=='pop');
+const ev=(R.events[day]||[]).filter((e)=>e.t==='join');   // 只列誰進了遊戲：離開、斷線、接回、換名、伺服器啟動都不列
 const label={join:'進房',back:'斷線接回',drop:'斷線',end:'離開',rename:'換名',boot:'伺服器啟動'};
 table($('events'),['時間','事件','名字','房間','裝置','IP','說明'],ev.map((e)=>{
  let note='';if(e.t==='end')note=(WHY[e.why]||e.why)+'；玩了 '+dur(e.sec)+'；釣到 '+e.catches+' 條；賺 '+money(e.earned)+'、花 '+money(e.spent)+(e.bought&&e.bought.length?'；買了 '+e.bought.join('、'):'');
