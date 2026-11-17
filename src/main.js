@@ -9,7 +9,7 @@ import { ShallowWater, SWE } from './shallow.js';
 import { makeSwimFx } from './swimfx.js';
 import { makeSurfaceProbe } from './swimProbe.js';
 import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SELL, setBoard, BOLLARDS, MoorLine, SHELF, setTag, drawTag, LAMPS, UNLIT, WET, ROOM_LIGHTS, ROOM_LAMPS, setRoomLights, GLOW_KEEP, lightBulbs, updateFlags, updateScale, PORCHES, HOME_LAND } from './harbor.js';
-import { WORLD, THROW, DEVMODE, SHORE_WIND, CLOUDS, FISHBOX, TABLET, GUILD, LEVEL, PARTY, TOW, BOATHIT, FEEDBACK, levelOf } from './config.js';
+import { WORLD, THROW, DEVMODE, SHORE_WIND, CLOUDS, FISHBOX, TABLET, GUILD, LEVEL, PARTY, TOW, BOATHIT, FEEDBACK, levelOf, LOD } from './config.js';
 import { Tablet } from './tablet.js';
 import { makeApps } from './tabletApps.js';
 import { unreadCount } from './updates.js';
@@ -5771,8 +5771,27 @@ function advance(dt) {
 }
 
 let shadowElapsed = 0, shadowDraws = 0;
+// 遠的東西省著畫（LOD）：甲板上、地上、魚箱裡的魚離鏡頭超過 LOD.fishFar 不畫（箱子照畫）；
+// 別的玩家的人偶超過 LOD.figHullFar 不畫描邊、超過 LOD.figFar 整個不畫（名牌還在）。
+// 人偶的 visible 每次 others.update 都會重設，所以這裡每幀在畫之前再蓋一次
+const _lodP = new THREE.Vector3();
+function farLod() {
+  const cp = camera.position, fish2 = LOD.fishFar ** 2, hull2 = LOD.figHullFar ** 2, fig2 = LOD.figFar ** 2;
+  const d2 = (m) => _lodP.setFromMatrixPosition(m.matrixWorld).distanceToSquared(cp);
+  for (const it of fish.items) it.mesh.visible = d2(it.mesh) < fish2;
+  for (const e of boxes.map.values()) e.inner.visible = d2(e.mesh) < fish2;
+  for (const o of others.map.values()) {
+    const f = o.fig;
+    if (!f || !f.mesh.visible) continue;
+    const d = d2(f.mesh);
+    if (d > fig2) { f.mesh.visible = false; continue; }
+    const hull = d < hull2;
+    if (f._hullOn !== hull) { f._hullOn = hull; f.mesh.traverse((m) => { if (m.userData.hull) m.visible = hull; }); }
+  }
+}
 function drawFrame(dt, ms = performance.now()) {
   updateCamera(dt);
+  farLod();
   boxes.marks(camera, meAt(), net.id, inGame && !tabOpen());   // 開船時用船的位置量距離
   markMyBoat();
   markWaypoint();

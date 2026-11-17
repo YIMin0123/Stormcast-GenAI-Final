@@ -2,6 +2,7 @@
 // 鰭是一根根鰭條排成的帶子（膜有起伏、越靠邊越透），眼睛是嵌在頭上的圓頂。身體跟鰭在著色器裡左右擺（flexFish），銀色的魚邊緣會反光。
 // 每一種魚的長相寫在下面的 LOOKS，質感與擺法寫在 FEEL，沒寫的欄位用 DEF。座標：+X 是頭、Y 是背、Z 是側面；先照身長 1 蓋好，最後整個乘上 len。
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const TAU = Math.PI * 2;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -491,21 +492,34 @@ function eyeMaterial(ring, pupil, glow) {
   eyeMats.set(key, m);
   return m;
 }
-function addEyes(g, L, hh, ww, t) {
-  const r = 0.032 * L.eye, mat = eyeMaterial(L.ring ?? '#f4f4ec', L.eyeColor ?? '#0b0b0b', L.glow);
-  const flip = new THREE.Quaternion().setFromAxisAngle(new V3(0, 1, 0), Math.PI), q = new THREE.Quaternion();
-  // 一般的魚左右各一顆；比目魚兩顆都在上面那一側（+Z）
-  const spots = L.eyeFlat ? [[1, Math.acos(0.55)], [1, Math.acos(0.25)]] : [[1, Math.acos(L.eyeY)], [-1, TAU - Math.acos(L.eyeY)]];
-  for (const [s, th] of spots) {
-    const p = surf(L, hh, ww, t, th), n = surfNormal(L, hh, ww, t, th);
-    const e = new THREE.Mesh(eyeCap(), mat);
-    q.setFromUnitVectors(new V3(0, 0, s), n);
-    if (s < 0) q.multiply(flip);
-    e.quaternion.copy(q);
-    e.scale.set(r, r, r * 0.75);
-    e.position.copy(p).addScaledVector(n, -r * 0.12);
-    g.add(e);
+// ---- 省畫的次數：同一種魚、同一種材質的小零件（兩顆眼睛、河豚的刺、章魚的斑點和腳）先合成一個網格，一次畫完 ----
+// make() 回傳 [幾何, 位置, 轉向, 縮放] 的清單；合好的照 key 存起來，同一種魚共用
+const partCache = new Map();
+const _m4 = new THREE.Matrix4();
+function mergedParts(key, make) {
+  let geo = partCache.get(key);
+  if (!geo) {
+    geo = mergeGeometries(make().map(([src, p, q, s]) => src.clone().applyMatrix4(_m4.compose(p, q, s))));
+    partCache.set(key, geo);
   }
+  return geo;
+}
+const Q0 = new THREE.Quaternion();
+const S1 = (k = 1) => new V3(k, k, k);
+
+function addEyes(g, L, hh, ww, t, id) {
+  const r = 0.032 * L.eye, mat = eyeMaterial(L.ring ?? '#f4f4ec', L.eyeColor ?? '#0b0b0b', L.glow);
+  // 一般的魚左右各一顆；比目魚兩顆都在上面那一側（+Z）。兩顆合成一個網格
+  g.add(new THREE.Mesh(mergedParts(`eyes|${id}`, () => {
+    const flip = new THREE.Quaternion().setFromAxisAngle(new V3(0, 1, 0), Math.PI);
+    const spots = L.eyeFlat ? [[1, Math.acos(0.55)], [1, Math.acos(0.25)]] : [[1, Math.acos(L.eyeY)], [-1, TAU - Math.acos(L.eyeY)]];
+    return spots.map(([s, th]) => {
+      const p = surf(L, hh, ww, t, th), n = surfNormal(L, hh, ww, t, th);
+      const q = new THREE.Quaternion().setFromUnitVectors(new V3(0, 0, s), n);
+      if (s < 0) q.multiply(flip);
+      return [eyeCap(), p.clone().addScaledVector(n, -r * 0.12), q, new V3(r, r, r * 0.75)];
+    });
+  }), mat));
 }
 
 // ---- 擺動：身體跟鰭的頂點在著色器裡左右彎（不另外算骨架），胸鰭上下搧；外加一圈邊緣反光 ----
@@ -566,16 +580,17 @@ function build(sp, len) {
   }
   // 河豚的刺（只長在不太會擺的前半身）
   if (L.spines) {
-    const sg = new THREE.ConeGeometry(0.012, 0.04, 4), sm = new THREE.MeshLambertMaterial({ color: '#e8dcb0' }), r = rng(7), up = new V3(0, 1, 0);
-    for (let i = 0; i < 26; i++) {
-      const t = 0.32 + r() * 0.55, th = r() * TAU, s = new THREE.Mesh(sg, sm);
-      s.position.copy(surf(L, hh, ww, t, th));
-      s.quaternion.setFromUnitVectors(up, surfNormal(L, hh, ww, t, th));
-      g.add(s);
-    }
+    g.add(new THREE.Mesh(mergedParts(`spines|${id}`, () => {
+      const sg = new THREE.ConeGeometry(0.012, 0.04, 4), r = rng(7), up = new V3(0, 1, 0), out = [];
+      for (let i = 0; i < 26; i++) {
+        const t = 0.32 + r() * 0.55, th = r() * TAU;
+        out.push([sg, surf(L, hh, ww, t, th), new THREE.Quaternion().setFromUnitVectors(up, surfNormal(L, hh, ww, t, th)), S1()]);
+      }
+      return out;
+    }), new THREE.MeshLambertMaterial({ color: '#e8dcb0' })));
   }
   const et = Math.min(0.9, L.head + (1 - L.head) * 0.22);
-  addEyes(g, L, hh, ww, L.tube ? 0.9 : et);
+  addEyes(g, L, hh, ww, L.tube ? 0.9 : et, id);
 
   g.userData.flex = { U, amp: 0, k: L.flex };
   g.scale.setScalar(len);
@@ -585,32 +600,35 @@ function build(sp, len) {
 // ---- 章魚、小卷 ----
 function buildOctopus(sp, len) {
   const g = new THREE.Group(), col = new THREE.Color(sp.color), mat = new THREE.MeshLambertMaterial({ color: col });
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 14, 10), mat); head.scale.set(0.95, 1.2, 0.95); head.position.set(-0.26, 0.4, 0); g.add(head);
-  const dots = new THREE.MeshLambertMaterial({ color: col.clone().multiplyScalar(0.6) }), r = rng(5);
-  for (let i = 0; i < 14; i++) { const a = r() * TAU, b = (r() - 0.3) * 1.6, d = new THREE.Mesh(new THREE.SphereGeometry(0.022 + r() * 0.02, 5, 4), dots); d.position.set(-0.26 + Math.cos(a) * 0.24 * Math.cos(b), 0.4 + Math.sin(b) * 0.3, Math.sin(a) * 0.24 * Math.cos(b)); g.add(d); }
-  for (const s of [-1, 1]) {
-    const ey = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), new THREE.MeshLambertMaterial({ color: '#f1e9c8' })); ey.position.set(-0.08, 0.36, s * 0.16); g.add(ey);
-    const pu = new THREE.Mesh(new THREE.SphereGeometry(0.032, 6, 5), new THREE.MeshBasicMaterial({ color: '#0b0b0b' })); pu.position.set(-0.04, 0.36, s * 0.195); g.add(pu);
-  }
-  // 八條腳：每條一串錐形圓柱接起來（由粗到細），從身體下面往外甩、尖端翹起來
-  const up = new THREE.Vector3(0, 1, 0), pts = (i) => {
-    const a = (i / 8) * TAU + 0.2, curl = (i % 2 ? 1 : -1) * 0.6, out = [];
-    for (let k = 0; k <= 7; k++) {
-      const s0 = k / 7, reach = 0.05 + s0 * 0.42, ang = a + curl * s0 * s0 * 1.3;
-      out.push(new THREE.Vector3(-0.06 + Math.cos(ang) * reach, 0.2 - Math.sin(s0 * 2.4) * 0.17 + s0 * s0 * 0.1, Math.sin(ang) * reach));
+  // 頭和八條腳合成一個網格、斑點一個、眼白一個、瞳孔一個（形狀只算一次）
+  const dots = new THREE.MeshLambertMaterial({ color: col.clone().multiplyScalar(0.6) });
+  g.add(new THREE.Mesh(mergedParts('octo|dots', () => {
+    const r = rng(5), out = [];
+    for (let i = 0; i < 14; i++) { const a = r() * TAU, b = (r() - 0.3) * 1.6; out.push([new THREE.SphereGeometry(0.022 + r() * 0.02, 5, 4), new V3(-0.26 + Math.cos(a) * 0.24 * Math.cos(b), 0.4 + Math.sin(b) * 0.3, Math.sin(a) * 0.24 * Math.cos(b)), Q0, S1()]); }
+    return out;
+  }), dots));
+  g.add(new THREE.Mesh(mergedParts('octo|eyes', () => [-1, 1].map((s) => [new THREE.SphereGeometry(0.06, 8, 6), new V3(-0.08, 0.36, s * 0.16), Q0, S1()])), new THREE.MeshLambertMaterial({ color: '#f1e9c8' })));
+  g.add(new THREE.Mesh(mergedParts('octo|pupils', () => [-1, 1].map((s) => [new THREE.SphereGeometry(0.032, 6, 5), new V3(-0.04, 0.36, s * 0.195), Q0, S1()])), new THREE.MeshBasicMaterial({ color: '#0b0b0b' })));
+  g.add(new THREE.Mesh(mergedParts('octo|body', () => {
+    const out = [[new THREE.SphereGeometry(0.26, 14, 10), new V3(-0.26, 0.4, 0), Q0, new V3(0.95, 1.2, 0.95)]];
+    // 八條腳：每條一串錐形圓柱接起來（由粗到細），從身體下面往外甩、尖端翹起來
+    const up = new THREE.Vector3(0, 1, 0), pts = (i) => {
+      const a = (i / 8) * TAU + 0.2, curl = (i % 2 ? 1 : -1) * 0.6, out = [];
+      for (let k = 0; k <= 7; k++) {
+        const s0 = k / 7, reach = 0.05 + s0 * 0.42, ang = a + curl * s0 * s0 * 1.3;
+        out.push(new THREE.Vector3(-0.06 + Math.cos(ang) * reach, 0.2 - Math.sin(s0 * 2.4) * 0.17 + s0 * s0 * 0.1, Math.sin(ang) * reach));
+      }
+      return out;
+    };
+    for (let i = 0; i < 8; i++) {
+      const P = pts(i);
+      for (let k = 0; k < P.length - 1; k++) {
+        const a = P[k], b = P[k + 1], d = b.clone().sub(a), l = d.length(), r0 = 0.05 * (1 - k / 7 * 0.85) + 0.005, r1 = 0.05 * (1 - (k + 1) / 7 * 0.85) + 0.005;
+        out.push([new THREE.CylinderGeometry(r1, r0, l * 1.05, 6), a.clone().add(b).multiplyScalar(0.5), new THREE.Quaternion().setFromUnitVectors(up, d.normalize()), S1()]);
+      }
     }
     return out;
-  };
-  for (let i = 0; i < 8; i++) {
-    const P = pts(i);
-    for (let k = 0; k < P.length - 1; k++) {
-      const a = P[k], b = P[k + 1], d = b.clone().sub(a), l = d.length(), r0 = 0.05 * (1 - k / 7 * 0.85) + 0.005, r1 = 0.05 * (1 - (k + 1) / 7 * 0.85) + 0.005;
-      const seg = new THREE.Mesh(new THREE.CylinderGeometry(r1, r0, l * 1.05, 6), mat);
-      seg.position.copy(a).add(b).multiplyScalar(0.5);
-      seg.quaternion.setFromUnitVectors(up, d.normalize());
-      g.add(seg);
-    }
-  }
+  }), mat));
   g.scale.setScalar(len * 1.2);
   return g;
 }
@@ -623,17 +641,24 @@ function buildSquid(sp, len, glow) {
   mantle.scale.set(1.15, 1, 1); g.add(mantle);
   const fin = flatFin([[-0.4, 0, 0, 0], [-0.2, 0, 0.2, 1], [-0.5, 0, 0.02, 0.5], [-0.2, 0, -0.2, 1]], col.clone().multiplyScalar(0.95), col.clone().multiplyScalar(0.7));
   g.add(new THREE.Mesh(fin, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, ...(glow ? { emissive: col.clone().multiplyScalar(0.3) } : {}) })));
-  for (const s of [-1, 1]) {
-    const ey = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), new THREE.MeshLambertMaterial({ color: '#f4f0d8' })); ey.position.set(0.4, 0.04, s * 0.1); g.add(ey);
-    const pu = new THREE.Mesh(new THREE.SphereGeometry(0.025, 6, 5), new THREE.MeshBasicMaterial({ color: '#0b0b0b' })); pu.position.set(0.42, 0.04, s * 0.13); g.add(pu);
-  }
-  const r = rng(3);
-  for (let i = 0; i < 8; i++) {
-    const a = i / 8 * TAU, cyl = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.022, i % 4 === 0 ? 0.36 : 0.24, 5), mat);
-    cyl.rotation.z = Math.PI / 2; cyl.position.set(0.58 + (i % 4 === 0 ? 0.08 : 0.02), Math.sin(a) * 0.05 + (r() - 0.5) * 0.01, Math.cos(a) * 0.05); g.add(cyl);
-  }
+  // 眼白、瞳孔、八隻腳、斑點各合成一個網格
+  g.add(new THREE.Mesh(mergedParts('squid|eyes', () => [-1, 1].map((s) => [new THREE.SphereGeometry(0.045, 8, 6), new V3(0.4, 0.04, s * 0.1), Q0, S1()])), new THREE.MeshLambertMaterial({ color: '#f4f0d8' })));
+  g.add(new THREE.Mesh(mergedParts('squid|pupils', () => [-1, 1].map((s) => [new THREE.SphereGeometry(0.025, 6, 5), new V3(0.42, 0.04, s * 0.13), Q0, S1()])), new THREE.MeshBasicMaterial({ color: '#0b0b0b' })));
+  const r = rng(3), side = new THREE.Quaternion().setFromAxisAngle(new V3(0, 0, 1), Math.PI / 2);
+  g.add(new THREE.Mesh(mergedParts('squid|arms', () => {
+    const out = [];
+    for (let i = 0; i < 8; i++) {
+      const a = i / 8 * TAU;
+      out.push([new THREE.CylinderGeometry(0.008, 0.022, i % 4 === 0 ? 0.36 : 0.24, 5), new V3(0.58 + (i % 4 === 0 ? 0.08 : 0.02), Math.sin(a) * 0.05 + (r() - 0.5) * 0.01, Math.cos(a) * 0.05), side, S1()]);
+    }
+    return out;
+  }), mat));
   const dm = new THREE.MeshLambertMaterial({ color: col.clone().multiplyScalar(0.65) });
-  for (let i = 0; i < 18; i++) { const d = new THREE.Mesh(new THREE.SphereGeometry(0.012, 4, 3), dm), a = r() * TAU; d.position.set(-0.3 + r() * 0.65, Math.cos(a) * 0.1, Math.sin(a) * 0.1); g.add(d); }
+  g.add(new THREE.Mesh(mergedParts('squid|dots', () => {
+    const out = [];
+    for (let i = 0; i < 18; i++) { const a = r() * TAU; out.push([new THREE.SphereGeometry(0.012, 4, 3), new V3(-0.3 + r() * 0.65, Math.cos(a) * 0.1, Math.sin(a) * 0.1), Q0, S1()]); }
+    return out;
+  }), dm));
   g.scale.setScalar(len * 0.95);
   return g;
 }

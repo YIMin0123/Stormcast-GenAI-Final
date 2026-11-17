@@ -28,7 +28,7 @@ hullMat.onBeforeCompile = (sh) => {
 export function addOutline(root) {
   const list = [];
   root.traverse((m) => {
-    if (m.isMesh && !m.userData.hull && !m.material.transparent && !m.material.isMeshBasicMaterial && m.geometry.attributes.normal) list.push(m);
+    if (m.isMesh && !m.userData.hull && !m.userData.noHull && !m.material.transparent && !m.material.isMeshBasicMaterial && m.geometry.attributes.normal) list.push(m);
   });
   for (const m of list) {
     // 有骨架的（人物）：描邊也要跟著同一副骨架動

@@ -190,6 +190,7 @@ export function buildFigure(look = myLook()) {
   const faceMesh = skin(SRC.face, face);
   faceMesh.castShadow = false;   // 貼在臉前面 3 公釐的薄片：投影的話會在臉上印出一片斑點
   faceMesh.userData.noCast = true;
+  faceMesh.userData.noHull = true;   // 薄片的描邊從正面看不到，不用多畫一次
   // 掌舵的第一人稱只看得到兩隻手臂：另外做一份只有手臂那些面的網格，平常藏著
   const armsOnly = new THREE.SkinnedMesh(armGeometry(M), bodyMat);
   armsOnly.bind(body.skeleton, new THREE.Matrix4());
