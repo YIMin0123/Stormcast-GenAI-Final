@@ -384,7 +384,8 @@ function buildCabinBoat(S, g, blocks) {
     bamboo.rotation.z = -0.08;
     g.add(bamboo);
     const bx = S.len / 2 - 1.5, by = D + railRise(S, 0.9) + 0.25;
-    g.add(box(0.05, 0.5, 0.05, steel, bx, by - 0.1, 0.5));
+    const postH = by + 0.05 - D;   // 柱子從甲板立到救生圈中間（原本只有半公尺長，底下懸空）
+    g.add(box(0.05, postH, 0.05, steel, bx, D + postH / 2, 0.5), box(0.16, 0.03, 0.16, steel, bx, D + 0.015, 0.5));
     const ring2 = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.055, 6, 14), lambert(0xe2582a));
     ring2.rotation.y = Math.PI / 2;
     ring2.position.set(bx, by + 0.1, 0.5);

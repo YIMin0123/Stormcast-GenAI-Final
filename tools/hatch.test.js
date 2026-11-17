@@ -185,3 +185,24 @@ test('魚艙有魚不能換船；存檔讀檔留著；船沉完了跟著沒了',
   assert.equal(hatchOf(a).fish.length, 0);
   assert.ok(!a.fish.has(u));
 });
+
+test('換船後魚艙跟著新船（廣播新的 h）；換到小舢舨艙蓋關上', () => {
+  const { room, ps: [a, b] } = fixture(2);
+  trawler(a);
+  a.kit.boats.fisher = { engineLv: 0 };
+  onBoat(a, a);
+  const h = hatchOf(a);
+  room.on(a, { t: 'hatchLid', bid: h.bid, open: true });
+  assert.equal(h.open, true);
+  a.pos = [QUAY_CENTER_W.x, 1.3, QUAY_CENTER_W.z, 0, 0, 0, 0, 0, 0, 0, 0, '', ''];   // 換船要先下船
+  clear(a, b);
+  room.on(a, { t: 'swap', type: 'fisher' });
+  assert.equal(a.kit.active, 'fisher');
+  const pub = lastOf(b, 'box')?.add.find((d) => d.bid === h.bid);
+  assert.equal(pub?.h, 'fisher', '別人收到魚艙換到近海漁船');
+  clear(a, b);
+  room.on(a, { t: 'swap', type: 'skiff' });
+  assert.equal(a.kit.active, 'skiff');
+  assert.equal(h.open, false, '小舢舨沒有艙口：艙蓋關上');
+  assert.equal(lastOf(b, 'box')?.add.find((d) => d.bid === h.bid)?.h, 'skiff');
+});

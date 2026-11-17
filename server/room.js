@@ -20,7 +20,7 @@ import { gainExp, lvOf, isGold, guildOf, syncTitles } from './guild.js';
 import { onPartyMsg, leaveParty, dropLinks, towCut, stepTows, expireAsks, partyMap, partyInfo, lfgList, mates } from './party.js';
 import { sendRaw } from './wire.js';
 import { placeOfSpot } from '../src/places.js';
-import { onBoxMsg, boxList, homeBoxes, savedBoxesOf, loadBoxes, savedHatchOf, loadHatch, clearHatch, hatchOf, dropBoxes, stowBoxes, resetBoxes, sellBox, buyBox, floatBoxes, inBoxes, expireOffers, returnPassengerBoxes, moveDeckBoxes } from './fishBoxes.js';
+import { onBoxMsg, boxList, homeBoxes, savedBoxesOf, loadBoxes, savedHatchOf, loadHatch, clearHatch, hatchOf, syncHatch, dropBoxes, stowBoxes, resetBoxes, sellBox, buyBox, floatBoxes, inBoxes, expireOffers, returnPassengerBoxes, moveDeckBoxes } from './fishBoxes.js';
 
 export const MAX_PLAYERS = 30;
 export const TICK = 0.1;                 // 世界每 0.1 秒算一次
@@ -986,6 +986,7 @@ export class Room {
     this.parkBoat(p);
     this.send(p, { t: 'swapped', kit: p.kit, berth: this.berthInfo(p), stored: this.storedOf(p), ...extra });
     this.all({ t: 'boat', id: p.id, boat: this.boatInfo(p) }, p);
+    syncHatch(this, p);   // 魚艙換到新船上（畫面端照 h 擺、照船算容量）
   }
 
   // ---- 放在外面的魚 ----

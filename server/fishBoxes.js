@@ -34,6 +34,14 @@ export function boxPub(room, bx) {
 const crates = (p) => p.boxes.filter((bx) => !bx.hatch);
 // 這個人的魚艙
 export const hatchOf = (p) => p.boxes.find((bx) => bx.hatch) || null;
+// 換了船（換船、買新船、沉了換一艘）：魚艙的 h（船種，決定在哪艘船上、多大）跟著變，重新告訴大家。
+// 換到沒有艙口的船（小舢舨）時艙蓋一併關上，下次換回來是蓋著的
+export function syncHatch(room, p) {
+  const bx = hatchOf(p);
+  if (!bx) return;
+  if (!BOAT_TYPES[p.kit.active]?.hatch) bx.open = false;
+  room.all({ t: 'box', add: [boxPub(room, bx)] });
+}
 // 這個箱子的尺寸：魚艙照主人現在開的船
 const specOf = (room, bx) => (bx.hatch ? hatchSpec(room.players.get(bx.owner)?.kit?.active) : BOX_SPEC);
 const boxList = (room) => [...room.boxes.values()].map((bx) => boxPub(room, bx));
