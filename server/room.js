@@ -17,7 +17,7 @@ import { SERVER, SHARE, WORLD, FISHBOX, GUILD, LEVEL, PARTY, FEEDBACK } from '..
 import { callBoat, moveBlocked, reberthNear, storedInfo, aboard, berthFree, siteOf } from './boatCall.js';
 import { recordDex } from './dex.js';
 import { gainExp, lvOf, isGold, guildOf, syncTitles } from './guild.js';
-import { onPartyMsg, leaveParty, dropLinks, towCut, stepTows, expireAsks, partyMap, mates } from './party.js';
+import { onPartyMsg, leaveParty, dropLinks, towCut, stepTows, expireAsks, partyMap, partyInfo, lfgList, mates } from './party.js';
 import { sendRaw } from './wire.js';
 import { placeOfSpot } from '../src/places.js';
 import { onBoxMsg, boxList, homeBoxes, savedBoxesOf, loadBoxes, dropBoxes, stowBoxes, resetBoxes, sellBox, buyBox, floatBoxes, inBoxes, expireOffers, returnPassengerBoxes, moveDeckBoxes } from './fishBoxes.js';
@@ -274,7 +274,7 @@ export class Room {
     p.room = this;
     this.players.set(p.id, p);
     let moved = null;
-    if (!resume) { p.party = 0; p.props = []; if (p.boat) p.boat.pilot = 0; }   // 船隊只存在原本那間房：新進來、被併過來的人都不在隊裡，船也不再由（已經不是隊友的）人開
+    if (!resume) { p.party = 0; p.lfg = false; p.props = []; if (p.boat) p.boat.pilot = 0; }   // 船隊只存在原本那間房：新進來、被併過來的人都不在隊裡，船也不再由（已經不是隊友的）人開
     if (fresh) { this.allocBerth(p); this.parkBoat(p); homeBoxes(this, p); } else if (!resume) {
       // 合併過來的：原本那一格在這間房沒人用就照舊；被佔了就換一格，船本來停在格子裡的話跟著移過去（開在外面的不動）
       const old = p.berth, type = p.kit.active, was = old >= 0 ? berthPose(BERTHS[old], type) : null;
@@ -302,7 +302,7 @@ export class Room {
     return {
       id: p.id, token: p.token, name: p.name, room: { id: this.id, name: this.name, max: MAX_PLAYERS },
       world: this.worldState(), kit: p.kit, berth: this.berthInfo(p), players: this.roster(p), boards: this.boards(), dev: DEV, loose: this.looseList(), boxes: boxList(this), stored: this.storedOf(p), dex: p.dex, reconnectSec: GRACE / 1000,
-      me: badge(p), guild: guildOf(this.hub, p), party: partyMap(this), tows: this.tows.map((t) => [t.tug, t.tow]), pilot: p.boat?.pilot || 0, ...extra,
+      me: badge(p), guild: guildOf(this.hub, p), party: partyMap(this), parties: partyInfo(this), lfg: lfgList(this), tows: this.tows.map((t) => [t.tug, t.tow]), pilot: p.boat?.pilot || 0, ...extra,
     };
   }
   // 斷線重連時還給他的進度
@@ -817,6 +817,12 @@ export class Room {
         p.chatAt = p.chatAt.filter((t) => now - t < 8000);
         if (p.chatAt.length >= 5) return this.send(p, { t: 'sys', text: '說話太快了，休息一下再說', kind: 'warn' });
         p.chatAt.push(now);
+        if (m.ch === 'party') {   // 隊伍頻道：只送給同隊的人
+          if (!p.party) return this.send(p, { t: 'sys', text: '你還沒加入船隊，這句沒送出去', kind: 'warn' });
+          const msg = { t: 'chat', ch: 'party', id: p.id, name: p.name, ...badge(p), text: mask(text) };
+          for (const o of this.players.values()) if (o.party === p.party) this.send(o, msg);
+          return;
+        }
         return this.all({ t: 'chat', id: p.id, name: p.name, ...badge(p), text: mask(text) });
       }
 

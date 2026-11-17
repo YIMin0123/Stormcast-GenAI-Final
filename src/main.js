@@ -1179,7 +1179,8 @@ const garageState = new Map();                                  // 重新整理�
 let myBoat = addBoat('skiff', berth);                           // 自己放在世界裡的那一艘
 let boat = myBoat;   // 「目前這艘」：最後踩上去的船（可能是別人的）。鏡頭、浪、船燈以它為準
 // ---- 漁會、等級、船隊、拖船、副駕：都是伺服器說了算，這裡只是照著顯示（處理見後面「漁會、等級、船隊」那一段） ----
-const party = { id: 0, ids: new Set(), has: (id) => party.ids.has(id) };   // 船隊：同隊的人的 id（不含自己）
+// 船隊：id 我在哪一隊、ids 同隊的人（不含自己）、of 整間房誰在哪一隊、info 每隊的隊名／隊長／開放申請、lfg 在找船隊的人、applied 我剛申請的那一隊
+const party = { id: 0, ids: new Set(), of: {}, info: {}, lfg: new Set(), applied: null, has: (id) => party.ids.has(id) };
 let guild = null;                                       // 漁會這一週：{ amount 我捐了多少, rank 第幾名, titles 能戴的稱號, wear 戴著哪個, endsAt 幾時重置, min }
 let myBadge = { title: '', gold: false, lv: 1 }, myExp = 0;   // 自己的稱號、等級、總經驗
 let tows = [];                                          // 拖纜：[{ tug 拖船的船主, tow 被拖的船主 }]（玩家 id）
@@ -1202,7 +1203,7 @@ const others = new Others({
   updateTablet: (o, tab) => renderRemoteTab?.(o, tab),
 });
 const chat = new Chat({
-  send: (text) => net.send({ t: 'chat', text }),
+  send: (text, ch) => net.send({ t: 'chat', text, ...(ch === 'party' ? { ch } : {}) }),
   onOpen() { for (const k in keys) keys[k] = false; closeWheel(false); syncAim(); },
   onClose() {},
 });
@@ -4381,8 +4382,17 @@ const tabEnv = {
     const me = meAt();
     const list = [{ id: net.id, name: net.name, title: myBadge.title, gold: myBadge.gold, lv: myBadge.lv, me: true, here: true, where: (mode === 'helm' ? '掌舵中・' : onMyBoat() ? '在自己的船上・' : '') + placeHere(me.x, me.z), far: '' }];
     for (const o of others.list()) list.push({ id: o.id, name: o.name, title: o.title || '', gold: o.gold, lv: o.lv, mate: party.has(o.id), me: false, here: o.here, where: o.here ? (o.helm ? '掌舵中・' : '') + placeHere(o.x, o.z) : '斷線中', far: o.here ? whereFrom(o.x - me.x, o.z - me.z) : '' });
+    for (const p of list) { p.pid = party.of[p.id] || 0; p.lfg = !p.pid && party.lfg.has(p.id); }
     const n = party.id ? party.ids.size + 1 : 0;
-    return { name: room ? room.name : '', max: room ? room.max : 0, list, canParty: true, party: { n, full: n >= PARTY.max } };
+    // 每一隊：隊長排第一個，其他照名單順序
+    const groups = Object.entries(party.info).map(([k, r]) => {
+      const id = +k, members = list.filter((p) => p.pid === id).sort((a, b) => (b.id === r.lead) - (a.id === r.lead));
+      const lead = members.find((p) => p.id === r.lead);
+      return { id, name: r.name || `${lead ? lead.name : ''}的船隊`, custom: !!r.name, lead: r.lead, open: r.open, members, mine: id === party.id };
+    }).filter((g) => g.members.length);
+    const ap = party.applied && Date.now() - party.applied.at < PARTY.applySec * 1000 ? party.applied.id : 0;
+    return { name: room ? room.name : '', max: room ? room.max : 0, list, canParty: true, party: { n, full: n >= PARTY.max }, groups, solos: list.filter((p) => !p.pid),
+      lead: !!party.id && party.info[party.id]?.lead === net.id, lfg: party.lfg.has(net.id), applied: ap };
   },
   drawMap,
   setWaypoint(arg) {
@@ -4461,6 +4471,22 @@ const tabEnv = {
     if (name === 'wear') { if (!net.online) return toast('連線中斷，等接回去再試'); return net.send({ t: 'wear', title: guild && guild.wear === arg ? '' : arg }); }
     if (name === 'partyInvite') { if (!net.online) return toast('連線中斷，等接回去再試'); return net.send({ t: 'partyInvite', to: +arg }); }
     if (name === 'partyLeave') { if (!net.online) return toast('連線中斷，等接回去再試'); return net.send({ t: 'partyLeave' }); }
+    if (name === 'partyApply') { if (!net.online) return toast('連線中斷，等接回去再試'); party.applied = { id: +arg, at: Date.now() }; net.send({ t: 'partyApply', party: +arg }); tablet.update(); return; }
+    if (name === 'lfg') { if (!net.online) return toast('連線中斷，等接回去再試'); return net.send({ t: 'lfg', on: arg === '1' }); }
+    if (name === 'partyOpen') { if (!net.online) return toast('連線中斷，等接回去再試'); return net.send({ t: 'partyOpen', on: arg === '1' }); }
+    // 交隊長、請人離開：按一次變成「確定？」，再按一次才送
+    if (name === 'partyKick' || name === 'partyLead') {
+      const key = `${name}:${arg}`;
+      if (app.sure !== key) { app.sure = key; tablet.update(); setTimeout(() => { if (app.sure === key) { app.sure = ''; tablet.update(); } }, 4000); return; }
+      app.sure = '';
+      if (!net.online) return toast('連線中斷，等接回去再試');
+      net.send({ t: name, to: +arg });
+      tablet.update();
+      return;
+    }
+    if (name === 'pnEdit') { app.pnEdit = true; app.pname = party.info[party.id]?.name || ''; tablet.update(); el?.querySelector('[data-bind="pname"]')?.focus(); return; }
+    if (name === 'pnCancel') { app.pnEdit = false; tablet.update(); return; }
+    if (name === 'pnSave') { if (!net.online) return toast('連線中斷，等接回去再試'); app.pnEdit = false; net.send({ t: 'partyName', name: (app.pname || '').trim() }); tablet.update(); return; }
     if (name === 'bless') { if (!net.online) return toast('連線中斷，等接回去再試'); return net.send({ t: 'buy', id: `bless_${arg}` }); }
     if (name === 'mapBoat') return tablet.go('map');
     if (name === 'bait') { if ((kit.bait && baitCount(kit, kit.bait) > 0 ? kit.bait : '') !== arg) setBait(arg); return; }
@@ -5061,9 +5087,14 @@ function showBadge() {
   if (el.textContent !== myBadge.title) el.textContent = myBadge.title;
   el.classList.toggle('gold', !!myBadge.gold);
 }
-function setParty(of) {
+function setParty(of, info = {}, lfg = []) {
   if ((of[net.id] || 0) !== party.id) propsSent = '';   // 換了隊（或剛入隊）：伺服器那邊我的桶子清單清掉了，下一次整份重送
   party.id = of[net.id] || 0;
+  party.of = of;
+  party.info = info;
+  party.lfg = new Set(lfg);
+  if (party.id) party.applied = null;
+  chat.setParty(!!party.id);
   party.ids = new Set(party.id ? Object.keys(of).map(Number).filter((id) => id !== net.id && of[id] === party.id) : []);
   others.setMates(party.ids);
   for (const id of [...mateProps.keys()]) if (!party.ids.has(id)) clearMateProps(id);   // 已經不是隊友：他的桶子不再看得到
@@ -5140,7 +5171,7 @@ function applySocial(j) {
   if (j.me) myBadge = { title: j.me.title || '', gold: !!j.me.gold, lv: j.me.lv || 1 };
   if (j.guild !== undefined) guild = j.guild;
   myExp = dexBook?._lv?.exp || 0;
-  setParty(j.party || {});
+  setParty(j.party || {}, j.parties || {}, j.lfg || []);
   tows = (j.tows || []).map(([tug, tow]) => ({ tug, tow }));
   endCopilot(false);
   piloted = j.pilot ? { id: j.pilot, name: others.map.get(j.pilot)?.name || '隊友' } : null;
@@ -5162,13 +5193,15 @@ net.on('donated', (m) => {
   toast(`捐了 ${cash(m.amount)} 給漁會，這一週累積 ${cash(m.guild?.amount ?? m.amount)}${m.fresh?.length ? `　解鎖稱號：${m.fresh.join('、')}` : ''}`);
   if (tabOpen()) tablet.update();
 });
-net.on('party', (m) => setParty(m.of || {}));
+net.on('party', (m) => setParty(m.of || {}, m.info || {}, m.lfg || []));
 net.on('partyBonus', (m) => { applyKit(m.kit); audio.play('coin'); toast(`🤝 隊友 ${m.from} 賣魚，船隊分紅 +${cash(m.amount)}`); });
 // 別人問我：要不要加入船隊、要不要拖船
 net.on('ask', async (m) => {
+  const lv = others.map.get(m.fromId)?.lv;
   const text = m.kind === 'party' ? `${m.from} 邀你加入船隊`
+    : m.kind === 'apply' ? `${m.from}${lv ? `（Lv.${lv}）` : ''} 想加入你的船隊`
     : m.me ? `${m.from} 想請你用你的船拖他的【${m.boat}】，是否同意？` : `${m.from} 想用【${m.boat}】拖行你的船，是否同意？`;
-  const yes = await ask(text, { yes: m.kind === 'party' ? '加入船隊' : '同意', no: m.kind === 'party' ? '婉拒' : '拒絕', sec: m.sec, tag: `ask${m.aid}` });
+  const yes = await ask(text, { yes: m.kind === 'party' ? '加入船隊' : m.kind === 'apply' ? '讓他加入' : '同意', no: m.kind === 'tow' ? '拒絕' : '婉拒', sec: m.sec, tag: `ask${m.aid}` });
   if (net.online) net.send({ t: 'askAns', aid: m.aid, yes });
 });
 net.on('askGone', (m) => cancelAsk(`ask${m.aid}`));
@@ -5244,8 +5277,8 @@ function markParty() {
   for (let i = n; i < mateMarks.length; i++) mateMarks[i].style.display = 'none';
 }
 net.on('chumOk', () => { audio.play('plop'); toast(`已施放誘魚桶！吸引方圓 ${CHUM_SPEC.radius}m 魚群，持續 ${CHUM_SPEC.life} 秒`); });
-net.on('chat', (m) => chat.say(m.name, m.text, m.id === net.id, { lv: m.lv, title: m.title || '', gold: !!m.gold }));
-net.on('sys', (m) => { if (m.kind === 'merge') mergeMarq(m.text, 0, 8); else chat.sys(m.text, m.kind); });   // 合併相關的提示走跑馬燈，不進聊天室
+net.on('chat', (m) => chat.say(m.name, m.text, m.id === net.id, { lv: m.lv, title: m.title || '', gold: !!m.gold }, m.ch));
+net.on('sys', (m) => { if (m.kind === 'merge') mergeMarq(m.text, 0, 8); else chat.sys(m.text, m.kind, m.ch); });   // 合併相關的提示走跑馬燈，不進聊天室
 // 跑馬燈：兩種內容共用同一條——伺服器的全服公告（可帶「幾秒後重開」的倒數），和房間合併的提示（可帶「幾秒後合併」的倒數）。
 // 合併提示優先顯示，結束後回到全服公告；都沒有就收起來。重開之後新連線收到的公告是空的，舊的自然清掉
 const marqEl = $('marquee');

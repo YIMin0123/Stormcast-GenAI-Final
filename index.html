@@ -287,6 +287,16 @@
       #chatPresets { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
     }
     #chatHint { display: none; }
+    /* 聊天頻道分頁：打開聊天室才出現；隊伍頻道的訊息淡綠底，停在「隊伍」分頁時只顯示隊伍的 */
+    #chatTabs { display: none; flex: none; gap: 4px; margin-bottom: 6px; pointer-events: auto; }
+    #chat.open #chatTabs { display: flex; }
+    #chatTabs button { padding: 3px 14px; font-size: 13px; position: relative; }
+    #chatTabs button.on { background: var(--sea-a); border-color: var(--sea); color: #fff; }
+    #chatTabs button:disabled { opacity: 0.45; }
+    #chatTabs button.dot i { position: absolute; top: 2px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--coral); }
+    #chat .msg.party { background: rgba(214, 246, 226, 0.92); }
+    #chat.chParty .msg:not(.party) { display: none; }
+    #chat.chParty #chatInput { border-color: #3dbb7a; }
     /* ---- 手機觸控（body 上有 touch 這個 class 才生效；只支援橫放） ---- */
     #touch { display: none; position: fixed; inset: 0; z-index: 15; pointer-events: none; }
     #touch button { pointer-events: auto; touch-action: none; }

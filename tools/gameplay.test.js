@@ -297,20 +297,21 @@ function team(f, ...ps) {
   }
 }
 
-test('船隊：邀請要對方同意、最多四人、退隊剩一人就解散', () => {
+test('船隊：邀請要對方同意、人數上限、退隊剩一人就解散', () => {
   const f = guildFixture(), { room, a, b, c, d } = f;
+  const join = (id, name) => { const q = newPlayer(id, null, 'token-' + id, name); q.inbox = []; q.ws = { readyState: 1, send: (raw) => q.inbox.push(JSON.parse(raw)) }; room.enter(q); return q; };
+  const more = [];
+  for (let i = 5; i <= PARTY.max; i++) more.push(join(i, `第${i}人`));
   room.on(a, { t: 'partyInvite', to: b.id });
   assert.equal(lastOf(b, 'ask').kind, 'party');
   room.on(b, { t: 'askAns', aid: lastOf(b, 'ask').aid, yes: false });
   assert.equal(b.party || 0, 0);
-  team(f, a, b, c, d);
-  assert.ok(a.party && [b, c, d].every((q) => q.party === a.party));
-  const e = newPlayer(5, null, 'token-5', '第五人');
-  e.inbox = []; e.ws = { readyState: 1, send: (raw) => e.inbox.push(JSON.parse(raw)) };
-  room.enter(e);
+  team(f, a, b, c, d, ...more);
+  assert.ok(a.party && [b, c, d, ...more].every((q) => q.party === a.party));
+  const e = join(PARTY.max + 1, '多一人');
   room.on(a, { t: 'partyInvite', to: e.id });
   assert.equal(lastOf(e, 'ask'), undefined, `滿 ${PARTY.max} 人不能再邀`);
-  room.on(d, { t: 'partyLeave' }); room.on(c, { t: 'partyLeave' });
+  for (const q of [d, c, ...more]) room.on(q, { t: 'partyLeave' });
   assert.equal(a.party, b.party);
   room.quit(b);
   assert.equal(a.party, 0, '只剩一個人：解散');

@@ -76,13 +76,13 @@ test('船隊：邀請→同意、拒絕、逾時（逾時後舊的 aid 不能再
   assert.deepEqual(lastOf(c, 'party').of, { [a.id]: a.party, [b.id]: a.party }, '整房都會收到船隊表');
 });
 
-test('船隊：滿 4 人不能再邀、對方已在別隊、自己邀自己、邀離線的人', () => {
-  const f = fixture(4), { room, ps: [a, b, c, d] } = f;
-  const e = f.add(5), g = f.add(6);
-  team(room, a, b, c, d);
+test('船隊：滿了不能再邀、對方已在別隊、自己邀自己、邀離線的人', () => {
+  const f = fixture(PARTY.max), { room, ps: [a, b, ...rest] } = f;
+  const e = f.add(PARTY.max + 1), g = f.add(PARTY.max + 2);
+  team(room, a, b, ...rest);
   clear(e);
   room.on(b, { t: 'partyInvite', to: e.id });   // 隊員（不是發起人）邀也一樣算人數
-  assert.equal(lastOf(e, 'ask'), undefined, '滿 4 人不能再邀');
+  assert.equal(lastOf(e, 'ask'), undefined, `滿 ${PARTY.max} 人不能再邀`);
   room.on(e, { t: 'partyInvite', to: a.id });
   assert.equal(lastOf(a, 'ask'), undefined, '對方已在別隊');
   assert.match(lastOf(e, 'no').msg, /別的船隊/);
@@ -94,15 +94,94 @@ test('船隊：滿 4 人不能再邀、對方已在別隊、自己邀自己、�
 });
 
 test('船隊：同意前邀請的人已經滿隊／對方已經入別隊 → 不能加入', () => {
-  const f = fixture(4), { room, ps: [a, b, c, d] } = f;
-  const e = f.add(5);
-  team(room, a, b, c);
+  const f = fixture(PARTY.max), { room, ps: [a, ...rest] } = f;
+  const e = f.add(PARTY.max + 1);
+  team(room, a, ...rest.slice(0, -1));
   room.on(a, { t: 'partyInvite', to: e.id });
   const askE = lastOf(e, 'ask');
-  team(room, a, d);   // 在 e 回答之前，滿 4 人了
+  team(room, a, rest.at(-1));   // 在 e 回答之前，滿了
   room.on(e, { t: 'askAns', aid: askE.aid, yes: true });
   assert.equal(e.party || 0, 0, '對方的隊滿了：不能加入');
   assert.equal([...room.players.values()].filter((p) => p.party === a.party).length, PARTY.max);
+});
+
+test('船隊：申請加入要隊長同意；婉拒有冷卻、不收人時不能申請、一次只能申請一隊', () => {
+  const f = fixture(5), { room, ps: [a, b, c, d, e] } = f;
+  team(room, a, b);
+  const id = a.party;
+  assert.equal(lastOf(c, 'party').info[id].lead, a.id, '建隊的人是隊長');
+  clear(a, b);
+  room.on(c, { t: 'partyApply', party: id });
+  const ask = lastOf(a, 'ask');
+  assert.ok(ask && ask.kind === 'apply' && ask.fromId === c.id, '申請送到隊長');
+  assert.equal(lastOf(b, 'ask'), undefined, '隊員不會收到申請');
+  room.on(a, { t: 'askAns', aid: ask.aid, yes: false });
+  assert.equal(c.party || 0, 0);
+  clear(a);
+  room.on(c, { t: 'partyApply', party: id });
+  assert.equal(lastOf(a, 'ask'), undefined, '剛被婉拒：冷卻中');
+  f.tick(0);
+  room.on(d, { t: 'partyApply', party: id });
+  const ask2 = lastOf(a, 'ask');
+  room.on(b, { t: 'askAns', aid: ask2.aid, yes: true });
+  assert.equal(d.party || 0, 0, '隊員不能替隊長按同意');
+  room.on(a, { t: 'askAns', aid: ask2.aid, yes: true });
+  assert.equal(d.party, id, '隊長同意就加入');
+  room.on(a, { t: 'partyOpen', on: false });
+  clear(a);
+  room.on(e, { t: 'partyApply', party: id });
+  assert.equal(lastOf(a, 'ask'), undefined, '不收人：申請不會送出');
+  assert.ok(e.inbox.some((m) => m.t === 'no'));
+  room.on(b, { t: 'partyOpen', on: true });
+  assert.equal(lastOf(e, 'party')?.info[id].open ?? false, false, '只有隊長能開關');
+});
+
+test('船隊：隊長取隊名、轉移隊長、請人離開；隊長退隊自動交給最早入隊的人', () => {
+  const f = fixture(5), { room, ps: [a, b, c, d, e] } = f;
+  team(room, a, b, c, d);
+  const id = a.party;
+  room.on(b, { t: 'partyName', name: '偷改' });
+  assert.equal(lastOf(e, 'party').info[id].name, '', '隊員不能改隊名');
+  room.on(a, { t: 'partyName', name: '  海風號<b>一二三四五六七八九十  ' });
+  assert.equal(lastOf(e, 'party').info[id].name, '海風號b一二三四五六七八', '去掉角括號、最多 12 個字');
+  room.on(a, { t: 'partyLead', to: c.id });
+  assert.equal(lastOf(e, 'party').info[id].lead, c.id);
+  room.on(a, { t: 'partyKick', to: b.id });
+  assert.equal(b.party, id, '已經不是隊長：不能踢人');
+  room.on(c, { t: 'partyKick', to: b.id });
+  assert.equal(b.party || 0, 0, '新隊長可以請人離開');
+  room.on(b, { t: 'partyApply', party: id });
+  assert.ok(b.inbox.at(-1).t === 'no', '被請出後一陣子不能再申請');
+  room.on(c, { t: 'partyLeave' });
+  assert.equal(lastOf(e, 'party').info[id].lead, a.id, '隊長走了：交給最早入隊的 a');
+  room.on(d, { t: 'partyLeave' });
+  assert.equal(a.party, 0, '剩一人解散');
+  assert.equal(lastOf(e, 'party').info[id], undefined, '解散後隊伍資料清掉');
+});
+
+test('聊天：隊伍頻道只送給隊友；沒入隊不能用', () => {
+  const f = fixture(3), { room, ps: [a, b, c] } = f;
+  room.on(c, { t: 'chat', text: '有人嗎', ch: 'party' });
+  assert.equal(lastOf(a, 'chat'), undefined);
+  team(room, a, b);
+  clear(a, b, c);
+  room.on(a, { t: 'chat', text: '來我船上', ch: 'party' });
+  assert.equal(lastOf(b, 'chat')?.ch, 'party');
+  assert.equal(lastOf(a, 'chat')?.text, '來我船上', '自己也收得到');
+  assert.equal(lastOf(c, 'chat'), undefined, '別隊的人收不到');
+  room.on(a, { t: 'chat', text: '大家好' });
+  assert.equal(lastOf(c, 'chat')?.ch, undefined, '全部頻道照舊');
+});
+
+test('船隊：我在找船隊的標記；入隊後自動拿掉', () => {
+  const f = fixture(3), { room, ps: [a, b, c] } = f;
+  room.on(c, { t: 'lfg', on: true });
+  assert.deepEqual(lastOf(a, 'party').lfg, [c.id]);
+  team(room, a, b);
+  f.tick(0);
+  room.on(a, { t: 'partyInvite', to: c.id });
+  room.on(c, { t: 'askAns', aid: lastOf(c, 'ask').aid, yes: true });
+  assert.deepEqual(lastOf(a, 'party').lfg, []);
 });
 
 test('船隊：退隊、剩一人自動解散；斷線保留、按離開／斷線太久退隊', () => {

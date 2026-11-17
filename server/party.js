@@ -1,11 +1,13 @@
 // 船隊（組隊）、海上救難拖船、副駕掌舵：房間裡「要對方同意」和「兩個人、兩艘船配成一對」的事都在這裡。
-//   船隊：最多 PARTY.max 人；邀請要對方按同意。只存在房間裡——按離開、斷線太久被收走、被併到別間房就退隊。
+//   船隊：最多 PARTY.max 人；邀請要對方按同意，也可以自己申請加入（隊長按同意）。只存在房間裡——按離開、斷線太久被收走、被併到別間房就退隊。
+//         每隊有隊長（建隊的人；走了交給最早入隊的）：取隊名、轉移隊長、請人離開、開關「開放申請」。
 //   拖船：一艘拖一艘（不能連環拖），要對方同意；兩邊隨時能斷，船沉了、換船、離線、離太遠也會斷。
 //         拉船的物理在被拖那一方的瀏覽器算（船本來就是船主那邊算的），伺服器只管誰拖誰。
 //   副駕：同隊的人站在隊友船上、船主沒在掌舵時可以幫忙開（那艘船改由副駕的瀏覽器算，位置用 'b' 帶 forId 送來）；
 //         船主自己去握方向盤就馬上收回來。
 import { BOAT_TYPES } from '../src/boatdata.js';
 import { PARTY, TOW } from '../src/config.js';
+import { mask } from './words.js';
 
 const dist = (ax, az, bx, bz) => Math.hypot(ax - bx, az - bz);
 let nextAsk = 1;
@@ -16,19 +18,66 @@ export const partyOf = (room, p) => (p.party ? [...room.players.values()].filter
 export const mates = (room, p) => partyOf(room, p).filter((o) => o !== p && o.ws);
 // 整間房誰在哪一隊：{ 玩家 id: 隊伍編號 }
 export const partyMap = (room) => Object.fromEntries([...room.players.values()].filter((p) => p.party).map((p) => [p.id, p.party]));
-const tellParty = (room) => room.all({ t: 'party', of: partyMap(room) });
+// 每隊的資料：room.parties：隊伍編號 → { name 隊名（空的 = 「隊長的名字＋的船隊」）, lead 隊長 id, open 開放申請 }
+const book = (room) => room.parties || (room.parties = new Map());
+export const partyInfo = (room) => Object.fromEntries([...book(room)].map(([id, r]) => [id, { name: r.name, lead: r.lead, open: r.open }]));
+// 沒在隊裡、打開「我在找船隊」的人
+export const lfgList = (room) => [...room.players.values()].filter((p) => p.lfg && !p.party).map((p) => p.id);
+export const tellParty = (room) => room.all({ t: 'party', of: partyMap(room), info: partyInfo(room), lfg: lfgList(room) });
+export function partyName(room, id) {
+  const r = book(room).get(id);
+  if (!r) return '船隊';
+  if (r.name) return r.name;
+  const l = room.players.get(r.lead);
+  return `${l ? l.name : ''}的船隊`;
+}
+const count = (room, id) => [...room.players.values()].filter((o) => o.party === id).length;
+// 講給整隊聽（聊天室的隊伍頻道）
+function toParty(room, id, text, kind = 'info') {
+  for (const o of room.players.values()) if (o.party === id) room.send(o, { t: 'sys', text, kind, ch: 'party' });
+}
+// 收掉申請：party 給了只收申請這一隊的，from 給了只收這個人送出去的
+function dropApplies(room, { party = 0, from = 0 } = {}, why = '') {
+  for (const a of [...room.asks.values()]) {
+    if (a.kind !== 'apply' || (party && a.party !== party) || (from && a.from !== from)) continue;
+    room.asks.delete(a.aid);
+    const l = room.players.get(a.to), f = room.players.get(a.from);
+    if (l) room.send(l, { t: 'askGone', aid: a.aid });
+    if (f && why) room.send(f, { t: 'sys', text: why, kind: 'info' });
+  }
+}
+// p 加入 id 這一隊（id 是 0：自己開一隊、當隊長）
+function joinParty(room, p, id) {
+  if (!id) { id = room.nextParty++; book(room).set(id, { name: '', lead: p.id, open: true }); }
+  p.party = id;
+  p.partyAt = Date.now();
+  p.lfg = false;
+  dropApplies(room, { from: p.id });   // 他原本在申請別隊：收回來
+  return id;
+}
+// 隊長走了：交給在線上、最早入隊的
+const pickLead = (rest) => [...rest].sort((a, b) => (!!b.ws - !!a.ws) || ((a.partyAt || 0) - (b.partyAt || 0)))[0];
 
-// p 退隊（why：講給隊友聽的原因）。隊裡只剩一個人就解散
+// p 退隊（why：講給隊友聽的原因）。隊裡只剩一個人就解散；隊長走了就換人
 export function leaveParty(room, p, why = '離開了船隊') {
   if (!p.party) return;
-  const id = p.party;
+  const id = p.party, rec = book(room).get(id);
   p.party = 0;
   p.props = [];           // 放在外面的桶子不再給（已經不是隊友的）人看；畫面那邊退隊時自己會收掉
   releaseHelm(room, p);   // 正在幫隊友開船：放手
   for (const o of room.players.values()) if (o.boat && o.boat.pilot && !room.sameParty(o, room.players.get(o.boat.pilot) || {})) endPilot(room, o);   // 他的船正被（已經不是隊友的）人開著：收回來
   const rest = [...room.players.values()].filter((o) => o.party === id);
-  for (const o of rest) room.send(o, { t: 'sys', text: `${p.name} ${why}`, kind: 'info' });
-  if (rest.length === 1) { rest[0].party = 0; room.send(rest[0], { t: 'sys', text: '船隊解散了', kind: 'info' }); }
+  toParty(room, id, `${p.name} ${why}`);
+  if (rest.length <= 1) {
+    for (const o of rest) { o.party = 0; room.send(o, { t: 'sys', text: '船隊解散了', kind: 'info' }); }
+    book(room).delete(id);
+    dropApplies(room, { party: id }, '那個船隊已經解散了');
+  } else if (rec && rec.lead === p.id) {
+    const nl = pickLead(rest);
+    rec.lead = nl.id;
+    dropApplies(room, { party: id }, '隊長換人了，要加入請重新申請');
+    toParty(room, id, `${nl.name} 成為新隊長`, 'join');
+  }
   tellParty(room);
 }
 
@@ -138,6 +187,62 @@ export function onPartyMsg(room, p, m, now) {
       return true;
     }
     case 'partyLeave': leaveParty(room, p); return true;
+    case 'partyApply': {   // 申請加入別人的船隊：隊長按同意
+      const id = m.party, rec = Number.isInteger(id) ? book(room).get(id) : null;
+      if (!rec) return no('找不到這個船隊');
+      if (p.party) return no('你已經在船隊裡，先退隊才能申請');
+      if (!rec.open) return no('這個船隊目前不收人');
+      if (count(room, id) >= PARTY.max) return no('這個船隊已經滿了');
+      const until = p.applyBan?.[id] || 0;
+      if (now < until) return no(`隊長剛婉拒過你，${Math.ceil((until - now) / 1000)} 秒後才能再申請`);
+      const lead = room.players.get(rec.lead);
+      if (!lead || !lead.ws) return no('隊長暫時斷線，等他回來再申請');
+      const a = askNew(room, 'apply', p, lead, PARTY.applySec, { party: id });
+      room.send(lead, { t: 'ask', aid: a.aid, kind: 'apply', fromId: p.id, from: p.name, sec: PARTY.applySec });
+      room.send(p, { t: 'sys', text: `已申請加入「${partyName(room, id)}」，等隊長回答`, kind: 'info' });
+      return true;
+    }
+    case 'lfg': {   // 我在找船隊（名字旁邊掛標記，隊伍可以來邀）
+      if (p.party || now - (p.lfgAt || 0) < 1000) return true;
+      p.lfgAt = now;
+      p.lfg = m.on === true;
+      tellParty(room);
+      return true;
+    }
+    case 'partyKick': case 'partyLead': case 'partyName': case 'partyOpen': {   // 只有隊長能做的事
+      const rec = p.party ? book(room).get(p.party) : null;
+      if (!rec || rec.lead !== p.id) return no('只有隊長可以這樣做');
+      const id = p.party;
+      if (m.t === 'partyName') {
+        if (now - (p.nameAt || 0) < PARTY.nameCd * 1000) return no('改太快了，等一下再改');
+        const name = [...mask(String(m.name ?? '').replace(/[\u0000-\u001f\u007f<>]/g, '').trim())].slice(0, PARTY.nameMax).join('');
+        if (name === rec.name) return true;
+        p.nameAt = now;
+        rec.name = name;
+        toParty(room, id, name ? `隊名改成「${name}」` : `隊名改回「${partyName(room, id)}」`);
+      } else if (m.t === 'partyOpen') {
+        if (rec.open === (m.on === true)) return true;
+        rec.open = m.on === true;
+        if (!rec.open) dropApplies(room, { party: id }, `「${partyName(room, id)}」不收人了`);
+        toParty(room, id, rec.open ? '船隊開放申請加入了' : '船隊不再開放申請（還是可以用邀請的）');
+      } else {
+        const t = room.players.get(m.to);
+        if (!t || t === p || t.party !== id) return no('他不在你的船隊裡');
+        if (m.t === 'partyLead') {
+          if (!t.ws) return no(`${t.name} 暫時斷線，等他回來再交`);
+          rec.lead = t.id;
+          dropApplies(room, { party: id }, '隊長換人了，要加入請重新申請');
+          toParty(room, id, `${p.name} 把隊長交給了 ${t.name}`, 'join');
+        } else {
+          t.applyBan = { ...(t.applyBan || {}), [id]: now + PARTY.kickCd * 1000 };
+          room.send(t, { t: 'sys', text: `你被請出了「${partyName(room, id)}」`, kind: 'warn' });
+          leaveParty(room, t, '被隊長請出了船隊');
+          return true;   // leaveParty 已經廣播過
+        }
+      }
+      tellParty(room);
+      return true;
+    }
     case 'towAsk': {
       // me：true = 請對方拖我的船；不然是我要拖對方的船
       const t = room.players.get(m.to);
@@ -165,14 +270,31 @@ export function onPartyMsg(room, p, m, now) {
       room.asks.delete(a.aid);
       const f = room.players.get(a.from);
       if (!f || !f.ws) return true;
+      if (a.kind === 'apply') {   // 隊長回覆申請
+        const name = partyName(room, a.party);
+        if (m.yes !== true) {
+          f.applyBan = { ...(f.applyBan || {}), [a.party]: now + PARTY.applyCd * 1000 };
+          room.send(f, { t: 'sys', text: `「${name}」的隊長婉拒了你的申請`, kind: 'info' });
+          return true;
+        }
+        const rec = book(room).get(a.party);
+        if (!rec || rec.lead !== p.id || p.party !== a.party) return no('你已經不是這個船隊的隊長');
+        if (f.party) return no(`${f.name} 已經加入別的船隊了`);
+        if (count(room, a.party) >= PARTY.max) return no(`船隊最多 ${PARTY.max} 人`);
+        joinParty(room, f, a.party);
+        tellParty(room);
+        for (const o of partyOf(room, f)) room.send(o, { t: 'sys', text: o === f ? `你加入了「${name}」` : `${f.name} 加入了船隊`, kind: 'join', ch: 'party' });
+        for (const o of partyOf(room, f)) if (o !== f && o.props && o.props.length) tellProps(room, o, [f]);
+        return true;
+      }
       if (m.yes !== true) { room.send(f, { t: 'sys', text: a.kind === 'party' ? `${p.name} 婉拒了船隊邀請` : `${p.name} 拒絕了拖船請求`, kind: 'info' }); return true; }
       if (a.kind === 'party') {
         if (p.party) return no('你已經在別的船隊，先退隊');
         if (partyOf(room, f).length >= PARTY.max) return no('對方的船隊已經滿了');
-        if (!f.party) f.party = room.nextParty++;
-        p.party = f.party;
+        if (!f.party) joinParty(room, f, 0);
+        joinParty(room, p, f.party);
         tellParty(room);
-        for (const o of partyOf(room, p)) room.send(o, { t: 'sys', text: o === p ? `你加入了 ${f.name} 的船隊` : `${p.name} 加入了船隊`, kind: 'join' });
+        for (const o of partyOf(room, p)) room.send(o, { t: 'sys', text: o === p ? `你加入了「${partyName(room, p.party)}」` : `${p.name} 加入了船隊`, kind: 'join', ch: 'party' });
         for (const o of partyOf(room, p)) if (o !== p && o.props && o.props.length) tellProps(room, o, [p]);   // 原本隊員放在外面的桶子：讓新來的也看得到
         return true;
       }

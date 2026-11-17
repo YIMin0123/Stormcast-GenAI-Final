@@ -111,6 +111,8 @@ body.touch #panel.inTab { column-count: 1; }
 .tbWho .dot.off { background: rgba(63, 97, 120, 0.4); }
 .tbWho .r { margin-left: auto; color: var(--ink-2); font-size: 13px; text-align: right; }
 .tbMini { padding: 3px 11px; font-size: 12.5px; flex: none; }
+.tbMini.main { background: var(--coral-a); border-color: var(--coral); color: #fff; }
+.tbWho .tbMini + .tbMini { margin-left: -4px; }
 /* 船殼塗裝預覽、捐款 */
 .tbPv { border-radius: 12px; background: linear-gradient(180deg, #e9f7fd 0%, #cfeaf7 100%); border: 1.5px solid var(--line); overflow: hidden; line-height: 0; }
 .tbPv svg { width: 100%; height: auto; max-height: min(190px, 30vh); display: block; }
@@ -660,24 +662,68 @@ export function makeApps(env, { noStyle = false } = {}) {
     return banner + cards + status;
   }, env);
 
-  // ---- 8. 房間（Desktop 4）：同房的人在哪、等級與稱號、組船隊 ----
+  // ---- 8. 房間（Desktop 4）：這間房的船隊（可以申請加入）、自己的船隊（隊長管理）、還沒組隊的人 ----
   const room = htmlApp({ id: 'room', name: '房間', icon: 'users', color: '#3dbb7a' }, function (tab) {
-    const r = env.room(), pt = r.party || { n: 0, full: false };
-    if (tab?.head) tab.head.textContent = `${r.name}・${r.list.length} / ${r.max} 人${pt.n ? `・船隊 ${pt.n} / ${PARTY.max}` : ''}`;
+    const r = env.room(), pt = r.party || { n: 0, full: false }, max = PARTY.max;
+    if (tab?.head) tab.head.textContent = `${r.name}・${r.list.length} / ${r.max} 人${pt.n ? `・船隊 ${pt.n} / ${max}` : ''}`;
     const tag = (text, cls) => `<span class="tbTag ${cls}" style="font-size:11px;padding:0 7px;margin-right:4px">${text}</span>`;
-    const rows = r.list.map((p, i) => {
-      const badge = (p.lv ? tag(`Lv.${p.lv}`, 'q') : '') + (p.title ? tag(esc(p.title), p.gold ? 'gold' : '') : '') + (p.mate ? tag('★ 隊友', 'g') : '');
-      const btn = p.me ? (pt.n ? '<button class="tbMini" data-act="partyLeave">退出船隊</button>' : '')
-        : p.mate || !p.here || !r.canParty ? '' : `<button class="tbMini" data-act="partyInvite" data-arg="${p.id}"${pt.full ? ' disabled' : ''}>＋ 組隊</button>`;
+    const groups = r.groups || [], mine = groups.find((g) => g.mine), rest = groups.filter((g) => !g.mine);
+    // 改隊名：整頁只放這一張（列表一直在更新，輸入框會被洗掉）
+    if (this.pnEdit && mine && r.lead) {
+      return `<div class="tbc on"><h4>✏️ 幫船隊取名字</h4>
+        <p class="tbNote">最多 ${PARTY.nameMax} 個字，同房的人都看得到；留白就用「隊長的名字＋的船隊」。</p>
+        <div class="tbGive"><input data-bind="pname" maxlength="${PARTY.nameMax}" placeholder="${esc(mine.custom ? '' : mine.name)}"><button class="main" data-act="pnSave">確定</button><button data-act="pnCancel">取消</button></div></div>`;
+    }
+    const sure = (act, id, label) => (this.sure === `${act}:${id}` ? `<button class="tbMini main" data-act="${act}" data-arg="${id}">確定${label}？</button>` : `<button class="tbMini" data-act="${act}" data-arg="${id}">${label}</button>`);
+    const row = (p, i, btns = '', lead = 0) => {
+      const badge = (p.lv ? tag(`Lv.${p.lv}`, 'q') : '') + (p.id === lead ? tag('隊長', 'g') : '') + (p.lfg ? tag('找船隊', 'c') : '') + (p.title ? tag(esc(p.title), p.gold ? 'gold' : '') : '');
       return `<div class="tbWho"${i ? ' style="border-top:1.5px solid var(--line)"' : ''}>
         <span class="dot${p.here ? '' : ' off'}"></span>
         <span>${badge}<b>${esc(p.name)}</b>${p.me ? '（你）' : ''}</span>
-        <span class="r">${esc(p.where)}${p.far ? `<br>${esc(p.far)}` : ''}</span>${btn}
+        <span class="r">${esc(p.where)}${p.far ? `<br>${esc(p.far)}` : ''}</span>${btns}
       </div>`;
+    };
+    const perks = `<p class="tbNote" style="margin:0 2px 10px">同隊好處：經驗 +${Math.round(LEVEL.party * 100)}%、隊友賣魚你也分紅 ${Math.round(PARTY.share * 100)}%、可以幫隊友掌舵、開關船燈和集魚燈、綁解纜繩、代付修船費，畫面上標出隊友在哪，隊友放在外面的油桶和誘魚桶會用藍色描邊標出來；隊裡有人開${FRESH_BOAT.name}，全隊賣魚再多 ${Math.round(FRESH_BOAT.freshBonus * 100)}%。聊天室可以切到「隊伍」頻道只跟隊友說話。離開房間就退隊。</p>`;
+
+    // 自己的船隊
+    let my = '';
+    if (mine) {
+      const rows = mine.members.map((p, i) => {
+        const btns = p.me ? '<button class="tbMini" data-act="partyLeave">退出船隊</button>'
+          : r.lead && p.here ? sure('partyLead', p.id, '交隊長') + sure('partyKick', p.id, '請離開')
+            : r.lead ? sure('partyKick', p.id, '請離開') : '';
+        return row(p, i, btns, mine.lead);
+      }).join('');
+      const tools = r.lead ? `<div class="tbBtns" style="margin-top:6px"><button class="tbMini" data-act="pnEdit">✏️ 改隊名</button>
+          <button class="tbMini${mine.open ? ' main' : ''}" data-act="partyOpen" data-arg="${mine.open ? 0 : 1}">${mine.open ? '✓ 開放申請中' : '不開放申請'}</button></div>`
+        : `<p class="tbNote" style="margin:4px 0 0">隊長是 ${esc(mine.members[0]?.name || '')}：他可以改隊名、交隊長、請人離開、決定開不開放申請。</p>`;
+      my = `<div class="tbc on"><h4>⛵ ${esc(mine.name)}<span class="tbTag g">${mine.members.length} / ${max} 人</span>${mine.open ? '' : '<span class="tbTag q">不收人</span>'}</h4>${tools}</div>
+        <div class="tbc" style="padding:0">${rows}</div>`;
+    }
+
+    // 別的船隊
+    const cards = rest.map((g) => {
+      const full = g.members.length >= max;
+      const btn = pt.n ? '' : full ? '<span class="tbTag q">滿了</span>' : !g.open ? '<span class="tbTag q">不收人</span>'
+        : r.applied === g.id ? '<button class="tbMini" disabled>申請中…</button>' : `<button class="tbMini main" data-act="partyApply" data-arg="${g.id}">申請加入</button>`;
+      const names = g.members.map((p) => `${p.id === g.lead ? '👑' : ''}${esc(p.name)}${p.lv ? `<small> Lv.${p.lv}</small>` : ''}`).join('、');
+      const where = g.members.find((p) => p.id === g.lead)?.where || g.members[0]?.where || '';
+      return `<div class="tbc"><h4>⛵ ${esc(g.name)}<span class="tbTag g">${g.members.length} / ${max} 人</span><span class="r">${btn}</span></h4>
+        <p class="tbNote" style="margin:2px 0 0">${names}${where ? `<br>隊長在${esc(where.replace(/^掌舵中・/, ''))}` : ''}</p></div>`;
     }).join('');
-    const perks = r.canParty ? `<div class="tbc${pt.n ? ' on' : ''}"><h4>⛵ 船隊${pt.n ? `<span class="tbTag g">${pt.n} / ${PARTY.max} 人</span>` : `<span class="r">最多 ${PARTY.max} 人，按「＋ 組隊」邀請</span>`}</h4>
-      <p class="tbNote">同隊好處：經驗 +${Math.round(LEVEL.party * 100)}%、隊友賣魚你也分紅 ${Math.round(PARTY.share * 100)}%、可以幫隊友掌舵、開關船燈和集魚燈、綁解纜繩、代付修船費，畫面上標出隊友在哪，隊友放在外面的油桶和誘魚桶會用藍色描邊標出來；隊裡有人開${FRESH_BOAT.name}，全隊賣魚再多 ${Math.round(FRESH_BOAT.freshBonus * 100)}%。離開房間就退隊。</p></div>` : '';
-    return `${perks}<div class="tbc" style="padding:0">${rows}</div>
+    const others = `<div class="tbSec"><span>這間房的船隊（${rest.length} 隊）</span></div>${cards || `<p class="tbNote">${mine ? '這間房還沒有別的船隊。' : '這間房還沒有船隊。可以按下面的「＋ 組隊」邀人，或打開「我在找船隊」等隊伍來邀你。'}</p>`}`;
+
+    // 還沒組隊的人
+    const solos = r.solos || [];
+    const soloRows = solos.map((p, i) => {
+      const btns = p.me ? `<button class="tbMini${r.lfg ? ' main' : ''}" data-act="lfg" data-arg="${r.lfg ? 0 : 1}">${r.lfg ? '✓ 我在找船隊' : '我在找船隊'}</button>`
+        : !p.here ? '' : `<button class="tbMini" data-act="partyInvite" data-arg="${p.id}"${pt.full ? ' disabled' : ''}>＋ 組隊</button>`;
+      return row(p, i, btns);
+    }).join('');
+    const soloSec = solos.length ? `<div class="tbSec"><span>還沒組隊的人（${solos.length}）</span></div><div class="tbc" style="padding:0">${soloRows}</div>` : '';
+
+    const head = mine ? '' : `<div class="tbc"><h4>⛵ 船隊<span class="r">最多 ${max} 人；申請加入現有的船隊，或按「＋ 組隊」邀人</span></h4></div>`;
+    return `${head}${my}${perks}${others}${soloSec}
       <p class="tbNote">${esc(r.name)}・目前 ${r.list.length} 人（最多 ${r.max} 人）。灰點代表暫時斷線中，保留進度等待重連。</p>`;
   }, env);
 
