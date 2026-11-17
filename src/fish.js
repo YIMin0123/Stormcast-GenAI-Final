@@ -4,7 +4,7 @@ import * as THREE from 'three';
 
 import { SPECIES, typicalLength, fishValue } from './fishdata.js';
 import { THROW } from './config.js';
-import { makeFishModel } from './fishModel.js';
+import { makeFishModel, flexFish } from './fishModel.js';
 // 魚種資料、「釣到什麼、多大、值多少」的規則在 fishdata.js（伺服器也用同一份）
 export { SPECIES, SPECIALTY, pickSpecies, rollFish, fishValue, fishLabel } from './fishdata.js';
 
@@ -587,12 +587,16 @@ export class FishWorld {
     if (this.held) {
       const it = this.held;
       it.t += dt; it.lively -= dt;
-      if (!it.can) it.mesh.rotation.z = it.lively > 0 ? Math.sin(it.t * 9) * 0.12 : 0;   // 在手上扭動
+      if (!it.can) {   // 在手上扭動：身體一陣一陣地甩（剛釣上來最兇，慢慢沒力）
+        it.mesh.rotation.z = it.lively > 0 ? Math.sin(it.t * 9) * 0.05 : 0;
+        flexFish(it.mesh, it.lively > 0 ? Math.min(1, it.lively / 25) * (Math.sin(it.t * 1.3) > 0.2 ? 1 : 0.3) : 0, dt);
+      }
     }
 
     for (const it of [...this.items]) {
       if (it.remote || (it.boat && it.boat.stored)) continue;   // 別人的魚（在主人那邊動）、收在倉庫裡的船上的東西：原封不動
       it.t += dt; it.lively -= dt;
+      flexFish(it.mesh, it.lively > 0 ? (it.hop || it.fly ? 1.3 : 0.25) : 0, dt);   // 活魚躺著時輕輕擺尾、跳起來用力甩
       if (it.fly) { this._fly(it, dt); continue; }   // 丟出去還在飛
       const boat = it.boat, onBoat = it.state === 'boat';
 
