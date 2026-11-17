@@ -9,6 +9,7 @@ import { HOME_U, homeGlsl } from './homeGl.js';
 import { toWorld, toLocal, HOME_YAW } from './frame.js';
 import { bulb, softDisc, softSquare } from './toon.js';
 import { DECK_Y, DECKS, WALLS, SHOP, LIGHTHOUSE, SELL, SHELF, PLAYER_SPAWN } from './layout.js';
+import { makeTag, drawTag } from './priceTag.js';
 import * as H from './lowpoly/harborPlan.js';
 import { buildHarbor } from './lowpoly/harbor3d.js';
 import { rng, makeMaterial, tagSurfaces, FaceBuilder } from './lowpoly/kit.js';
@@ -49,26 +50,11 @@ export function setBoard(lines) {
   boardTex.needsUpdate = true;
 }
 
-const tags = SHELF.map(() => {
-  const c = document.createElement('canvas');
-  c.width = 256; c.height = 160;
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 8;   // 斜著看遠處的地面、牆面時紋路才不會閃爍
-  return { c, t };
-});
+// 價格牌的畫法在 priceTag.js（修船屋、大港的模型也用同一套）
+const tags = SHELF.map(makeTag);
 // 更新第 i 樣商品的價格牌：[品名, 說明, 價錢]
-export function setTag(i, lines) {
-  const { c, t } = tags[i], g = c.getContext('2d');
-  g.fillStyle = '#5b3a1e'; g.fillRect(0, 0, 256, 160);
-  g.fillStyle = '#efe2bd'; g.fillRect(5, 5, 246, 150);
-  g.textAlign = 'center'; g.textBaseline = 'middle';
-  const font = (px) => `bold ${px}px "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif`;
-  g.fillStyle = '#3a2412'; g.font = font(lines[0].length > 5 ? 28 : 36); g.fillText(lines[0], 128, 34);
-  g.fillStyle = '#6a4a2a'; g.font = font(lines[1].length > 9 ? 19 : 22); g.fillText(lines[1], 128, 78);
-  g.fillStyle = '#a3261a'; g.font = font(40); g.fillText(lines[2], 128, 124);
-  t.needsUpdate = true;
-}
+export function setTag(i, lines) { drawTag(tags[i], lines); }
+export { drawTag };
 // 招牌的字：wood 深色木頭看板＋米白色的字、chalk 黑板＋粉筆字、nobori 直式的布旗（字由上往下排）
 function signFace(sg) {
   const PX = 160, c = document.createElement('canvas');

@@ -1,4 +1,4 @@
-import { toWorld, toLocal, havenToWorld, havenToLocal } from './frame.js';
+import { toWorld, toLocal, havenToWorld, havenToLocal, seaYardToWorld } from './frame.js';
 import { WORLD } from './config.js';
 
 import { homeBed } from './lowpoly/homeShape.js';
@@ -59,6 +59,8 @@ export function makeTerrain(N, L) {
   return { bed, main };
 }
 
+// 人造的靜水區（世界座標）：海上修船屋的停船凹槽（圓心在凹槽中段；半徑、剩幾成浪在 config.js 的 WORLD.seaYard）
+const CALM_ZONES = [(() => { const [x, z] = seaYardToWorld(0, 6); return { x, z, r: WORLD.seaYard.calmR, k: WORLD.seaYard.calm }; })()];
 // 避浪係數（0 = 完全平靜，1 = 完全暴露）：逆著浪的來向看出去，若近處有陸地擋著就比較平靜。
 // 島的背風面與港灣因此會是靜水。
 export function computeShelter(bed, N, L, waveAngle) {
@@ -101,6 +103,17 @@ export function computeShelter(bed, N, L, waveAngle) {
       }
     }
     out.set(tmp);
+  }
+  // 人造的靜水區（海上修船屋：樁和防撞設施把浪擋掉）：圓心 calmR 以內的浪只剩 calm 成，再往外 0.6 倍半徑漸漸回到原本
+  for (const c of CALM_ZONES) {
+    const R1 = c.r * 1.6, i0 = Math.max(0, Math.floor(((c.x - R1) / L + 0.5) * N)), i1 = Math.min(N - 1, Math.ceil(((c.x + R1) / L + 0.5) * N));
+    const j0 = Math.max(0, Math.floor(((c.z - R1) / L + 0.5) * N)), j1 = Math.min(N - 1, Math.ceil(((c.z + R1) / L + 0.5) * N));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const d = Math.hypot(((i + 0.5) / N - 0.5) * L - c.x, ((j + 0.5) / N - 0.5) * L - c.z);
+      if (d >= R1) continue;
+      const t = Math.min(1, Math.max(0, (d - c.r) / (R1 - c.r))), s = t * t * (3 - 2 * t);
+      out[j * N + i] *= c.k + (1 - c.k) * s;
+    }
   }
   const bytes = new Uint8Array(N * N);
   for (let k = 0; k < N * N; k++) bytes[k] = Math.round(Math.min(1, Math.max(0, out[k])) * 255);

@@ -42,7 +42,7 @@ test('一場的紀錄：進房、換名、賺花、買東西、離開摘要；�
     f.act.sample(p, 1);                          // 第一次取樣只是起算
     p.kit.money += 500; f.act.sample(p, 1);      // 賺 500
     p.kit.money -= 200; p.kit.rodLv = 2; p.kit.boats.fisher = { engineLv: 0 }; f.act.sample(p, 1);   // 花 200
-    p.dex.tuna = { n: 3 }; p.dex._honors = { titles: [] };
+    p.dex.tuna = { n: 3 }; p.dex._lv = { exp: 120 };   // 底線開頭的不是魚種（等級經驗），不算釣到的數量
     f.clock.t += 125 * 1000;
     f.act.end(p, 'leave');
     const lines = readFileSync(join(f.dir, 'activity', '2026-11-16.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
@@ -51,7 +51,7 @@ test('一場的紀錄：進房、換名、賺花、買東西、離開摘要；�
     assert.equal(end.catches, 3);
     assert.equal(end.earned, 500);
     assert.equal(end.spent, 200);
-    assert.deepEqual(end.bought.sort(), ['釣竿 Lv2', '漁船'].sort());
+    assert.deepEqual(end.bought.sort(), ['釣竿 Lv2', '近海漁船'].sort());
     assert.equal(end.why, 'leave');
     assert.ok(lines.find((e) => e.t === 'join').new);
     assert.ok(!readFileSync(join(f.dir, 'activity', '2026-11-16.jsonl'), 'utf8').includes('a'.repeat(32)), '不能把代碼寫進去');

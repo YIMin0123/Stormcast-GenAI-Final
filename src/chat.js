@@ -34,10 +34,22 @@ export class Chat {
     });
     this.input.addEventListener('keyup', (e) => e.stopPropagation());
     root.style.display = 'none';
+    const syncVv = this._syncVv = () => {
+      const vv = window.visualViewport, h = vv ? vv.height : window.innerHeight;
+      document.documentElement.style.setProperty('--vv', `${Math.round(h)}px`);
+      const kbOpen = document.body.classList.contains('touch') && this.isOpen && (window.innerHeight - h > 80 || h < 280);
+      document.body.classList.toggle('kb', kbOpen);
+      if (vv && (vv.offsetTop || window.scrollY)) window.scrollTo(0, 0);
+      if (this.isOpen) this._scroll();
+    };
+    syncVv();
+    window.addEventListener('resize', syncVv);
+    window.visualViewport?.addEventListener('resize', syncVv);
+    window.visualViewport?.addEventListener('scroll', syncVv);
     window.setInterval(() => this._fade(), 1000);
   }
 
-  show(on) { this.root.style.display = on ? 'block' : 'none'; if (!on) this.close(); }
+  show(on) { this.root.style.display = on ? '' : 'none'; if (!on) this.close(); }
 
   open() {
     if (this.isOpen || this.root.style.display === 'none') return;
@@ -45,9 +57,11 @@ export class Chat {
     this.root.classList.add('open');
     this.input.value = '';
     this.env.onOpen();
-    this.input.focus();
+    this.input.focus({ preventScroll: true });
+    this._syncVv();
     this._fade();
-    this.log.scrollTop = this.log.scrollHeight;
+    this._scroll();
+    requestAnimationFrame(() => this._scroll());
   }
 
   close() {
@@ -55,10 +69,14 @@ export class Chat {
     this.isOpen = false;
     this.root.classList.remove('open');
     this.input.blur();
+    this._syncVv();
     this.env.onClose();
     this._fade();
-    this.log.scrollTop = this.log.scrollHeight;   // 收起來時訊息區變矮：捲回最底下，不然最新的幾則會被藏在下面、只露出半個泡泡
+    this._scroll();   // 收起來時訊息區變矮：捲回最底下，不然最新的幾則會被藏在下面、只露出半個泡泡
+    requestAnimationFrame(() => this._scroll());
   }
+
+  _scroll() { this.log.scrollTop = this.log.scrollHeight; }
 
   _line(cls) {
     const el = document.createElement('div');
@@ -66,27 +84,23 @@ export class Chat {
     el.dataset.at = Date.now();
     this.log.appendChild(el);
     while (this.log.children.length > KEEP) this.log.firstChild.remove();
-    this.log.scrollTop = this.log.scrollHeight;
     return el;
   }
 
-  // 玩家說的話
-  say(name, text, mine = false, title = '') {
+  // 玩家說的話。badge：{ lv 等級, title 本週稱號, gold 是不是週榜前三名的金色稱號 }
+  say(name, text, mine = false, badge = {}) {
     const el = this._line(mine ? 'mine' : '');
-    if (title) {
-      const badge = document.createElement('span');
-      badge.textContent = `[${title}] `;
-      badge.style.color = title === '七海龍王' ? '#ffd24a' : '#7fd8ff';
-      badge.style.fontWeight = '700';
-      el.append(badge);
-    }
+    const tag = (t, color) => { const s = document.createElement('span'); s.textContent = `[${t}] `; s.style.color = color; s.style.fontWeight = '700'; el.append(s); };
+    if (badge.lv > 0) tag(`Lv.${badge.lv}`, '#9fe3b4');
+    if (badge.title) tag(badge.title, badge.gold ? '#ffd24a' : '#7fd8ff');
     const who = document.createElement('b');
     who.textContent = `${name}：`;
     el.append(who, document.createTextNode(text));
+    this._scroll();   // 文字與稱號放進泡泡之後再捲到底，避免多行換行後最新一句被擠出底邊外
   }
 
   // 系統訊息。kind：join（有人加入）、merge（合併）、record（上榜）、warn（提醒）、info
-  sys(text, kind = 'info') { this._line(`sys ${kind}`).textContent = text; }
+  sys(text, kind = 'info') { this._line(`sys ${kind}`).textContent = text; this._scroll(); }
 
   clear() { this.log.textContent = ''; }
 

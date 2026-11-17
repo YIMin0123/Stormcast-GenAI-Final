@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { mirrored } from './kit.js';
 import { rockGeo, broadleafGeo, islandTerrain } from './shapes.js';
-import { havenHeight, caveCoords, skyEdge, CAVE_AXIS, riverBed, riverFalls, riverPath, coveFaceS, diveDeck, portWall } from './havenShape.js';
+import { havenHeight, caveCoords, skyEdge, CAVE_AXIS, riverBed, riverFalls, riverPath, coveFaceS, diveDeck, portWall, portDeckNear } from './havenShape.js';
 import { buildRiver, buildDive, vineGeo } from './river3d.js';
 import { buildPort } from './port3d.js';
 import { buildCave, cavePatch } from './cave3d.js';
@@ -11,7 +11,7 @@ import * as V from './havenPlan.js';
 
 // place(幾何, 清單, 投不投影, 受不受影)：一個樣板＋很多個實例（跟港口同一套）。phone：手機（地形格子大一點、樹和岩塊少一點）
 // 回傳 { groundAt(x, z) 畫出來的地面多高, kind(x, z) 這一點是哪一種地面, rocks 擋路的大岩塊 [{ x, z, r, top }] }
-export function buildHaven({ P, r, place, mat, group, phone = false, water = null }) {
+export function buildHaven({ P, r, place, mat, group, phone = false, water = null, shelves = [] }) {
   const G = V.GROUND, half = G.size / 2;
   // 地形：電腦 1.8 公尺一格、手機 2.7 公尺（三角形少一半多）。島很大，面也跟著大塊，岩層一層 3.2 公尺。
   // 切成一百多公尺見方的一塊塊：背對鏡頭、被擋在畫面外的那幾塊不用畫；比 11 公尺深的海底看不到，不建
@@ -36,8 +36,9 @@ export function buildHaven({ P, r, place, mat, group, phone = false, water = nul
   buildRiver({ group, groundAt: ground.at, water });
   buildDive({ P, r, mat, group });
   // 碼頭、山城、燈塔
-  const port = buildPort({ P, r, mat, group, groundAt: ground.at, bedAt: havenHeight });
+  const port = buildPort({ P, r, mat, group, groundAt: ground.at, bedAt: havenHeight, phone, shelves });
   out.bollards = port.bollards;
+  out.port = port;   // 價格牌、路燈、燈塔的燈（haven.js 要用）
   out.rocks.push(...port.rocks);
   const randPt = () => { for (;;) { const x = G.cx + (r() - 0.5) * 2 * half, z = G.cz + (r() - 0.5) * 2 * half; if (!keepOut(x, z)) return [x, z, ground.at(x, z)]; } };
 
@@ -45,7 +46,7 @@ export function buildHaven({ P, r, place, mat, group, phone = false, water = nul
   const rg = [];
   for (let k = 0; k < 3; k++) { const g = rockGeo(k, P, 100 + k * 13); rg.push(g, mirrored(g)); }
   const rl = rg.map(() => []);
-  const addRock = (kind, pos, scl, flip = r() < 0.35) => rl[kind * 2 + (r() < 0.5 ? 1 : 0)].push({ pos, scl, rot: r() * Math.PI * 2, flip, tint: 0.88 + r() * 0.2 });
+  const addRock = (kind, pos, scl, flip = r() < 0.35) => { const list = rl[kind * 2 + (r() < 0.5 ? 1 : 0)]; list.push({ pos, scl, rot: r() * Math.PI * 2, flip, tint: 0.88 + r() * 0.2 }); return list; };
   // 海岸：一堆一堆的大礁岩，一半泡在水裡（島大，石頭也大）
   for (let tries = 0, made = 0; made < (phone ? 90 : 170) && tries < 30000; tries++) {
     const [x, z, h] = randPt();
@@ -55,7 +56,10 @@ export function buildHaven({ P, r, place, mat, group, phone = false, water = nul
     for (let i = 0; i < n; i++) {
       const px = x + (r() - 0.5) * 7, pz = z + (r() - 0.5) * 7, s = 1.4 + r() * 3.2;
       const scl = new THREE.Vector3(s * (0.8 + r() * 0.6), s * (0.55 + r() * 0.5), s * (0.8 + r() * 0.6));
-      addRock(r() < 0.6 ? 2 : 0, new THREE.Vector3(px, ground.at(px, pz) - scl.y * (0.15 + r() * 0.3), pz), scl);
+      const kind = r() < 0.6 ? 2 : 0, pos = new THREE.Vector3(px, ground.at(px, pz) - scl.y * (0.15 + r() * 0.3), pz);
+      // 每顆石頭都從堆的中心再偏出去：偏到棧橋、坡道上的那顆不放（亂數照抽，其他石頭的位置不會跟著變）
+      const hitDeck = portDeckNear(px, pz, s + 0.4), list = addRock(kind, pos, scl);
+      if (hitDeck) { list.pop(); continue; }
       if (s > 2.4) out.rocks.push({ x: px, z: pz, r: s * 0.8, top: 99 });
     }
   }

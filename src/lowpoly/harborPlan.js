@@ -39,7 +39,7 @@ export const BOARDS = [-18.6, -16.4, -13.5].map((x, i) => ({ id: ['berth', 'room
 export const SPAWN = { x: 0, z: -9, yaw: Math.PI / 2 };   // 商店和魚市場中間的沙地（正對棧橋），面向海；後面是空地，第三人稱鏡頭拉得開
 // 店裡的擺設（地板上的長方形 x0..x1、z0..z1；模型和擋路都照這些）。
 // 西半邊是櫃台區：客人從正面的大開口進來，櫃台橫在中間，櫃台後面靠後牆一整排貨架；西牆邊一排立著賣的釣竿。
-// 東半邊是展示區：三座展示台（引擎、漁船模型、大漁船模型），後牆是工作台和掛工具的洞洞板
+// 東半邊是展示區：三座台子（木桶、漁網籃、海圖桌，純擺設），後牆是工作台（賣餌）和掛工具的洞洞板
 const COUNTER = { x0: -26.7, x1: -20.5, z0: -11.75, z1: -10.95, h: 0.72 };   // 玩家眼睛只有 1.25 公尺高：檯面低一點，商品才在視線底下
 export const SHOP_IN = {
   counter: COUNTER,
@@ -55,18 +55,16 @@ const onCounter = (id, x) => ({ id, x, z: (COUNTER.z0 + COUNTER.z1) / 2, y: DECK
 const onPlinth = (id, i) => { const p = SHOP_IN.plinths[i]; return { id, x: (p.x0 + p.x1) / 2, z: (p.z0 + p.z1) / 2, y: DECK_Y + p.h, tag: { dy: -0.38, dz: 0.465, tilt: 0 } }; };
 // 餌擺在東半邊後牆的工作台上（客人站在台子南邊按 E）：四種餌，id 是 bait_ 加上餌種（見 fishdata.js 的 BAITS）
 const onBench = (id, x) => { const b = SHOP_IN.bench; return { id, x, z: (b.z0 + b.z1) / 2, y: DECK_Y + b.h, tag: { dy: -0.45, dz: 0.45, tilt: 0 } }; };
+// 母港只賣釣具和補給（漁具行），船務（買船、引擎、改裝、塗裝、修船）要到外海的海上修船屋或大港灣島的船塢
 export const GOODS = [   // 順序跟伺服器的商品清單一樣
-  onCounter('fuel', -23.4), onCounter('wrench', -22.1), onCounter('rod', -26.0), onCounter('box', -24.7),
-  onPlinth('engine', 0), onPlinth('fisher', 1), onPlinth('trawler', 2),
+  onCounter('fuel', -22.1), onCounter('chum', -23.4), onCounter('box', -24.7), onCounter('rod', -26.0),
   onBench('bait_shrimp', -18.5), onBench('bait_minnow', -17.3), onBench('bait_squid', -16.1), onBench('bait_lure', -14.9),
-  // 魚市場新攤位（誘魚桶、塗裝、三大改裝、榮譽頭銜座）
-  { id: 'chum',      x: 14.0,  z: -11.1, y: DECK_Y + 0.82, tag: { dy: -0.40, dz: 0.52, tilt: 0 } },
-  { id: 'paint',     x: 15.0,  z: -11.1, y: DECK_Y + 0.82, tag: { dy: -0.40, dz: 0.52, tilt: 0 } },
-  { id: 'mod_sonar', x: 17.65, z: -9.15, y: DECK_Y + 0.90, tag: { dy: -0.45, dz: 0.46, tilt: 0 } },
-  { id: 'mod_hull',  x: 19.05, z: -9.15, y: DECK_Y + 0.90, tag: { dy: -0.45, dz: 0.46, tilt: 0 } },
-  { id: 'mod_lamp',  x: 20.85, z: -9.15, y: DECK_Y + 0.90, tag: { dy: -0.45, dz: 0.46, tilt: 0 } },
-  { id: 'title',     x: 23.6,  z: -9.15, y: DECK_Y + 0.80, tag: { dy: -0.38, dz: 0.42, tilt: 0 } },
+  // 魚市場東側：漁會捐款箱（title）；它左後方靠後牆立著漁會意見信箱（mailbox，郵筒。再往東是魚市場原本的水桶和刷子，別擺在那）
+  { id: 'title',   x: 23.6, z: -9.15, y: DECK_Y + 0.80, tag: { dy: -0.38, dz: 0.42, tilt: 0 } },
+  { id: 'mailbox', x: 21.8, z: -11.9, y: DECK_Y + 1.10, tag: { dy: -0.60, dz: 0.26, tilt: 0 } },
 ];
+// 東半邊原本放引擎和船模型的三座展示台：改成漁村的擺設（木桶、漁網籃、海圖桌），牆上掛一塊指路的木牌
+export const YARD_NOTICE = { text: '造船與維修・東南外海海上修船屋', x: -16.6, y: DECK_Y + 2.92, z: -14.72, w: 5.7, h: 0.5, rot: 0, style: 'wood' };
 // 魚市場（橋頭東邊）：開放的棚子，前排左右兩座鋪冰的展示台；中間那根柱子是收購站——
 // 柱子上掛電子價格板，左邊是放在磅秤上的漁獲籃，緊靠著籃子右邊是賣出的按鈕。棚子裡有處理魚的長桌、冰櫃和魚箱、東邊一排活魚水槽
 export const MARKET = { x0: 13, x1: 27, z0: -12.5, z1: -5, h: 3.6 };
@@ -111,6 +109,7 @@ export const SIGNS = [
   { text: '鮮魚', x: 13.25, y: DECK_Y + 2.35, z: -4.62, w: 0.46, h: 1.5, rot: 0, style: 'nobori', col: '#c8352a' },
   { text: '大漁', x: 26.75, y: DECK_Y + 2.35, z: -4.62, w: 0.46, h: 1.5, rot: 0, style: 'nobori', col: '#2f5d9a' },
   { text: '釣具', x: -28.6, y: DECK_Y + 2.35, z: -4.4, w: 0.46, h: 1.5, rot: 0, style: 'nobori', col: '#2f5d9a' },
+  YARD_NOTICE,   // 店裡後牆上指路的木牌
 ];
 // 地板：商店、魚市場也是棧板（walk 判斷用）
 export const FLOORS = [

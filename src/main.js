@@ -3,29 +3,33 @@ import { makeTerrain, computeShelter, computeShoreDist, ISLANDS } from './terrai
 import { waterVert, waterFrag, liteWaterVert, liteWaterFrag, terrainVert, terrainFrag, grassVert, grassFrag, skyVert, skyFrag, diagVert, diagFrag, diagPtFrag, HAZE, RAIN_HAZE } from './renderShaders.js';
 import { FftOcean, makeFoamTexture } from './ocean.js';
 import { Boat, BOAT_TYPES } from './boat.js';
-import { BOAT_ORDER, CAN, CHUM_SPEC, BOAT_MODS, BOAT_PAINTS, BLESSINGS, HONOR_TITLES, newKit, shopItem, baitCount } from './boatdata.js';
+import { BOAT_ORDER, CAN, CHUM_SPEC, BOAT_MODS, BOAT_PAINTS, BLESSINGS, HONOR_TITLES, PRICE, newKit, shopItem, baitCount, repairCost } from './boatdata.js';
 import { Player } from './player.js';
 import { ShallowWater, SWE } from './shallow.js';
 import { makeSwimFx } from './swimfx.js';
 import { makeSurfaceProbe } from './swimProbe.js';
-import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SELL, setBoard, BOLLARDS, MoorLine, SHELF, setTag, LAMPS, UNLIT, WET, ROOM_LIGHTS, ROOM_LAMPS, setRoomLights, GLOW_KEEP, lightBulbs, updateFlags, updateScale, PORCHES, HOME_LAND } from './harbor.js';
-import { WORLD, THROW, DEVMODE, SHORE_WIND, CLOUDS, FISHBOX, TABLET } from './config.js';
+import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SELL, setBoard, BOLLARDS, MoorLine, SHELF, setTag, drawTag, LAMPS, UNLIT, WET, ROOM_LIGHTS, ROOM_LAMPS, setRoomLights, GLOW_KEEP, lightBulbs, updateFlags, updateScale, PORCHES, HOME_LAND } from './harbor.js';
+import { WORLD, THROW, DEVMODE, SHORE_WIND, CLOUDS, FISHBOX, TABLET, GUILD, LEVEL, PARTY, TOW, BOATHIT, FEEDBACK, levelOf } from './config.js';
 import { Tablet } from './tablet.js';
 import { makeApps } from './tabletApps.js';
 import { unreadCount } from './updates.js';
-import { makeTabletMesh, holdTablet, poseTablet, setTabletScreen, TABLET_SIZE } from './tabletMesh.js';
+import { makeTabletMesh, holdTablet, poseTablet, setTabletScreen, TABLET_SIZE, SCREENS } from './tabletMesh.js';
+import { createRemoteTabletRenderer, renderOwnTablet } from './tabletLive.js';
 import { fishThumbs } from './fishThumbs.js';
 import { placeAt } from './places.js';
 import { bearing, dirName, whereFrom, beaufort, windWord, clockOf, skyOf, tideText, tideShort, forecast, signsOf } from './tabletData.js';
+import { CompassBar } from './compass.js';
 import { ICON } from './icons.js';
 import { BoxWorld } from './fishBox.js';
 import { ask, asking, cancelAsk } from './ask.js';
+import { openFeedback, feedbackOpen, feedbackDone } from './feedback.js';
 import { HOME_U, placeInHome } from './homeGl.js';
-import { HOME_YAW, toWorld, toLocal, headingToWorld, havenToLocal, HAVEN } from './frame.js';
+import { HOME_YAW, toWorld, toLocal, headingToWorld, havenToLocal, HAVEN, seaYardToLocal } from './frame.js';
 import { makeSeascape, HAVEN_LAND, HAVEN_GROUND } from './haven.js';
 import { caveUnder, caveCeil, caveFloor, caveRock, havenLow, nearCave, caveGate, CAVE_AXIS, skyEdge, havenDeck, riverAt, portWall, portFoundation, portPier } from './lowpoly/havenShape.js';
 import { CAVE, RIVER, PORT } from './lowpoly/havenPlan.js';
-import { HAVEN_SELL_W, HAVEN_PUMP_W } from './layout.js';
+import { HAVEN_SELL_W, ALL_SHELF_W, SITE_SHELF_W, SITES, siteAt } from './layout.js';
+import { yardGround, yardPier } from './lowpoly/seaYardShape.js';
 import { riverLevel } from './fishzone.js';
 import { makeHavenFx } from './havenFx.js';
 import { makeWildlife } from './wildlife.js';
@@ -36,7 +40,7 @@ import { money as cash, rarityOf, BAITS, SPECIES, castRange } from './fishdata.j
 import { Fishing } from './fishing.js';
 import { EmoteWheel } from './emotes.js';
 import { TOUCH, TouchUI, touchText, touchSet, canFullscreen, isFullscreen, setFullscreen } from './touch.js';
-import { FramePacer, MOBILE_FRAME_LIMITS, RefreshRateProbe } from './framePacer.js';
+import { FramePacer, MOBILE_FRAME_LIMITS, DESKTOP_FRAME_LIMITS, RefreshRateProbe, fpsLabel } from './framePacer.js';
 import { MAX_QUALITY_REDUCTION, QualityTiming, reducedQuality } from './adaptiveQuality.js';
 import { REFL, addOutline, BULBS, softDisc } from './toon.js';   // 它會改掉內建材質的受光算法（改成手繪風）
 import { makeScenery, SHADOW_LAYER } from './scenery.js';
@@ -56,6 +60,7 @@ import { SunRaysPass } from './glow.js';
 import { lpUniforms } from './lowpoly/kit.js';
 import { detailUniform } from './lowpoly/surfaceDetail.js';
 import { ShadePass } from './ao.js';
+import { AimOutlinePass } from './aimOutline.js';
 import { Net, TEST } from './net.js';
 import { bakeClouds, cloudCores } from './clouds.js';
 import { Others } from './others.js';
@@ -108,6 +113,7 @@ const prefStore = (() => { try { return TEST ? window.sessionStorage : window.lo
 const getPref = (k) => { try { return prefStore ? prefStore.getItem(k) : null; } catch { return null; } };
 const setPref = (k, v) => { try { if (prefStore) prefStore.setItem(k, String(v)); } catch { /* 存不了就下次重調 */ } };
 const mobileShadowClock = new FramePacer();
+const simClock = new FramePacer(), drawClock = new FramePacer(), hudClock = new FramePacer();
 const mobileRefresh = TOUCH ? new RefreshRateProbe() : null;
 const qualityTiming = TOUCH ? new QualityTiming() : null;
 const savedAdaptive = TOUCH ? getPref('stormcast.adaptiveGfx') : null;
@@ -393,6 +399,9 @@ function landAt(x, z, hx, hz) {
       return low !== null ? low : HAVEN_LAND.at(vx, vz);
     }
   }
+  // 海上修船屋：平台、爬梯、屋裡擋路的東西（修船屋座標；在平台底下游泳的人照海床）
+  const [yx, yz] = seaYardToLocal(x, z), yg = yardGround(yx, yz, walker.feet);
+  if (yg !== null) return walker.fly && yg > 90 && walker.feet !== null && walker.feet > DEVMODE.wallTop ? bedAt(x, z) : yg;
   return bedAt(x, z);
 }
 // 正在走的那個人的腳在多高（只有玩家自己移動的那一下有值；其他地方問地面高度時是 null，石頭照「比地面高半公尺就擋」）
@@ -426,8 +435,9 @@ const boatGround = (x, z) => {
   if (deckY(x, z, 0.4) !== null) return DECK_Y;
   const rk = rockAt(x, z);
   // 透天洞穴附近照精確的形狀算（暗門水道只有 4.2 公尺寬，2 公尺一格的海床圖太粗）
-  // 大港的棧橋底下都是樁，船過不去
-  const [vx, vz] = havenToLocal(x, z), bed = portPier(vx, vz) ? 1 : nearCave(vx, vz) ? havenLow(vx, vz) : bedAt(x, z);
+  // 大港的棧橋、海上修船屋的平台底下都是樁，船過不去
+  const [vx, vz] = havenToLocal(x, z), [yx, yz] = seaYardToLocal(x, z);
+  const bed = portPier(vx, vz) || yardPier(yx, yz) ? 1 : nearCave(vx, vz) ? havenLow(vx, vz) : bedAt(x, z);
   return rk === null ? bed : Math.max(bed, rk);
 };
 
@@ -1086,7 +1096,13 @@ shade(harbor);
 const seascape = makeSeascape(harbor.userData.lowpolyMat, { uniforms: shared, paintSky: !!shared.uCloudMap.value });
 for (const g of seascape.groups) { scene.add(g); g.updateMatrixWorld(true); g.traverse((o) => { o.matrixAutoUpdate = false; }); }
 addRocks(seascape.rocks);
-BOLLARDS.push(...seascape.bollards);   // 大港碼頭的繫纜樁接在母港的後面（編號不變）
+// 大港海岬大燈塔的旋轉光束：跟母港燈塔同一套（同一個材質，亮度一起調）
+const havenBeam = scenery.beam.clone();
+havenBeam.position.set(seascape.havenLamp.x, seascape.havenLamp.y, seascape.havenLamp.z);
+havenBeam.visible = false;
+scene.add(havenBeam);
+BOLLARDS.push(...seascape.bollards);   // 大港碼頭、海上修船屋的繫纜樁接在母港的後面（編號不變）
+UNLIT.push(...seascape.unlit);         // 修船屋、大港的招牌和價格牌：晚上跟著變暗
 // 透天洞穴：海面的著色器要知道洞在哪（洞裡的水面壓暗、天窗底下亮一圈）
 {
   const [cx, cz] = HAVEN.toWorld(CAVE.x, CAVE.z), [ex, ez] = HAVEN.toWorld(CAVE.x + CAVE_AXIS[0], CAVE.z + CAVE_AXIS[1]);
@@ -1162,18 +1178,28 @@ const garage = new Map();                                       // 收在倉庫�
 const garageState = new Map();                                  // 重新整理頁面後，倉庫裡的船是什麼樣子（伺服器記著的）：船種 → { fuel, cracks }
 let myBoat = addBoat('skiff', berth);                           // 自己放在世界裡的那一艘
 let boat = myBoat;   // 「目前這艘」：最後踩上去的船（可能是別人的）。鏡頭、浪、船燈以它為準
+// ---- 漁會、等級、船隊、拖船、副駕：都是伺服器說了算，這裡只是照著顯示（處理見後面「漁會、等級、船隊」那一段） ----
+const party = { id: 0, ids: new Set(), has: (id) => party.ids.has(id) };   // 船隊：同隊的人的 id（不含自己）
+let guild = null;                                       // 漁會這一週：{ amount 我捐了多少, rank 第幾名, titles 能戴的稱號, wear 戴著哪個, endsAt 幾時重置, min }
+let myBadge = { title: '', gold: false, lv: 1 }, myExp = 0;   // 自己的稱號、等級、總經驗
+let tows = [];                                          // 拖纜：[{ tug 拖船的船主, tow 被拖的船主 }]（玩家 id）
+let copilot = null;                                     // 我正在幫隊友開的那艘船：{ id 船主, boat }（那艘船的物理改在我這邊算）
+let piloted = null;                                     // 我的船正被隊友開著：{ id, name }（我的船改照他傳來的位置擺）
 
 // ---- 多人：連線、同房的其他人、聊天室、看板 ----
 const net = new Net();
 const boards = new Boards();   // 魚市場前的停船位置牌和兩塊排行榜
 placeInHome(boards.group);
-scene.add(boards.group);
+scene.add(boards.group, boards.haven);   // haven：大港榮譽榜亭裡的第二組
 shade(boards.group);
+shade(boards.haven);
+let renderRemoteTab = null;
 const others = new Others({
   scene,
   decorate: (m) => { shade(m); addOutline(m); },
   makeBoat: addBoat, dropBoat,
   boatOf: (id) => (id === net.id ? myBoat : others.boat(id)),
+  updateTablet: (o, tab) => renderRemoteTab?.(o, tab),
 });
 const chat = new Chat({
   send: (text) => net.send({ t: 'chat', text }),
@@ -1224,6 +1250,7 @@ const lampLights = LAMPS.map((p) => {
   scene.add(l);
   return l;
 });
+const lampSlots = lampLights.map(() => ({ at: null, k: 0 }));   // 這盞燈現在借給修船屋／大港的哪一盞（見每幀調燈的地方）
 const boatLight = new THREE.PointLight(0xffb866, 0, 15, 1.3);
 // 室內燈（店裡、魚市場）：電腦版放真的光源照亮室內；手機不放（harbor.js 用地上的光暈代替）。開關整間房共用，跟時間無關
 const roomLights = TOUCH ? [] : ROOM_LAMPS.map((p) => {
@@ -1275,6 +1302,7 @@ const waterY = (x, z) => ocean.sampleHeight(x, z) * clamp((-bedAt(x, z) - 0.3) /
 
 const fish = new FishWorld({
   player, boats, scene, ground: walkGround, splash, toast, basket: SELL_W.basket,
+  lowHold: () => view.walk.fp,   // 第一人稱：提著的桶子放低（不然擋掉半個畫面）
   waveAt: (x, z) => ocean.sampleCached(x, z) * waveK(x, z) + tsuAt(x, z),
   onLost: (uids) => net.send({ t: 'fishGone', uids }),   // 魚掉回海裡、跟著船沉了：告訴伺服器這幾條沒了
   boxOver: (x, z, it) => boxes.over(x, z, it),   // 丟出去的魚從口掉進魚箱（誰的都可以：丟進別人的就是送給他）
@@ -1299,6 +1327,8 @@ const fish = new FishWorld({
   boatOf: (id) => (id === net.id ? myBoat : others.boat(id)),
   landed(it, where, pos) {   // 丟出去的東西落地了：where = deck / ground / basket / box / water
     if (where === 'basket') refreshBoard(it);
+    // 誘魚桶丟進海裡：施放（伺服器說不行的話，桶子會回到船上，見 syncChums）
+    if (it.chum && where === 'water') { if (net.online) net.send({ t: 'useChum', x: r2(pos.x), z: r2(pos.z) }); else window.setTimeout(syncChums, 0); }
     audio.play(where === 'water' ? 'plop' : 'drop', 1, pos);
   },
 });
@@ -1438,6 +1468,8 @@ bloom.materialHighPassFilter.fragmentShader = bloom.materialHighPassFilter.fragm
 composer.addPass(rays);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
+const aimOutline = new AimOutlinePass(scene, camera);
+composer.addPass(aimOutline);
 composer.addPass(new SMAAPass());
 
 const reflRT = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, depthBuffer: true });
@@ -1585,7 +1617,8 @@ function applyViewSettings() {
   camera.fov = v.fp ? gfx.fov + 18 : gfx.fov;   // 鏡頭視角在設定的「畫質」頁調（預設 50，第一人稱寬 18 度）
   player.mesh.visible = mode === 'walk';
   player.setFirstPerson(mode === 'walk' && v.fp);
-  myBoat.setManned(mode === 'helm', v.fp);
+  myBoat.setManned(mode === 'helm' && boat === myBoat, v.fp);
+  if (copilot) copilot.boat.setManned(mode === 'helm' && boat === copilot.boat, v.fp);
   $('hSpeed').style.display = mode === 'helm' ? 'inline-flex' : 'none';
   syncAim();
   onResize();
@@ -1594,12 +1627,12 @@ function applyViewSettings() {
 // 第一人稱：畫面中央有準心，滑鼠游標收起來（鎖在畫面裡，直接移動就轉視角）。
 // 按 Esc 會放開滑鼠（要去點設定的時候），再點一下畫面就鎖回去；看地圖、打開設定、切回第三人稱時自動放開
 // （設定開著時不鎖：以前在設定裡改畫質、視角會順手把滑鼠鎖回去，游標就不見了）
-// 走路時不管第一、第三人稱畫面中央都有準心：要對準東西才能互動（第三人稱的滑鼠照舊按住拖曳，不鎖）
+// 只有第一人稱顯示畫面中央準心；第三人稱隱藏準心（改由綠框＋互動提示顯示目前選中的物件，滑鼠照舊拖曳不鎖）
 let tablet = null;   // 平板（下面「平板」那一段建出來）：拿出來的時候遊戲的按鍵不動、滑鼠放開
 const tabOpen = () => !!tablet && tablet.open;
 const lookAllowed = () => inGame && !tabOpen() && !chat.isOpen && !$('panel').open;
 const aiming = () => lookAllowed() && mode !== 'sink' && view[mode].fp;
-const crosshair = () => !tabOpen() && (mode === 'walk' || (mode === 'helm' && view.helm.fp));
+const crosshair = () => !tabOpen() && !!view[mode]?.fp;
 const locked = () => document.pointerLockElement === canvas;
 function grabMouse() {
   if (TOUCH || locked() || !canvas.requestPointerLock) return;
@@ -1870,7 +1903,6 @@ function updateCamera(dt) {
     orbit(camHeading + v.yaw, v.pitch, v.dist);
     setNear(1);
   }
-  tabletCam(dt);   // 拿著平板：鏡頭拉過去對著它（見「平板」那段）
 }
 
 // ---- 掌舵 -----------------------------------------------------------------
@@ -1879,9 +1911,17 @@ const nearHelm = () => player.boat && player.h <= 0
   && Math.hypot(player.lx - player.boat.spec.helmX, player.lz) < player.boat.spec.helmR;
 
 function takeHelm() {
+  const b = player.boat;
+  // 隊友的船：請伺服器讓我幫忙開（回話見 helmOk）
+  if (b !== myBoat) { if (net.online) net.send({ t: 'helm', forId: b.owner.id, on: true }); else toast('連線中斷，等接回去再試'); return; }
+  // 隊友正在幫我開：船主握方向盤就收回來
+  if (piloted) { if (net.online) net.send({ t: 'helm', on: true }); toast(`從 ${piloted.name} 手上接回方向盤`); piloted = null; myBoat.net = null; }
+  grabHelm(b);
+}
+function grabHelm(b) {
   fishing.cancel();
   player.seat = null;
-  boat = player.boat;
+  boat = b;
   mode = 'helm';
   camHeading = boat.heading;
   view.helm.yaw = 0;
@@ -1894,10 +1934,42 @@ function releaseHelm() {
   player.yaw = boat.heading;
   view.walk.yaw = boat.heading + (view.helm.fp ? view.helm.yaw : 0);
   mode = 'walk';
+  if (copilot) endCopilot(true);
   applyViewSettings();
 }
+// 副駕：伺服器答應了，那艘船從現在起在我這邊算（照它現在的樣子接手：船速、油量、耐久）
+function beginCopilot(id, s) {
+  const b = others.boat(id);
+  if (!b || b.sinking || player.boat !== b || mode !== 'walk') { if (net.online) net.send({ t: 'helm', forId: id, on: false }); return; }
+  b.local = true;
+  b.speed = s[6]; b.throttle = 0; b.fuel = clamp(s[10], 0, b.spec.tank); b.towK = 1;
+  b.damage.slice().forEach((c) => b.repair(c));
+  if (s[11] < 0.995) b.hurt(b.spec.hp * (1 - s[11]));
+  for (const k in b.keys) b.keys[k] = false;
+  copilot = { id, boat: b };
+  grabHelm(b);
+  toast(`你在幫 ${b.owner.name} 開船（按 E 放手；船主握方向盤就會收回去）`);
+}
+// 不幫忙開了（自己放手 tell = true；被船主收回、退隊、船主離線 tell = false）：那艘船交回給船主那邊算
+function endCopilot(tell) {
+  if (!copilot) return;
+  const { id, boat: b } = copilot;
+  copilot = null;
+  for (const k in b.keys) b.keys[k] = false;
+  b.setManned(false);
+  b.towK = 1;
+  if (tell && net.online) { net.send({ t: 'b', forId: id, s: b.netState() }); net.send({ t: 'helm', forId: id, on: false }); }
+  b.local = false;
+  b.damage.slice().forEach((c) => b.repair(c));   // 破洞是我這邊算的時候畫的：收掉（別人的船平常不畫破洞）
+  if (mode === 'helm' && boat === b) {
+    player.place(walkWorld, b.spec.helmX - 0.3, 0, b);
+    player.yaw = view.walk.yaw = b.heading;
+    mode = 'walk';
+    applyViewSettings();
+  }
+}
 
-// ---- 大港：吊鉤大秤收購站（收購價比潮汐灣多 15%）、碼頭加油柱 ----
+// ---- 大港：吊鉤大秤收購站（收購價比潮汐灣多 15%） ----
 const boatWithin = (p, r) => !myBoat.sinking && !myBoat.stored && Math.hypot(myBoat.x - p.x, myBoat.z - p.z) < r;
 // 這一秤要賣哪些魚：手上那一條；手上沒東西就是停在碼頭的船上整箱
 const hookFish = () => { const hb = heldBox(); return hb ? hb.fish : fish.held ? (fish.held.can ? [] : [fish.held]) : []; };
@@ -1915,28 +1987,50 @@ function havenSell() {
   if (!net.online) return toast('連線中斷，等接回去再賣');
   net.send(hb ? { t: 'sell', at: 'haven', bid: hb.bid } : { t: 'sell', at: 'haven', uids: list.map((it) => it.uid) });
 }
-// 加油柱：船停在旁邊，人站在柱子前面按 E，加到滿（錢不夠就加到錢用完）
-function pumpLiters() {
-  if (!boatWithin(HAVEN_PUMP_W, PORT.pump.range)) return -1;
-  return Math.max(0, Math.min(Math.floor(myBoat.spec.tank - myBoat.fuel), Math.floor(money / PORT.pump.price)));
+// ---- 修船台（海上修船屋、大港船塢）：船壞了海上修不了，要開進船塢、人站在修船台前按 E 付錢一次修滿 ----
+// 修哪一艘：自己的船停在這個據點的範圍裡就修自己的；不然看有沒有同隊隊友的船停在這裡（幫他付）
+function repairTarget(shelf) {
+  const site = SITES[shelf.site], inR = (b) => !b.sinking && !b.stored && Math.hypot(b.x - site.x, b.z - site.z) < site.repairR;
+  const cost = (b) => (b.remote ? repairCost(b.spec.id, b.net?.[11] ?? 1, 0) : repairCost(b.spec.id, b.hp / b.spec.hp, b.damage.length));
+  if (inR(myBoat) && cost(myBoat) > 0) return { boat: myBoat, cost: cost(myBoat), mine: true };
+  for (const o of others.list()) {
+    const ob = party.has(o.id) ? others.map.get(o.id)?.boat : null;
+    if (ob && inR(ob) && cost(ob) > 0) return { boat: ob, cost: cost(ob), mine: false, id: o.id, name: o.name };
+  }
+  return inR(myBoat) ? { boat: myBoat, cost: 0, mine: true } : null;
 }
-function pumpText() {
-  const n = pumpLiters();
-  if (n < 0) return `碼頭加油柱（一公升 $${PORT.pump.price}）　先把船停到旁邊`;
-  if (myBoat.spec.tank - myBoat.fuel < 1) return `碼頭加油柱　油箱是滿的（${litres(myBoat.fuel)} / ${myBoat.spec.tank} 公升）`;
-  return n < 1 ? `碼頭加油柱（一公升 $${PORT.pump.price}）　錢不夠` : `按 E 加油 ${n} 公升　$${Math.ceil(n * PORT.pump.price)}`;
+function repairText(shelf) {
+  const t = repairTarget(shelf), site = SITES[shelf.site];
+  if (!t) return `修船台　先把船開進${site.name}的船塢`;
+  if (!t.cost) return '修船台　船體狀況完好，無須維修';
+  const whose = t.mine ? t.boat.spec.name : `${t.name} 的${t.boat.spec.name}`;
+  return money >= t.cost ? `按 E 修好${whose}（耐久 ${hpText(t.boat)}）　${t.mine ? '' : '約 '}$${t.cost}` : `修好${whose}要 ${t.mine ? '' : '約 '}$${t.cost}（錢不夠）`;
 }
-function havenPump() {
-  const n = pumpLiters();
-  if (n < 0) return toast('先把船停到加油柱旁邊');
-  if (myBoat.spec.tank - myBoat.fuel < 1) return toast('油箱是滿的');
-  if (n < 1) return toast('錢不夠');
-  if (!net.online) return toast('連線中斷，等接回去再加');
+// 不是買東西的工位：漁會捐款箱 → 平板的榜單（捐款、稱號）；海神祭壇 → 平板的祭壇；塗裝架 → 平板的船（塗裝預覽）；意見信箱 → 意見小卡
+function openStation(id) {
+  if (id === 'mailbox') {
+    return openFeedback({
+      send(kind, text) { if (!net.online) { toast('連線中斷，等接回去再投'); return false; } net.send({ t: 'feedback', kind, text }); return true; },
+      onOpen() { for (const k in keys) keys[k] = false; closeWheel(false); },
+    });
+  }
+  if (id === 'title' && net.online) net.send({ t: 'guild' });   // 捐款箱：先要一份最新的榜
+  const appId = id === 'title' ? 'rank' : id === 'altar' ? 'shrine' : 'boat', app = tablet.apps.find((a) => a.id === appId);
+  if (app && id === 'title') app.tab = 'guild';     // 榜單的「漁會功德榜・稱號」那一頁
+  if (app && id === 'paint') { app.tab = 'custom'; app.pv = null; }   // 船的「改裝與塗裝」那一頁（預覽從船現在的顏色看起）
+  tablet.show(appId);
+}
+function repairAt(shelf) {
+  const t = repairTarget(shelf);
+  if (!t) return toast(`先把船開進${SITES[shelf.site].name}的船塢`);
+  if (!t.cost) return toast('船體狀況完好，無須維修');
+  if (money < t.cost) return toast(`錢不夠，修理費要 $${t.cost}`);
+  if (!net.online) return toast('連線中斷，等接回去再修');
   if (buying) return;
   buying = true;
   window.setTimeout(() => { buying = false; }, 1500);
-  net.send({ t: 'b', s: myBoat.netState() });
-  net.send({ t: 'pump', liters: n });
+  if (t.mine) { net.send({ t: 'b', s: myBoat.netState() }); lastBoatDetail = ''; sendBoatDetail(); }   // 先把最新的耐久、破洞告訴伺服器，修理費才算得準
+  net.send(t.mine ? { t: 'repairBoat' } : { t: 'repairBoat', forId: t.id });
 }
 
 // 賣魚的籃子與按鈕
@@ -1945,11 +2039,6 @@ const nearButton = () => !player.boat && Math.hypot(player.x - SELL_W.button.x, 
 
 // 腳下這艘船的油箱（要站在油箱旁邊）
 const nearTank = () => (player.boat && player.boat === myBoat && Math.hypot(player.lx - player.boat.parts.tank.x, player.lz - player.boat.parts.tank.z) < 1.9 ? player.boat : null);
-// 腳邊的破洞
-function nearCrack() {
-  const b = player.boat === myBoat ? myBoat : null, c = b && b.nearDamage(player.lx, player.lz);
-  return c ? { boat: b, crack: c } : null;
-}
 // ---- 纜繩 -------------------------------------------------------------------
 // 船停在岸壁邊時，人下船走到繫纜樁旁邊按 E，把船的纜繩綁上去；綁住的船不會被水流、風帶走（也開不走，要先解開）。
 // 拉力太大纜繩會繃斷：水龍捲靠得夠近、或巨浪湧進港口把船抬得太高
@@ -1988,15 +2077,24 @@ function moorSpot(i, list, reach = MOOR_REACH) {
   }
   return best;
 }
-// 船身放在 (x, z) 會不會卡進岸壁或擱在太淺的地方（船頭、船尾、兩舷各取幾點）
+// 船身放在 (x, z) 會不會卡進岸壁或擱在太淺的地方（沿完整船身外框與龍骨取樣）
 function hullBlocked(b, x, z) {
-  const c = Math.cos(b.heading), s = Math.sin(b.heading), S = b.spec, h = S.len / 2, w = S.beam / 2;
-  return [[h * 0.8, 0], [-h * 0.8, 0], [h * 0.6, w * 0.6], [h * 0.6, -w * 0.6], [-h * 0.6, w * 0.6], [-h * 0.6, -w * 0.6], [0, w * 0.8], [0, -w * 0.8]]
-    .some(([a, e]) => boatGround(x + c * a - s * e, z + s * a + c * e) > -S.draft * 0.7);
+  return b.hullBlocked(boatGround, x, z);
 }
-// 船跟船會互相擋住。每個人只算自己的船：把兩艘船各當成一條「兩頭圓的長條」，疊在一起就把自己的船推開、往對方衝的速度歸零。
-// 開著（或還在滑行）的船才會被擋、被推開；停著沒人開的船不讓位——所以停好的船不會被別人擠走，別人的船也推不動
-const hullGap = { d: 0, nx: 0, nz: 0 };
+function pushBoatSafe(b, dx, dz) {
+  const cur = b.hullProfile(boatGround, b.x, b.z), lim = -b.spec.draft * 0.7;
+  const ok = (px, pz) => b._hullAllowed(cur, b.hullProfile(boatGround, px, pz), lim);
+  if (ok(b.x + dx, b.z + dz)) { b.x += dx; b.z += dz; return true; }
+  if (Math.abs(dx) >= Math.abs(dz) && ok(b.x + dx, b.z)) { b.x += dx; return true; }
+  if (ok(b.x, b.z + dz)) { b.z += dz; return true; }
+  if (ok(b.x + dx, b.z)) { b.x += dx; return true; }
+  return false;
+}
+// 船跟船會互相擋住、互相推。每個人只算自己（和正在幫隊友開的）那艘船：把兩艘船各當成一條「兩頭圓的長條」，疊在一起就推開。
+// 誰讓多少照噸位分：自己讓「對方噸位 ÷ 兩艘加起來」那麼多（對方那邊也照同一條規則讓他那一份）。
+// 對方綁著岸上的纜繩、或船主離線沒人管：它不會動，自己全讓；自己綁著纜繩：不讓（對方會讓）。
+// 船對船只有推擠、反彈、被扭開、搖晃，不扣耐久、不會破洞
+const hullGap = { d: 0, nx: 0, nz: 0, lever: 0 };
 function boatGap(a, b) {
   const ha = Math.max(0, (a.spec.len - a.spec.beam) / 2), hb = Math.max(0, (b.spec.len - b.spec.beam) / 2);
   const d1x = 2 * ha * Math.cos(a.heading), d1z = 2 * ha * Math.sin(a.heading), d2x = 2 * hb * Math.cos(b.heading), d2z = 2 * hb * Math.sin(b.heading);
@@ -2011,31 +2109,114 @@ function boatGap(a, b) {
   const d = Math.hypot(cx, cz);
   if (d < 1e-4) { cx = a.x - b.x; cz = a.z - b.z; const l = Math.hypot(cx, cz) || 1; cx /= l; cz /= l; } else { cx /= d; cz /= d; }
   hullGap.d = d - (a.spec.beam + b.spec.beam) / 2; hullGap.nx = cx; hullGap.nz = cz;   // d < 0：疊在一起了；n：從對方指向自己
+  hullGap.lever = (s - 0.5) * 2 * ha;   // 碰到的地方在 a 的船身哪裡（離船身中心多遠，船頭是正的）
   return hullGap;
 }
 let bumpAt = 0;
 function collideBoats(b, helm) {
-  if (b.sinking || !(helm || Math.abs(b.speed) > 0.5)) return;
+  if (b.sinking) return;
   let moved = false;
+  // 上次被撞之後船頭還在被扭開：慢慢停下來（不會把船身轉進岸壁）
+  if (b._hitSpin) {
+    const turn = b._hitSpin * dtSim;
+    if (Math.abs(b._hitSpin) > 0.002 && !b.hullBlocked(boatGround, b.x, b.z, b.heading + turn)) { b.heading += turn; moved = true; }
+    b._hitSpin *= Math.exp(-dtSim * 3);
+    if (Math.abs(b._hitSpin) < 0.002) b._hitSpin = 0;
+  }
   for (const o of boats) {
     if (o === b || o.sinking) continue;
     if (Math.hypot(o.x - b.x, o.z - b.z) > (o.spec.len + b.spec.len) / 2 + 1) continue;
     const g = boatGap(b, o);
     if (g.d >= 0) continue;
-    // 推開（推過去會卡進岸壁就不推，只把速度擋下來）
-    const nx = b.x - g.nx * g.d, nz = b.z - g.nz * g.d;
-    if (!hullBlocked(b, nx, nz) || hullBlocked(b, b.x, b.z)) { b.x = nx; b.z = nz; moved = true; }
-    const along = Math.cos(b.heading) * g.nx + Math.sin(b.heading) * g.nz, into = b.speed * along;   // 往對方衝的速度（負的才是）
-    if (into < 0) {
-      b.speed -= into * along;
-      if (into < -1.2 && time - bumpAt > 0.6) {
+    const fixed = o.remote && !o.local ? (o.tied || Number.isFinite(o.reclaimAt)) : !!o.moor;   // 對方不會動
+    const share = b.moor ? 0 : fixed ? 1 : o.spec.mass / (b.spec.mass + o.spec.mass);
+    // 推開（絕不把船擠進棧橋或更淺的岸壁，只擋下速度）
+    if (share > 0 && pushBoatSafe(b, -g.nx * g.d * share, -g.nz * g.d * share)) moved = true;
+    const fx = Math.cos(b.heading), fz = Math.sin(b.heading), along = fx * g.nx + fz * g.nz;
+    const rel = (fx * b.speed - Math.cos(o.heading) * o.speed) * g.nx + (fz * b.speed - Math.sin(o.heading) * o.speed) * g.nz;   // 兩艘船互相靠近的速度（負的才是）
+    if (rel < 0 && share > 0) {
+      const hit = -rel * share, lat = -fz * g.nx + fx * g.nz;   // lat：撞擊的力道有多少是橫著來的（往右舷是正的）
+      b.speed += (1 + BOATHIT.bounce) * hit * along;            // 擋下來，再往回彈一點
+      b._hitSpin = clamp((b._hitSpin || 0) + BOATHIT.yaw * hit * lat * g.lever / (b.spec.len / 2), -0.9, 0.9);   // 斜著擦到：船頭（或船尾）被扭開
+      b._wr = (b._wr || 0) + Math.min(BOATHIT.roll * hit * 5.5, BOATHIT.rollMax) * (lat >= 0 ? 1 : -1);   // 船身橫搖一下（有上限：不會把甲板上的魚甩出去）
+      if (hit > BOATHIT.sound * share && time - bumpAt > 0.6) {
         bumpAt = time;
-        audio.play('drop', clamp(-into / 5, 0.4, 1));
-        if (player.boat === b) jetShake = Math.max(jetShake, clamp(-into / 12, 0.1, 0.5));
+        audio.play('drop', clamp(-rel / 5, 0.4, 1));
+        splash(b.x + fx * g.lever - g.nx * b.spec.beam / 2, b.mesh.position.y + 0.3, b.z + fz * g.lever - g.nz * b.spec.beam / 2, Math.round(clamp(-rel * 3, 4, 14)));
+        if (player.boat === b || (helm && boat === b)) jetShake = Math.max(jetShake, clamp(-rel / 12, 0.1, 0.5));
       }
     }
   }
   if (moved) b._pose();
+}
+
+// ---- 海上救難拖船：對方同意才拖（伺服器記誰拖誰）；拉船的物理在「被拖那艘船是誰在算」的那一邊算 ----
+const boatOfId = (id) => (id === net.id ? myBoat : others.boat(id));
+const towOfId = (id) => tows.find((t) => t.tug === id || t.tow === id) || null;
+const simmed = (b) => (b === myBoat ? !piloted : !!(copilot && copilot.boat === b));   // 這艘船的物理是不是我這邊在算
+// 離 b 的船尾最近、搆得到的別人的船（船主要在線上）
+function towTarget(b) {
+  const sx = b.x - Math.cos(b.heading) * b.spec.len / 2, sz = b.z - Math.sin(b.heading) * b.spec.len / 2;
+  let best = null, bd = TOW.reach;
+  for (const [id, o] of others.map) {
+    const ob = o.boat;
+    if (!ob || ob === b || ob.sinking || !o.fig || towOfId(id)) continue;
+    const d = Math.min(Math.hypot(sx - ob.x - Math.cos(ob.heading) * ob.spec.len / 2, sz - ob.z - Math.sin(ob.heading) * ob.spec.len / 2), Math.hypot(sx - ob.x, sz - ob.z));
+    if (d < bd) { bd = d; best = { id, name: o.name, boat: ob }; }
+  }
+  return best;
+}
+// 現在能對拖纜做什麼（掌舵按 T、手機按拖船鈕、或對準船尾的拖船樁按 E）：已經連著就是解開；不然請求拖行附近的船
+function towAction(b = myBoat) {
+  if (!inGame || !b || b.sinking) return null;
+  if (towOfId(b === myBoat ? net.id : b.owner?.id)) return { cut: true, text: '解開拖纜' };
+  if (b !== myBoat) return null;   // 幫隊友開船時只能解開，不能替他去拖別人
+  const t = towTarget(b);
+  return t ? { cut: false, to: t.id, text: `請求拖行【${t.name} 的${t.boat.spec.name}】` } : null;
+}
+function doTow(act, me = false) {
+  if (!act) return toast(`船尾 ${TOW.reach} 公尺內沒有別人的船`);
+  if (!net.online) return toast('連線中斷，等接回去再試');
+  net.send(act.cut ? { t: 'towCut' } : { t: 'towAsk', to: act.to, me });
+}
+const towLines = new Map();   // 每條拖纜的模型：'拖船-被拖' → MoorLine
+const _ta = new THREE.Vector3(), _tb = new THREE.Vector3();
+let towCutAt = 0;
+function updateTows(dt) {
+  myBoat.towK = 1;
+  if (copilot) copilot.boat.towK = 1;
+  const seen = new Set();
+  for (const t of tows) {
+    const A = boatOfId(t.tug), B = boatOfId(t.tow);
+    if (!A || !B || A.sinking || B.sinking) continue;
+    // 拖船：極速打折（大拖小掉得少、小拖大掉得多）
+    if (simmed(A)) A.towK = TOW.speed[A.spec.mass > B.spec.mass ? 'big' : A.spec.mass < B.spec.mass ? 'small' : 'same'];
+    A.mesh.updateMatrixWorld(); B.mesh.updateMatrixWorld();
+    _ta.copy(A.parts.towPost).applyMatrix4(A.mesh.matrixWorld);
+    _tb.copy(B.parts.bowEye).applyMatrix4(B.mesh.matrixWorld);
+    if (simmed(B)) {
+      // 被拖的船：拖纜拉直了就被拉著走，船頭慢慢轉向拖船的船尾（不會被拉進岸壁、淺灘）
+      const dx = _ta.x - _tb.x, dz = _ta.z - _tb.z, d = Math.hypot(dx, dz);
+      if (d > TOW.rope) {
+        const k = (d - TOW.rope) / d;
+        pushBoatSafe(B, dx * k, dz * k);
+        const want = Math.atan2(dz, dx), turn = Math.atan2(Math.sin(want - B.heading), Math.cos(want - B.heading)) * (1 - Math.exp(-dt * TOW.turn));
+        if (!B.hullBlocked(boatGround, B.x, B.z, B.heading + turn)) B.heading += turn;
+        const vs = Math.max(0, A.speed) * Math.max(0, Math.cos(want - B.heading));   // 跟著拖船的速度走（別人看到的航跡、位置才順）
+        B.speed += (vs - B.speed) * (1 - Math.exp(-dt * 2));
+        B._pose();
+      }
+      // 被拖的船主自己踩油門：解開
+      if (B === myBoat && mode === 'helm' && boat === myBoat && (myBoat.keys.w || myBoat.keys.s) && performance.now() - towCutAt > 1500) { towCutAt = performance.now(); if (net.online) net.send({ t: 'towCut' }); }
+    }
+    const key = `${t.tug}-${t.tow}`, mx = (_ta.x + _tb.x) / 2, mz = (_ta.z + _tb.z) / 2;
+    seen.add(key);
+    let ln = towLines.get(key);
+    if (!ln) { ln = new MoorLine(); towLines.set(key, ln); scene.add(ln.mesh); }
+    ln.set(_tb, _ta, TOW.rope + 0.5, ocean.sampleCached(mx, mz) * waveK(mx, mz) + tsuAt(mx, mz));
+    ln.mesh.visible = true;
+  }
+  for (const [k, ln] of towLines) if (!seen.has(k)) { scene.remove(ln.mesh); ln.mesh.geometry.dispose(); ln.mesh.material.dispose(); towLines.delete(k); }   // 解開了：纜繩收掉
 }
 const tieBoat = (m) => { m.boat.moor = { i: m.i, lx: m.lx, lz: m.lz, len: Math.max(m.d + 1, 2.5) }; };
 function updateMooring(dt, helm) {
@@ -2055,9 +2236,7 @@ function updateMooring(dt, helm) {
     if (d > m.len) {
       // 往樁的方向拉回來；但船身不能被拉進岸壁裡（會卡進去的那個方向就不拉，船貼著岸壁滑）
       const k = (d - m.len) / d, sx = -dx * k, sz = -dz * k;
-      if (d > m.len + 1 || hullBlocked(b, b.x, b.z) || !hullBlocked(b, b.x + sx, b.z + sz)) { b.x += sx; b.z += sz; }   // 繩子不會被拉長超過一公尺：真的拉不回來就硬拉
-      else if (!hullBlocked(b, b.x + sx, b.z)) b.x += sx;
-      else if (!hullBlocked(b, b.x, b.z + sz)) b.z += sz;
+      if (!pushBoatSafe(b, sx, sz) && d > m.len + 1) pushBoatSafe(b, sx * 0.25, sz * 0.25);
       if ((Math.cos(b.heading) * dx + Math.sin(b.heading) * dz) * b.speed > 0) {
         b.speed *= Math.exp(-dt * 6);
         if (helm && b === boat && Math.abs(b.throttle) > 0.3 && !moorToast) { moorToast = true; toast('纜繩還綁在岸上，要先下船解開'); }
@@ -2079,42 +2258,39 @@ function updateMooring(dt, helm) {
   for (const [b, ln] of moorLines) if (!b.moor || !boats.includes(b)) ln.mesh.visible = false;
   if (!helm) moorToast = false;
 }
-const hpText = (b) => `${Math.round(100 * (b.remote ? b.net?.[11] ?? 1 : b.hp / b.spec.hp))}%`;
+const hpText = (b) => `${Math.round(100 * (b.remote && !b.local ? b.net?.[11] ?? 1 : b.hp / b.spec.hp))}%`;
 const litres = (v) => (v >= 9.95 ? v.toFixed(0) : v.toFixed(1));
-const itemLabel = (it) => (it.can ? `油桶（${litres(it.liters)} 公升）` : fishLabel(it));
+const itemLabel = (it) => (it.chum ? '誘魚桶' : it.can ? `油桶（${litres(it.liters)} 公升）` : fishLabel(it));
 
 // ---- 商店的商品架 -----------------------------------------------------------
-// 錢、釣竿、扳手、買了哪些船都由伺服器保管（kit）；這幾個變數只是照著它顯示。買賣是送請求過去，伺服器算好再回來
+// 錢、釣竿、買了哪些船都由伺服器保管（kit）；這幾個變數只是照著它顯示。買賣是送請求過去，伺服器算好再回來
 let rodLv = 0;
 let rodBroken = false;   // 釣竿斷了（爆桿）：要回商店修好才能再釣
-let wrench = false;      // 有沒有扳手（修船用，買一次就一直有）
 let buying = false;      // 已經送出購買、還在等伺服器回話
-let dexBook = {};        // 圖鑑（伺服器存的）：魚種 → { n, len, kg, at, _honors }。要宣告在 refreshTags() 第一次執行之前（價格牌的頭銜要用它）
+let dexBook = {};        // 圖鑑（伺服器存的）：魚種 → { n, len, kg, at }，另外 _lv 記等級經驗。要宣告在 refreshTags() 第一次執行之前（價格牌的頭銜要用它）
 // 每樣商品現在賣什麼：lines = 價格牌上的三行字；price 為 null 表示沒得買。引擎和魚箱是裝在自己放在世界裡的那艘船上
 function offer(id) {
-  const o = shopItem(id, kit, dexBook?._honors), cur = kit.boats[kit.active] ?? { engineLv: 0 }, bn = BOAT_TYPES[kit.active].name;
+  // 不是買東西的工位：修船台、漁會捐款箱、意見信箱、海神祭壇（各有自己的互動，見 interact 的 shelf）
+  if (id === 'repair') return { name: '修船台', lines: ['修船工作台', '船停進船塢・一次修滿', '依損壞計價'], price: null, station: true };
+  if (id === 'title') return { name: '漁會捐款箱', lines: ['漁會捐款箱', '自由捐獻・週榜奪稱號', `最低 $${GUILD.min}`], price: null, station: true };
+  if (id === 'mailbox') return { name: '漁會意見信箱', lines: ['意見信箱', 'Bug・建議・卡頓', '投遞'], price: null, station: true };
+  if (id === 'altar') return { name: '海神祈福祭壇', lines: ['海神祈福', '魚潮・風暴召喚', `$${BLESSINGS.tide.price}`], price: null, station: true };
+  const o = shopItem(id, kit), cur = kit.boats[kit.active] ?? { engineLv: 0 }, bn = BOAT_TYPES[kit.active].name;
   if (id === 'fuel') return { name: `一桶油（${CAN} 公升）`, lines: [`油桶 ${CAN}公升`, '提到船尾倒進油箱', `$${o.price}`], price: o.price };
-  if (id === 'wrench') {
-    if (o.price === null) return { name: '扳手', lines: ['扳手', '已經有了', '售完'], price: null };
-    return { name: '扳手', lines: ['扳手', '修補船上的破洞', `$${o.price}`], price: o.price };
-  }
   if (id === 'chum') {
-    if (o.price === null) return { name: '誘魚桶', lines: ['誘魚桶', `最多帶 ${CHUM_SPEC.max} 桶`, '已滿'], price: null };
-    return { name: '誘魚桶', lines: ['誘魚桶', `消驚嚇 ${CHUM_SPEC.life}秒魚群`, `$${o.price}`], price: o.price };
+    if (o.price === null) return { name: '誘魚桶', lines: ['誘魚桶', `這艘船最多帶 ${o.max ?? CHUM_SPEC.max} 桶`, '已滿'], price: null };
+    return { name: '誘魚桶', lines: ['誘魚桶', `提著走・丟進海裡引魚`, `$${o.price}`], price: o.price };
   }
   if (id.startsWith('mod_') && BOAT_MODS[id.slice(4)]) {
     const M = BOAT_MODS[id.slice(4)];
-    const tagDesc = M.id === 'sonar' ? '地圖顯示魚群＆驚嚇' : M.id === 'hull' ? '抗浪-40%自動修船' : '夜間趨光魚機率×1.8';
+    const tagDesc = M.id === 'sonar' ? '舵旁螢幕顯示魚群水深' : '夜裡趨光魚多 1.8～2.2 倍';
+    if (o.why === 'boat') return { name: M.name, lines: [M.name, '漁船／大漁船專用', `$${M.price}`], price: null, why: '要先有近海漁船或遠洋大漁船才能裝' };
     if (o.price === null) return { name: M.name, lines: [M.name, '永久改裝已安裝', '已擁有'], price: null };
     return { name: M.name, lines: [M.name, tagDesc, `$${o.price}`], price: o.price };
   }
   if (id === 'paint' || id.startsWith('paint:')) {
-    if (o.price === null) return { name: '船殼塗裝', lines: ['船殼塗裝', '已收錄全部塗裝', '全擁有'], price: null };
-    return { name: `塗裝・${o.paint.name}`, lines: ['船殼塗裝', o.paint.name, o.swap ? '已擁有' : `$${o.price}`], price: o.price };
-  }
-  if (id === 'title' || id.startsWith('title:')) {
-    if (o.price === null) return { name: '榮譽頭銜', lines: ['跨季榮譽頭銜', '已收錄全部頭銜', '全擁有'], price: null };
-    return { name: `頭銜・${o.title.name}`, lines: ['跨季榮譽頭銜', o.title.name, o.swap ? '已擁有' : `$${o.price}`], price: o.price };
+    if (o.price === null) return { name: '船殼塗裝', lines: ['船殼塗裝', '已收錄全部塗裝', '全擁有'], price: null, station: true };
+    return { name: `塗裝・${o.paint.name}`, lines: ['船殼塗裝', '按 E 預覽五種顏色', `$${BOAT_PAINTS[1].price} 起`], price: o.price, station: true };
   }
   if (id === 'bless_tide') return { name: BLESSINGS.tide.name, lines: [BLESSINGS.tide.name, '全服稀有×2', `$${o.price}`], price: o.price };
   if (id === 'bless_storm') return { name: BLESSINGS.storm.name, lines: [BLESSINGS.storm.name, '召喚巨浪風暴', `$${o.price}`], price: o.price };
@@ -2125,8 +2301,10 @@ function offer(id) {
     return { name: `第 ${kit.rodLv + 1} 級釣竿`, lines: [`釣竿 第${kit.rodLv + 1}級`, '拋更遠、更好拉', `$${o.price}`], price: o.price };
   }
   if (id === 'engine') {
-    if (o.price === null) return { name: '引擎', lines: ['引擎', `${bn}已升到頂`, '售完'], price: null };
-    return { name: `${bn}的第 ${cur.engineLv + 1} 級引擎`, lines: [`引擎 第${cur.engineLv + 1}級`, `裝在${bn}，更快`, `$${o.price}`], price: o.price };
+    // 引擎是一艘船一艘船分開升的：牌子上寫清楚現在裝的是哪一艘、從幾級升到幾級
+    if (o.price === null) return { name: '引擎', lines: [`${bn}引擎`, `Lv.${cur.engineLv} 已升到頂`, '售完'], price: null };
+    return { name: `${bn}的引擎 Lv.${cur.engineLv} → Lv.${cur.engineLv + 1}`, lines: [`${bn}引擎`, `Lv.${cur.engineLv} → Lv.${cur.engineLv + 1}・每艘分開升`, `$${o.price}`], price: o.price,
+      note: '引擎裝在這艘船上，換船要另外升；船沉了，船和引擎一起沒了' };
   }
   if (id === 'box') return { name: '魚箱', lines: ['魚箱', '抱著搬，魚不會跑', `$${o.price}`], price: o.price };
   if (id.startsWith('bait_')) {
@@ -2135,16 +2313,20 @@ function offer(id) {
     return { name: `${B.name}（${B.pack} 個）`, lines: [`${B.name} ${B.pack}個`, B.desc, `$${o.price}`], price: o.price };
   }
   const S = BOAT_TYPES[id];
-  if (o.price === null) return { name: S.name, lines: [S.name, '已經買了', kit.active === id ? '停在港裡' : '收在倉庫'], price: null };
-  return { name: S.name, lines: [S.name, id === 'fisher' ? '有駕駛艙，快又穩' : '最大、最快、最穩', `$${S.price}`], price: S.price };
+  if (o.price === null) return { name: S.name, lines: [S.name, '已經買了', kit.active === id ? '現在開的這艘' : '收在倉庫'], price: null };
+  return { name: S.name, lines: [S.name, id === 'fisher' ? '輕快・遮陽棚海釣艇' : '雙層艦橋・急凍魚艙', `$${S.price}`], price: S.price, note: '新船引擎是 Lv.0（每艘分開升）；現在這艘收進倉庫' };
 }
-function refreshTags() { SHELF.forEach((it, i) => setTag(i, offer(it.id).lines)); }
+// 價格牌：母港的照 SHELF 的順序（harbor.js 的 setTag）；修船屋、大港的由各自的模型提供（seascape.tags，照 SITE_SHELF_W 的順序）
+function refreshTags() {
+  SHELF.forEach((it, i) => setTag(i, offer(it.id).lines));
+  seascape.tags.forEach((tg, i) => drawTag(tg, offer(SITE_SHELF_W[i].id).lines));
+}
 refreshTags();
 // 站在哪樣商品前面（取最近的那一樣）
 function nearShelf() {
   if (player.boat) return null;
   let best = null, bd = 1.1;
-  for (const it of SHELF_W) {
+  for (const it of ALL_SHELF_W) {
     const d = Math.hypot(player.x - it.stand.x, player.z - it.stand.z);
     if (d < bd) { bd = d; best = it; }
   }
@@ -2163,9 +2345,51 @@ function setBait(id) {
   net.send({ t: 'baitSel', id });
   toast(id ? `換上${BAITS[id].name}（剩 ${baitCount(kit, id)} 個）：${BAITS[id].desc}` : '換回基本餌（不加成，也不花錢）');
 }
+// 誘魚桶：身上有幾桶是伺服器記的（kit.chum），手上、甲板上的桶子照那個數字擺。
+// 少了（進房、換船、船沉了補一艘）就補在自己船的船尾右側；多了（用掉了）就收掉
+function syncChums() {
+  const b = myBoat, ok = b && !b.sinking && !b._lost && !b.stored, want = kit.chum || 0;
+  for (const it of fish.chums) if (it.boat && (it.boat.stored || !boats.includes(it.boat))) fish.removeChum(it);   // 留在收進倉庫的船上的：搬過來
+  let have = fish.chums.length;
+  if (have > want) fish.removeChums(have - want);
+  if (!ok) return;
+  const S = b.spec;
+  for (; have < want; have++) {
+    let lx = -S.len * 0.3, lz = S.beam * 0.2;
+    for (let i = 0; i < 16; i++) {
+      const x = -S.len * 0.36 + (i % 4) * 0.42, z = S.beam * 0.3 - Math.floor(i / 4) * 0.4;
+      if (b.deckContains(x, z) && !b.blockedLocal(x, z) && !fish.chums.some((c) => c.boat === b && Math.hypot(c.lx - x, c.lz - z) < 0.36)) { lx = x; lz = z; break; }
+    }
+    fish.stowChum(b, lx, lz);
+  }
+}
+// 船首集魚燈開關（對準燈按 E，或平板的「船」）
+function toggleFishLamp(b = myBoat) {
+  if (!b.mods.lamp || !b.parts.bowLamp) return toast('這艘船沒有船首集魚燈（海上修船屋、大港船塢有賣，小舢舨裝不了）');
+  b.setFishLamp(!b.fishLamp);
+  audio.play('switch');
+  toast(b.fishLamp ? `集魚燈打開了：夜裡船邊 25 公尺內趨光魚多 ${b.spec.lampMul} 倍` : '集魚燈關掉了');
+  if (tabOpen()) tablet.update();
+}
+// 探魚聲納（裝了才有）：人在那艘船上時舵旁的螢幕一直掃；掌舵時掃到魚群會「叮」一聲
+const SONAR_PING = { every: 4.5, near: 140 };
+let sonarWait = 0;
+function updateSonar(dt) {
+  const b = mode === 'helm' ? boat : mode === 'walk' ? player.boat : null;
+  if (!inGame || !b || b.sinking || !b.sonarRange) return;
+  const spots = [], hs = havenFx.hot();
+  if (hs) spots.push({ x: hs.x, z: hs.z, n: hs.count ?? 0 });
+  for (const c of havenFx.chums()) spots.push({ x: c.x, z: c.z, n: c.count ?? 0 });
+  b.updateSonarScreen(dt, spots, -bedAt(b.x, b.z));
+  if ((sonarWait -= dt) > 0 || mode !== 'helm') return;
+  const hit = spots.some((s) => Math.hypot(s.x - b.x, s.z - b.z) < Math.min(SONAR_PING.near, b.sonarRange));
+  sonarWait = hit ? SONAR_PING.every : 1;
+  if (hit) audio.sonarPing();
+}
 function castChum() {
   if (!inGame || !net.online) return toast('連線中斷，等接回去再試');
-  if ((kit.chum || 0) <= 0) return toast('身上沒有誘魚桶，可到魚市場購買');
+  if ((kit.chum || 0) <= 0) return toast('身上沒有誘魚桶，漁具行、大港補給所有賣');
+  if (fish.held && fish.held.chum) return toast(touchText('提著誘魚桶：按住右鍵蓄力，丟進海裡就施放'));
   const yaw = player.yaw;
   let tx = player.boat ? player.x : player.x + Math.cos(yaw) * 4;
   let tz = player.boat ? player.z : player.z + Math.sin(yaw) * 4;
@@ -2182,14 +2406,15 @@ function applyKit(k) {
   const was = baitCount(kit, kit.bait), wasBait = kit.bait;
   kit = k;
   if (was > 0 && kit.bait === wasBait && BAITS[wasBait] && !baitCount(kit, wasBait)) toast(`${BAITS[wasBait].name}用完了，改用基本餌`);
-  money = k.money; rodLv = k.rodLv; rodBroken = k.rodBroken; wrench = k.wrench;
+  money = k.money; rodLv = k.rodLv; rodBroken = k.rodBroken;
   $('hMoney').textContent = cash(money);
   const cur = k.boats[k.active];
   if (cur && myBoat.spec.id === k.active) {
     myBoat.engineLv = cur.engineLv;
   }
   myBoat.setPaint?.(k.paint || 'default');
-  myBoat.hasHullMod = !!k.mods?.hull;
+  myBoat.setMods?.(k.mods);
+  syncChums();
   refreshTags();
   if (tabOpen()) tablet.update();
 }
@@ -2223,7 +2448,7 @@ function useBoat(type, pose) {
   myBoat = b;
   boat = b;
   b.setPaint?.(kit.paint || 'default');
-  b.hasHullMod = !!kit.mods?.hull;
+  b.setMods?.(kit.mods);
   camHeading = b.heading;
   b.update(0.016, calmEnv);
   lastBoatMsg = lastBoatDetail = '';
@@ -2252,60 +2477,63 @@ function standUp() {
 // 離哪樣東西最近，就是對準了它；人還要站得夠近才算。每樣東西當成一顆球：球越大越好對。
 // 第三人稱比較難瞄，多放寬三十公分；鏡頭和人之間（人背後）的東西不算
 const _aimO = new THREE.Vector3(), _aimD = new THREE.Vector3(), _aimV = new THREE.Vector3();
+const _aimFbO = new THREE.Vector3(), _aimFbD = new THREE.Vector3();
+const _aimRay = new THREE.Raycaster(), _aimHits = [];
 function aimTarget() {
   if (mode !== 'walk' || player.swim || drown) return null;
+  const fp = view.walk.fp;
+  _aimO.copy(camera.position);
+  camera.getWorldDirection(_aimD);
+  const t0 = fp ? 0 : _aimV.set(player.pos.x, player.pos.y + 1.3, player.pos.z).sub(_aimO).dot(_aimD) - 0.3;
+  const hb = heldBox(), held = fish.held, carrying = !!(hb || held);
   const list = [], b = player.boat, px = player.x, pz = player.z;
   const add = (kind, pos, r, data = {}) => list.push({ kind, pos, r, ...data });
-  if (b && !b.sinking) {
+  if (b && !b.sinking && (!carrying || held?.can)) {
     b.mesh.updateMatrixWorld();
     const S = b.spec, D = S.deck, P = b.parts;
     const at = (x, y, z) => new THREE.Vector3(x, y, z).applyMatrix4(b.mesh.matrixWorld);
     const near = (x, z, r) => Math.hypot(player.lx - x, player.lz - z) < r;
-    // 舵、魚箱、油箱、破洞、船燈只有自己的船能動；別人的船只能搭（坐下）
+    // 舵、魚箱、油箱、船燈只有自己的船能動；別人的船只能搭（坐下）。破洞海上修不了（要開去修船屋）
     if (b === myBoat) {
-      if (nearHelm()) add('helm', at(P.helm.x, P.helm.y, P.helm.z), 0.5, { boat: b });
-      if (near(P.tank.x, P.tank.z, 1.9)) add('tank', at(P.tank.x, P.tank.y, P.tank.z), 0.36, { boat: b });
-      for (const c of b.damage) if (near(c.lx, c.lz, 1.7)) add('crack', at(c.lx, D + 0.05, c.lz), 0.4, { boat: b, crack: c });
-      if (near(P.switch.x, P.switch.z, 2.3)) add('lamp', at(P.switch.x, P.switch.y, P.switch.z), P.switchR, { boat: b });
+      if (near(P.tank.x, P.tank.z, 1.9)) add('tank', at(P.tank.x, P.tank.y, P.tank.z), 0.36, { boat: b, rayMesh: P.tankObj, rayR: 0.65 });
+      if (!carrying) {
+        if (nearHelm()) add('helm', at(P.helm.x, P.helm.y, P.helm.z), 0.5, { boat: b, rayMesh: P.wheel || P.tiller, rayR: 0.9 });
+        if (near(P.switch.x, P.switch.z, 2.3)) add('lamp', at(P.switch.x, P.switch.y, P.switch.z), P.switchR, { boat: b, rayMesh: P.switchObj, rayR: 0.45 });
+        // 船首集魚燈（裝了才有）
+        if (b.mods.lamp && P.bowLampAt && near(P.bowLampAt.x, P.bowLampAt.z, 2.4)) add('fishLamp', at(P.bowLampAt.x, P.bowLampAt.y, P.bowLampAt.z), P.bowLampR, { boat: b, rayMesh: P.bowLamp, rayR: 0.8 });
+      }
     }
-    for (const s of P.seats) if (near(s.x, s.z, 1.7)) add('seat', at(s.x, D + s.h + 0.05, s.z), 0.42, { boat: b, seat: s });
+    else if (!carrying && party.has(b.owner?.id) && !b.manned && !Number.isFinite(b.reclaimAt) && nearHelm()) add('helm', at(P.helm.x, P.helm.y, P.helm.z), 0.5, { boat: b, rayMesh: P.wheel || P.tiller, rayR: 0.9 });   // 同隊隊友的船：船主在線上、沒在開，可以幫忙掌舵
+    if (!carrying) for (const s of P.seats) if (near(s.x, s.z, 1.7)) add('seat', at(s.x, D + s.h + 0.05, s.z), 0.28, { boat: b, seat: s, rayMesh: s.mesh, rayR: 1.15 });
+    // 船尾的拖船樁：自己的船去拖別人、解開；別人的船可以請他拖自己的船
+    if (!carrying && P.towPost && near(P.towPost.x, P.towPost.z, TOW.postReach)) add('tow', at(P.towPost.x, P.towPost.y, P.towPost.z), P.towR, { boat: b });
   } else if (!b) {
-    BOLLARDS.forEach((p, i) => {
+    if (!carrying) BOLLARDS.forEach((p, i) => {
       if (Math.hypot(px - p.x, pz - p.z) > 1.9) return;
       const m = bollardAt(i);
       if (m) add('bollard', new THREE.Vector3(p.x, p.y - 0.05, p.z), 0.36, { moor: m });
     });
-    if (nearBasket()) add('basket', new THREE.Vector3(SELL_W.basket.x, DECK_Y + 0.3, SELL_W.basket.z), 0.5);
-    // 大港：吊鉤大秤、碼頭加油柱
-    if (Math.hypot(px - HAVEN_SELL_W.x, pz - HAVEN_SELL_W.z) < PORT.sell.reach) add('hook', new THREE.Vector3(HAVEN_SELL_W.x, PORT.sell.y, HAVEN_SELL_W.z), 0.7);
-    if (Math.hypot(px - HAVEN_PUMP_W.x, pz - HAVEN_PUMP_W.z) < PORT.pump.reach) add('pump', new THREE.Vector3(HAVEN_PUMP_W.x, PORT.deckY + 0.9, HAVEN_PUMP_W.z), 0.5);
-    if (nearButton()) add('button', new THREE.Vector3(SELL_W.button.x, DECK_Y + 1.1, SELL_W.button.z), 0.26);
-    for (const sw of SWITCHES_W) if (Math.hypot(px - sw.stand.x, pz - sw.stand.z) < 1.8) add('switch', new THREE.Vector3(sw.x, sw.y, sw.z), 0.3, { sw });
-    // 店裡的商品：對準商品本身或它的價格牌都算
-    for (const it of SHELF_W) {
-      if (Math.hypot(px - it.stand.x, pz - it.stand.z) > 1.7) continue;
-      add('shelf', new THREE.Vector3(it.x, it.y + 0.25, it.z), 0.5, { shelf: it });
-      add('shelf', new THREE.Vector3(it.tagW.x, it.tag.y, it.tagW.z), 0.45, { shelf: it });
+    if ((!held || !held.can) && nearBasket()) add('basket', new THREE.Vector3(SELL_W.basket.x, DECK_Y + 0.3, SELL_W.basket.z), 0.5);
+    // 大港：吊鉤大秤
+    if ((!held || !held.can) && Math.hypot(px - HAVEN_SELL_W.x, pz - HAVEN_SELL_W.z) < PORT.sell.reach) add('hook', new THREE.Vector3(HAVEN_SELL_W.x, PORT.sell.y, HAVEN_SELL_W.z), 0.7);
+    if (!carrying) {
+      if (nearButton()) add('button', new THREE.Vector3(SELL_W.button.x, DECK_Y + 1.1, SELL_W.button.z), 0.26);
+      for (const sw of SWITCHES_W) if (Math.hypot(px - sw.stand.x, pz - sw.stand.z) < 1.8) add('switch', new THREE.Vector3(sw.x, sw.y, sw.z), 0.3, { sw });
+      // 店裡的商品（母港漁具行、海上修船屋、大港灣島）：對準商品本身或它的價格牌都算
+      for (const it of ALL_SHELF_W) {
+        if (Math.hypot(px - it.stand.x, pz - it.stand.z) > 1.7) continue;
+        add('shelf', new THREE.Vector3(it.x, it.y + 0.25, it.z), 0.5, { shelf: it });
+        add('shelf', new THREE.Vector3(it.tagW.x, it.tag.y, it.tagW.z), 0.45, { shelf: it });
+      }
     }
   }
   // 漂流寶箱（在船上也撿得到）
   {
     const c = havenFx.chestNear(player.pos.x, player.pos.y, player.pos.z);
-    if (c) add('chest', c.pos, 0.6, { chest: c });
-  }
-  // 放在甲板或地上的魚、油桶，還有籃子裡的魚（自己的、別人的都拿得起來：籃子裡的魚不受保護）
-  // 魚箱：自己的抱得起來、拿得出魚；誰的都放得進魚（放進別人的就是送給他）
-  const hb = heldBox();
-  if (!hb && !player.swim) for (const d of boxes.all()) {   // 游泳時抱不了箱子，也就不對準箱子
-    if (d.k === 'hand') continue;
-    const p = boxes.worldPos(d);
-    if (Math.hypot(p.x - player.pos.x, p.z - player.pos.z) > FISHBOX.reach || Math.abs(p.y - player.pos.y) > 2.2) continue;
-    if (fish.held) { if (!fish.held.can) add('fbox', p.clone().setY(p.y + FISHBOX.h * 0.6), 0.6, { box: d }); continue; }
-    add('fbox', p.clone().setY(p.y + FISHBOX.h * 0.3), 0.42, { box: d });
-    if (d.o === net.id && d.fish.length) add('fpile', p.clone().setY(p.y + FISHBOX.h + 0.12), 0.26, { box: d });
+    if (c) add('chest', c.pos, 0.6, { chest: c, rayMesh: c.mesh, rayR: 0.75 });
   }
   // 旁邊的人：手上拿著魚、抱著自己的箱子時可以送給他
-  if (hb || (fish.held && !fish.held.can)) {
+  if (hb || (held && !held.can)) {
     for (const [id, o] of others.map) {
       const fig = o.fig && o.fig.mesh;
       if (!fig || !o.st || !fig.visible) continue;   // o.st：收到過他的位置（還在線上）
@@ -2314,30 +2542,93 @@ function aimTarget() {
       add('player', p.setY(p.y + 1.1), 0.45, { pid: id, name: o.name });
     }
   }
-  if (!hb) for (const it of [...fish.items, ...(fish.held ? [] : fish.basket)]) {   // 手上拿著魚時對準籃子是要放進去，不是拿裡面的
+  // 空手才能撿地上／甲板／籃子裡的魚或油桶（拿著魚或抱著箱子時不加入，避免要放進箱子／籃子卻被地上的魚搶走準心）
+  if (!carrying && fishing.state === 'idle') for (const it of [...fish.items, ...fish.basket]) {
     if (it.fly || (it.boat && it.boat.stored)) continue;   // 還在飛／在收進倉庫的船上
     const v = fish.worldPos(it, new THREE.Vector3());
     if (Math.hypot(v.x - player.pos.x, v.z - player.pos.z) > 1.8 || Math.abs(v.y - player.pos.y) > 1.3) continue;
     v.y += it.can ? 0.2 : it.thick / 2;
-    add('item', v, it.can ? 0.3 : clamp(it.len * 0.45, 0.22, 0.55), { item: it });
+    add('item', v, it.can ? 0.28 : clamp(it.len * 0.35, 0.2, 0.42), { item: it, rayMesh: it.mesh, rayR: it.can ? 0.45 : Math.max(0.5, (it.len || 0.6) * 0.7) });
   }
-  if (!list.length) return null;
-  const fp = view.walk.fp;
-  _aimO.copy(camera.position);
-  camera.getWorldDirection(_aimD);
-  const t0 = fp ? 0 : _aimV.set(player.pos.x, player.pos.y + 1.3, player.pos.z).sub(_aimO).dot(_aimD) - 0.3;
-  let best = null, bs = 1;
-  for (const c of list) {
-    _aimV.copy(c.pos).sub(_aimO);
-    const t = _aimV.dot(_aimD);
-    if (t < t0) continue;
-    const off = Math.sqrt(Math.max(0, _aimV.lengthSq() - t * t)), score = off / (c.r + (fp ? 0.03 * t : 0.3));
-    if (score < bs) { bs = score; best = c; }
-  }
-  return best;
+  const pickPass = (orig, dir, minT, maxT) => {
+    const candidates = list.slice();
+    if (!hb && (!held || !held.can)) {
+      for (const hit of boxes.pick(orig, dir, player.pos, { fp, myId: net.id, tMin: minT, wantOut: !held && fishing.state === 'idle', putOnly: !!(held && !held.can) })) {
+        candidates.push(hit);
+      }
+    }
+    if (!candidates.length) return null;
+    _aimRay.set(orig, dir);
+    _aimRay.near = Math.max(0, minT);
+    _aimRay.far = maxT;
+    let best = null, bs = 1, bestDirect = false, bestT = Infinity;
+    for (const c of candidates) {
+      let t, off, tol, direct, hitT, score;
+      if (c.obb) {
+        if (c.t > maxT) continue;
+        t = c.t; off = c.off; tol = c.r;
+        direct = off <= 0.001;
+        hitT = direct ? t : Infinity;
+        score = off / tol;
+      } else {
+        _aimV.copy(c.pos).sub(orig);
+        t = _aimV.dot(dir);
+        if (t < minT || t > maxT) continue;
+        tol = c.r + (fp ? 0.03 * t : 0.3);
+        off = Math.sqrt(Math.max(0, _aimV.lengthSq() - t * t));
+        if (c.rayMesh) {
+          let hit = null;
+          if (off <= (c.rayR ?? tol)) {
+            c.rayMesh.updateMatrixWorld(true);
+            _aimHits.length = 0;
+            _aimRay.intersectObject(c.rayMesh, true, _aimHits);
+            hit = _aimHits.find((h) => h.object.visible && !h.object.userData?.hull && !h.object.userData?.camProxy) ?? null;
+          }
+          direct = !!hit;
+          hitT = hit ? hit.distance : Infinity;
+          score = direct ? off / Math.max(tol, c.rayR || 1) * 0.01 : off / tol;
+        } else {
+          direct = off <= c.r;
+          hitT = direct ? Math.max(minT, t - c.r * 0.5) : Infinity;
+          score = off / tol;
+        }
+      }
+      if (!direct && score >= 1) continue;
+      if (!best || (direct !== bestDirect ? direct : direct ? (hitT < bestT - 0.02 || (Math.abs(hitT - bestT) <= 0.02 && score < bs)) : score < bs)) {
+        best = c; bs = score; bestDirect = direct; bestT = hitT;
+      }
+    }
+    return best;
+  };
+  const best = pickPass(_aimO, _aimD, Math.max(0, t0), Math.max(6, t0 + 6));
+  if (best || fp) return best;
+  // 第三人稱隱藏準心時，若過頭頂的鏡頭視線未直接指到，改由胸前朝鏡頭水平方位補抓眼前的可互動物件
+  _aimFbO.set(player.pos.x, player.pos.y + 0.92, player.pos.z);
+  _aimFbD.set(Math.cos(view.walk.yaw), -0.25, Math.sin(view.walk.yaw)).normalize();
+  return pickPass(_aimFbO, _aimFbD, 0, 2.3);
 }
 
-// E：對準什麼就做什麼——掌舵／拿起魚／開魚箱／加油／修船／開關船燈／坐下／綁纜繩／賣魚／買東西。
+/**
+ * 依目前準心對準的目標回傳要加上綠色粗描邊的 3D 物件與深度忽略物件。
+ */
+function aimOutlineTargets(a) {
+  if (!a) return null;
+  switch (a.kind) {
+    case 'fpile': return { objs: [a.fishMesh], ignore: null };
+    case 'fbox': return { objs: [a.mesh], ignore: [a.inner] };
+    case 'item': return { objs: [a.item?.mesh], ignore: null };
+    case 'chest': return { objs: [a.chest?.mesh], ignore: null };
+    case 'player': return { objs: [others.map.get(a.pid)?.fig?.mesh], ignore: null };
+    case 'helm': return { objs: [a.boat?.parts?.wheel || a.boat?.parts?.tiller], ignore: null };
+    case 'tank': return { objs: [a.boat?.parts?.tankObj], ignore: null };
+    case 'lamp': return { objs: [a.boat?.parts?.switchObj], ignore: null };
+    case 'fishLamp': return { objs: [a.boat?.parts?.bowLamp], ignore: null };
+    case 'seat': return { objs: [a.seat?.mesh], ignore: null };
+    default: return null;
+  }
+}
+
+// E：對準什麼就做什麼——掌舵／拿起魚／開魚箱／加油／開關船燈／坐下／綁纜繩／賣魚／買東西／修船台修船。
 // 手上拿著東西時：對準魚箱、籃子、油箱就放進去（倒進去），沒對準就放在面前
 function interact() {
   if (mode === 'sink') return;
@@ -2345,7 +2636,6 @@ function interact() {
   if (player.swim || drown) return;   // 在水裡騰不出手
   const a = aimTarget(), kind = a ? a.kind : '';
   if (kind === 'hook') return havenSell();
-  if (kind === 'pump') return havenPump();
   if (kind === 'chest') {
     if (!net.online) return toast('連線中斷，等接回去再試');
     return net.send({ t: 'chest', id: a.chest.id });
@@ -2363,7 +2653,7 @@ function interact() {
   }
   if (fish.held && fish.held.can) {
     // 提著油桶：對準油箱的加油口就倒進去，倒不完的留在桶裡；沒對準就放下
-    const can = fish.held, b = kind === 'tank' ? a.boat : null, room = b ? b.spec.tank - b.fuel : 0;
+    const can = fish.held, b = kind === 'tank' && !can.chum ? a.boat : null, room = b ? b.spec.tank - b.fuel : 0;   // 誘魚桶不能倒進油箱：放下
     if (room < 0.1) return fish.drop();
     const pour = Math.min(can.liters, room);
     b.fuel += pour; can.liters -= pour;
@@ -2384,11 +2674,6 @@ function interact() {
   if (fishing.state !== 'idle') return;   // 手上拿著釣竿
   switch (kind) {
     case 'helm': return takeHelm();
-    case 'crack':
-      if (!wrench) return toast('要有扳手才能修，商店有賣');
-      a.boat.repair(a.crack);
-      audio.play('repair');
-      return toast(a.boat.damage.length ? `修好一處，還有 ${a.boat.damage.length} 處（耐久 ${hpText(a.boat)}）` : `都修好了（耐久 ${hpText(a.boat)}）`);
     case 'bollard': {
       const mr = a.moor;
       if (mr.tied) { mr.boat.moor = null; toast(`解開了${mr.boat.spec.name}的纜繩`); } else { tieBoat(mr); toast(`${mr.boat.spec.name}的纜繩綁好了`); }
@@ -2412,13 +2697,17 @@ function interact() {
       if (a.box.o !== net.id) return toast(`這是 ${others.map.get(a.box.o)?.name ?? '別人'} 的魚箱，只有他搬得動`);
       if (!net.online) return toast('連線中斷，等接回去再搬');
       return net.send({ t: 'boxTake', bid: a.box.bid });
-    case 'fpile':   // 從自己的箱子拿最上面那條出來
+    case 'fpile':   // 從自己的箱子拿出指到的那一條魚
       if (!net.online) return toast('連線中斷，等接回去再拿');
-      return net.send({ t: 'boxOut', bid: a.box.bid });
+      return net.send({ t: 'boxOut', bid: a.box.bid, uid: a.fish?.uid });
     case 'lamp':
       a.boat.lampOn = !a.boat.lampOn;
       audio.play('switch');
       return toast(a.boat.lampOn ? '船燈打開了' : '船燈關掉了');
+    case 'fishLamp': return toggleFishLamp(a.boat);
+    case 'tow':
+      if (a.boat === myBoat) return doTow(towAction(myBoat));
+      return doTow(towOfId(net.id) ? { cut: true } : { cut: false, to: a.boat.owner.id }, true);   // 別人的船：請他拖我的船
     case 'seat': return sitDown(a.boat, a.seat);
     case 'switch': {
       // 室內燈：先在自己這邊換（按下去馬上有反應），再告訴伺服器，它會轉給同房的每個人
@@ -2435,8 +2724,13 @@ function interact() {
       return net.send({ t: 'sell' });
     }
     case 'shelf': {
-      const o = offer(a.shelf.id);
-      if (o.price === null) return toast(`${o.lines[0]}：${o.lines[1]}`);
+      const id = a.shelf.id;
+      if (id === 'repair') return repairAt(a.shelf);
+      // 油桶帶得了幾桶看現在這艘船（小舢舨 2、近海漁船 4、遠洋大漁船 6）
+      if (id === 'fuel' && fish.cans.length >= myBoat.spec.maxCans) return toast(`${myBoat.spec.name}最多帶 ${myBoat.spec.maxCans} 桶油，手邊的先倒進油箱再買`);
+      if (id === 'title' || id === 'mailbox' || id === 'altar' || id === 'paint') return openStation(id);
+      const o = offer(id);
+      if (o.price === null) return toast(o.why || `${o.lines[0]}：${o.lines[1]}`);
       if (money < o.price) return toast(`錢不夠，${o.name}要 $${o.price}`);
       if (buying || !net.online) return;
       buying = true;
@@ -2479,20 +2773,26 @@ function throwTick(dt) {
   bar.firstChild.style.width = `${Math.round(clamp(throwT / THROW.charge, 0, 1) * 100)}%`;
 }
 
+// 手機掌舵時的拖船鈕（電腦是按 T）
+const towBtn = document.createElement('button');
+towBtn.style.cssText = 'position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:17;display:none;padding:9px 18px;border-radius:999px;'
+  + 'border:2px solid var(--edge);background:var(--paper);color:var(--ink);font:600 15px var(--font);box-shadow:var(--shadow);white-space:nowrap';
+towBtn.addEventListener('click', (e) => { e.preventDefault(); towBtn.blur(); doTow(towAction(boat)); });
+document.body.appendChild(towBtn);
 // 畫面下方的提示：能做什麼就顯示什麼
 let promptText = null, aimHit = false;
 let hudSky = '';
 function updatePrompt() {
   let text = '';
-  const a = aimTarget(), kind = a ? a.kind : '';
+  const a = feedbackOpen() ? null : aimTarget(), kind = a ? a.kind : '';   // 意見卡開著：不顯示「按 E」
   if (!!a !== aimHit) { aimHit = !!a; $('aim').classList.toggle('hit', aimHit); }   // 對準了東西：準心變成金色的大圈
   if (mode === 'walk') {
     const ab = a && a.boat;
     if (player.swim) {
       text = stamina < 0.3 ? '快沒力了！趕快上岸，或游到船邊爬上去'
         : fish.held ? `捧著${fish.held.sp.name}游：比較慢，也比較累` : heldBox() ? '抱著魚箱游：比較慢，也比較累，上岸或爬上船再放下' : '';
-    } else if (kind === 'hook' || kind === 'pump') {
-      text = kind === 'hook' ? hookText() : pumpText();
+    } else if (kind === 'hook') {
+      text = hookText();
     } else if (kind === 'chest') {
       text = '按 E 打開漂流寶箱';
     } else if (heldBox()) {
@@ -2500,6 +2800,8 @@ function updatePrompt() {
       text = kind === 'basket' ? (n ? `按 E 整箱賣出（${n} 條，$${boxes.value(hb)}）` : '魚箱是空的')
         : kind === 'player' ? `按 E 把魚箱（${n} 條）送給 ${a.name}（對方要按接受）`
           : `抱著魚箱（${n} 條、${boxes.kg(hb).toFixed(1)} 公斤${boxes.speed(hb) < 0.99 ? '，走得比較慢' : ''}）　按 E 放下`;
+    } else if (fish.held && fish.held.chum) {
+      text = `誘魚桶（身上 ${kit.chum || 0} 桶）　右鍵蓄力丟進海裡就施放，按 E 放下`;
     } else if (fish.held && fish.held.can) {
       const b = kind === 'tank' ? ab : null;
       text = b && b.spec.tank - b.fuel >= 0.1 ? `按 E 把油倒進油箱（${litres(b.fuel)} / ${b.spec.tank} 公升）`
@@ -2512,31 +2814,49 @@ function updatePrompt() {
     } else if (fishing.state === 'wait') text = '等魚上鉤…（按 F 收回）';
     else if (fishing.state === 'bite') text = '魚咬了！快按 F';
     else if (fishing.state !== 'idle') text = '';
-    else if (kind === 'helm') text = '按 E 掌舵';
-    else if (kind === 'crack') text = wrench ? '按 E 用扳手修補破洞' : '船板破了一個洞（要有扳手才能修）';
+    else if (kind === 'helm') text = ab === myBoat ? (piloted ? `按 E 從 ${piloted.name} 手上接回方向盤` : '按 E 掌舵') : `按 E 幫 ${ab.owner.name} 掌舵（同隊隊友）`;
+    else if (kind === 'tow') {
+      const act = ab === myBoat ? towAction(myBoat) : null;
+      text = ab === myBoat ? (act ? `按 E ${act.text}` : `拖船樁　把船尾靠近別人的船（${TOW.reach} 公尺內），就能請求拖行他`)
+        : towOfId(net.id) ? '按 E 解開拖纜' : `按 E 請 ${ab.owner.name} 拖行你的${myBoat.spec.name}（要停在他船尾 ${TOW.reach} 公尺內）`;
+    }
     else if (kind === 'bollard') text = a.moor.tied ? `按 E 解開${a.moor.boat.spec.name}的纜繩` : `按 E 把${a.moor.boat.spec.name}的纜繩綁在這根樁上`;
     else if (kind === 'item') text = a.item.remote ? `按 E 撿起${a.item.sp.name}（${others.map.get(a.item.owner)?.name ?? '沒人'}的，撿到就是你的）` : `按 E 拿起${a.item.can ? itemLabel(a.item) : a.item.sp.name}`;
     else if (kind === 'fbox') {
       const d = a.box, n = d.fish.length;
       text = d.o === net.id ? `按 E 抱起魚箱（${n ? `${n} 條、${boxes.kg(d).toFixed(1)} 公斤` : '空的'}）`
         : `${others.map.get(d.o)?.name ?? '別人'} 的魚箱（${n} 條）：只有他搬得動，可以把魚放進去送給他`;
-    } else if (kind === 'fpile') text = `按 E 從魚箱拿一條出來（${a.box.fish.length} 條）`;
+    } else if (kind === 'fpile') text = `按 E 拿出${a.name || '一條魚'}（箱內 ${a.box.fish.length} 條）`;
     else if (kind === 'tank') text = `油箱　${litres(ab.fuel)} / ${ab.spec.tank} 公升（提著油桶對準這裡按 E 加油）`;
     else if (kind === 'lamp') text = ab.lampOn ? '按 E 關掉船燈' : '按 E 打開船燈';
+    else if (kind === 'fishLamp') text = ab.fishLamp ? '按 E 關掉船首集魚燈' : `按 E 打開船首集魚燈（夜裡船邊趨光魚多 ${ab.spec.lampMul} 倍）`;
     else if (kind === 'seat') text = player.seat && player.seat.src === a.seat ? '按 E 站起來' : '按 E 坐下';
     else if (kind === 'button') text = fish.basket.length ? `按 E 按下按鈕賣出（$${fish.basketTotal}）` : '把魚拿過來放進籃子，就會顯示價格';
     else if (kind === 'basket') text = '把魚拿過來放進籃子，就會顯示價格';
     else if (kind === 'switch') text = `按 E ${ROOM_LIGHTS[a.sw.zone].on ? '關掉' : '打開'}${ZONE_LABEL(a.sw.zone)}`;
     else if (kind === 'shelf') {
-      const o = offer(a.shelf.id);
-      text = o.price === null ? `${o.lines[0]}：${o.lines[1]}` : money >= o.price ? `按 E ${o.act || `購買${o.name}`}　$${o.price}` : `${o.name}　$${o.price}（錢不夠）`;
-    } else if (player.boat && player.boat.remote && nearHelm()) text = `這是 ${player.boat.owner.name} 的${player.boat.spec.name}：可以搭，只有船主能開`;
+      const id = a.shelf.id, o = offer(id);
+      text = id === 'repair' ? repairText(a.shelf)
+        : id === 'title' ? '按 E 打開【漁會捐款箱】（自由捐獻，每週功德榜奪稱號）'
+          : id === 'mailbox' ? '按 E 投遞【漁會意見信箱】'
+            : id === 'altar' ? '按 E 向海神祈福（黃金魚潮／風暴海神祭）'
+              : id === 'paint' ? '按 E 打開船殼塗裝預覽（五種顏色）'
+                : o.price === null ? (o.why || `${o.lines[0]}：${o.lines[1]}`)
+                  : money >= o.price ? `按 E ${o.act || `購買${o.name}`}　$${o.price}${o.note ? `（${o.note}）` : ''}` : `${o.name}　$${o.price}（錢不夠）`;
+    } else if (player.boat && player.boat.remote && nearHelm()) text = party.has(player.boat.owner.id) ? `這是隊友 ${player.boat.owner.name} 的${player.boat.spec.name}：他沒在開的時候，對準方向盤按 E 可以幫忙掌舵` : `這是 ${player.boat.owner.name} 的${player.boat.spec.name}：可以搭，只有船主和他的隊友能開`;
     else if (player.seat) text = '坐著（按 E 或移動鍵站起來）';
   } else if (mode === 'helm') {
-    $('hBoat').textContent = boat.aground ? '擱淺' : `${(Math.abs(boat.speed) * 1.944).toFixed(1)} 節`;
+    $('hBoat').textContent = boat.aground ? '擱淺' : `${((boat.moveSpeed ?? Math.abs(boat.speed)) * 1.944).toFixed(1)} 節`;
+    // 拖船：附近有船可以拖、或拖纜連著的時候才提示（電腦按 T，手機是畫面下方的拖船鈕）
+    const act = tabOpen() ? null : towAction(boat), label = act ? `🪝 ${act.text}` : '';
+    if (act && !TOUCH) text = `按 T ${act.text}`;
+    if (TOUCH && towBtn.textContent !== label) towBtn.textContent = label;
+    towBtn.style.display = TOUCH && act ? 'block' : 'none';
   }
+  if (mode !== 'helm') towBtn.style.display = 'none';
   {
-    // 右上角：時間和天氣的小圖示（詳細的在平板的「天氣」）
+    // 右上角：時間和天氣的小圖示（詳細的在平板的「天氣」；拿著平板時隱藏，避免與平板頂部狀態列重複）
+    $('hud').style.display = tabOpen() ? 'none' : '';
     const c = clockOf(climate.hour), sk = skyNow(), t = `${c.part} ${c.hm}`;
     if ($('hClock').textContent !== t) $('hClock').textContent = t;
     if (hudSky !== sk.icon + sk.text) { hudSky = sk.icon + sk.text; $('hSky').innerHTML = ICON[sk.icon]; $('hSky').title = sk.text; }
@@ -2568,7 +2888,8 @@ function updatePrompt() {
     on: inGame && !tabOpen() && !chat.isOpen && !wheel.isOpen, helm: mode === 'helm', sink: mode === 'sink', held: !!fish.held && !player.swim,
     target: !!a || mode === 'helm' || !!fish.held || !!heldBox() || !!player.seat,
     act: mode === 'helm' ? '放手' : kind === 'player' ? '送給他' : heldBox() ? (kind === 'basket' ? '賣出' : '放下')
-      : fish.held ? (kind === 'tank' || kind === 'basket' || kind === 'fbox' ? '放進去' : '放下') : player.seat && !a ? '站起來' : '互動',
+      : fish.held ? (kind === 'tank' || kind === 'basket' || kind === 'fbox' ? '放進去' : '放下')
+      : kind === 'fpile' ? '取出' : kind === 'fbox' && a.box.o === net.id ? '抱起' : player.seat && !a ? '站起來' : '互動',
   });
   touchSet($('prompt'), text);   // 字和圖示都沒變時它自己會跳過
   if (text !== promptText) {
@@ -2583,7 +2904,7 @@ function updatePrompt() {
 const KEYBAR = {
   walk: [['F', '釣魚'], ['B', '換餌'], ['G', '表情'], ['Tab', '平板'], ['C', '視角'], ['Enter', '聊天']],
   held: [['E', '放下'], ['右鍵', '丟'], ['Tab', '平板'], ['C', '視角'], ['Enter', '聊天']],
-  helm: [['W S', '油門'], ['A D', '方向'], ['E', '放手'], ['Tab', '平板'], ['C', '視角']],
+  helm: [['W S', '油門'], ['A D', '方向'], ['E', '放手'], ['T', '拖船'], ['Tab', '平板'], ['C', '視角']],
 };
 let keybarSet = '';
 function updateKeybar() {
@@ -2604,7 +2925,7 @@ const havenFx = makeHavenFx({
   scene, shade, splash, waterY, flood: () => flood, mist: (x, y, z, vx, vy, vz, life, size) => spray.emit(x, y, z, vx, vy, vz, life, size),
   // 地面多高：大港灣島照畫出來的那張地面，其他地方照海床
   groundAt: (x, z) => { const [vx, vz] = havenToLocal(x, z), VG = HAVEN_GROUND, vh = VG.size / 2 - 2; return HAVEN_LAND.at && Math.abs(vx - VG.cx) < vh && Math.abs(vz - VG.cz) < vh ? HAVEN_LAND.at(vx, vz) : bedAt(x, z); },
-  onHot: (h) => toast(`海上出現魚群（海鳥在上空盤旋），離你約 ${Math.round(Math.hypot(h.x - player.x, h.z - player.z) / 10) * 10} 公尺。按 M 看地圖`),
+  onHot: (h) => toast(`${h.unlimited ? '✨ 海上湧現黃金魚群（不限尾數）' : '海上出現魚群（海鳥在上空盤旋）'}，離你約 ${Math.round(Math.hypot(h.x - player.x, h.z - player.z) / 10) * 10} 公尺。按 M 看地圖`),
 });
 // 海鷗、海豚、海龜、魚群、螃蟹、鯨魚、鯊魚背鰭（純畫面，各人各的；只有海鷗偷魚會真的拿走一條小魚）。數字見 wildPlan.js、行為見 wildlife.js
 const _wildPerches = [], _gullV = new THREE.Vector3();
@@ -2810,7 +3131,14 @@ const gfxCtl = {};
     }
   }
   // 打開、返回：畫質頁蓋掉設定的其他區塊
-  $('gfxOpen').addEventListener('click', () => { $('gfxOpen').blur(); $('panel').classList.add('gfx'); $('panel').scrollTop = 0; });
+  const openGfxPage = (btn, scrollToFps = false) => {
+    btn.blur();
+    $('panel').classList.add('gfx');
+    if (scrollToFps) $('frameLimit').scrollIntoView({ block: 'nearest' });
+    else $('panel').scrollTop = 0;
+  };
+  $('gfxOpen').addEventListener('click', () => openGfxPage($('gfxOpen'), false));
+  $('fpsOpen').addEventListener('click', () => openGfxPage($('fpsOpen'), true));
   $('gfxBack').addEventListener('click', () => { $('gfxBack').blur(); $('panel').classList.remove('gfx'); });
   $('panel').addEventListener('toggle', () => { if (!$('panel').open) $('panel').classList.remove('gfx'); syncAim(); });
   void page;
@@ -2823,39 +3151,55 @@ function syncGfxUi() {
 }
 for (const b of $('gfx').children) b.addEventListener('click', () => { b.blur(); setGfx(+b.dataset.v); saveGfx(); });
 let frameLimit = 0, syncFrameChoices;
-if (TOUCH) {
-  const row = $('frameLimit');
-  const group = $('frameChoices');
+{
+  const row = $('frameLimit'), group = $('frameChoices'), note = $('frameLimitNote');
+  const limits = TOUCH ? MOBILE_FRAME_LIMITS : DESKTOP_FRAME_LIMITS;
+  const prefKey = TOUCH ? 'stormcast.mobileFps' : 'stormcast.desktopFps';
+  const fallback = TOUCH ? 60 : 0;
+  const savedRaw = getPref(prefKey);
+  const savedLimit = savedRaw === null || savedRaw === '' ? NaN : Number(savedRaw);
+  let preferredLimit = limits.includes(savedLimit) ? savedLimit : fallback;
   row.hidden = false;
-  const savedLimit = Number(getPref('stormcast.mobileFps'));
-  let preferredLimit = MOBILE_FRAME_LIMITS.includes(savedLimit) ? savedLimit : 60;
-  const buttons = MOBILE_FRAME_LIMITS.map((fps) => {
-    const b = group.appendChild(Object.assign(document.createElement('button'), { type: 'button', textContent: `${fps} FPS` }));
-    b.dataset.fps = fps;
+  if (note) {
+    note.textContent = TOUCH
+      ? '依瀏覽器偵測到的更新頻率顯示。上限越高，視角移動越流暢，也更耗電。'
+      : '設定每秒繪製上限（實際仍受螢幕更新率限制）；選「不限」則依螢幕更新率全速執行。';
+  }
+  const buttons = limits.map((fps) => {
+    const b = group.appendChild(Object.assign(document.createElement('button'), { type: 'button', textContent: fpsLabel(fps) }));
+    b.dataset.fps = String(fps);
     b.addEventListener('click', () => {
+      b.blur();
       preferredLimit = fps;
-      setPref('stormcast.mobileFps', fps);
+      setPref(prefKey, fps);
       syncFrameChoices();
     });
     return b;
   });
   syncFrameChoices = () => {
-    frameLimit = MOBILE_FRAME_LIMITS.filter((fps) => fps <= mobileRefresh.hz && fps <= preferredLimit).at(-1);
+    frameLimit = TOUCH
+      ? MOBILE_FRAME_LIMITS.filter((fps) => fps <= mobileRefresh.hz && fps <= preferredLimit).at(-1)
+      : preferredLimit;
     for (const b of buttons) {
       const fps = +b.dataset.fps;
-      b.hidden = fps > mobileRefresh.hz;
+      b.hidden = TOUCH && fps > mobileRefresh.hz;
       b.classList.toggle('on', fps === frameLimit);
       b.setAttribute('aria-pressed', String(fps === frameLimit));
     }
+    $('fpsName').textContent = fpsLabel(frameLimit);
+    drawClock.reset();
+    if (!TOUCH) simClock.reset();
   };
   syncFrameChoices();
-  $('adaptiveGfxRow').hidden = false;
-  $('adaptiveGfx').addEventListener('click', () => {
-    adaptivePrompt = false;
-    cancelAsk('adaptiveGfx');
-    setAdaptiveQuality(!adaptiveEnabled);
-  });
-  syncAdaptiveButton();
+  if (TOUCH) {
+    $('adaptiveGfxRow').hidden = false;
+    $('adaptiveGfx').addEventListener('click', () => {
+      adaptivePrompt = false;
+      cancelAsk('adaptiveGfx');
+      setAdaptiveQuality(!adaptiveEnabled);
+    });
+    syncAdaptiveButton();
+  }
 }
 applyGfx();
 
@@ -3042,12 +3386,25 @@ if (TOUCH) {
   wheel.root.addEventListener('pointerup', (e) => { at(e); closeWheel(mode === 'walk'); });
 }
 window.addEventListener('keydown', (e) => {
-  if (e.target instanceof HTMLInputElement || !inGame) return;
-  if (e.code === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); chat.open(); return; }
-  // 平板：Tab 拿出來／收起來、M 直接開地圖；拿著平板時 Esc 回主畫面（主畫面就收起來），遊戲的其他按鍵都不動
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || !inGame || feedbackOpen()) return;
+  if (chat.isOpen && e.code === 'Escape') { e.preventDefault(); chat.close(); return; }
+  if (e.code === 'Enter' || e.code === 'NumpadEnter') {
+    e.preventDefault();
+    if (chat.isOpen) { if (chat.input.value.trim()) chat.input.focus(); else chat.close(); }
+    else chat.open();
+    return;
+  }
+  // 平板：Tab 拿出來／收起來、M 直接開地圖；拿著平板時 Esc 回主畫面（主畫面就收起來）、數字鍵 1~0 快速切換 App
   if (e.code === 'Tab') { e.preventDefault(); if (!e.repeat) tablet.toggle(); return; }
   if (e.code === 'KeyM') { if (!e.repeat) tablet.toggle('map'); return; }
-  if (tabOpen()) { if (e.code === 'Escape' && !e.repeat) tablet.back(); return; }
+  if (tabOpen()) {
+    if (e.code === 'Escape' && !e.repeat) tablet.back();
+    else if (!e.repeat && /^Digit[0-9]$/.test(e.code)) {
+      const n = +e.code.slice(5), idx = n === 0 ? 9 : n - 1;
+      if (tablet.apps[idx]) tablet.go(tablet.apps[idx].id);
+    }
+    return;
+  }
   const k = KEYMAP[e.code];
   if (k) keys[k] = true;
   if (e.code === 'Space') e.preventDefault();
@@ -3060,6 +3417,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyC') toggleFp();
   if (e.code === 'KeyB') cycleBait();
   if (e.code === 'KeyU') castChum();
+  if (e.code === 'KeyT' && mode === 'helm') doTow(towAction(boat));
   if (e.code === 'KeyE') interact();
   if (e.code === 'KeyF') fishing.press();
   if (e.code === 'KeyG' && mode === 'walk') wheel.open();
@@ -3071,7 +3429,7 @@ window.addEventListener('keyup', (e) => {
   if (e.code === 'KeyG') closeWheel(mode === 'walk');
   if (e.code === 'Space' && !(e.target instanceof HTMLInputElement)) e.preventDefault();
 });
-window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; clearMouseDrag(); closeWheel(false); throwCancel(); });
+window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; clearMouseDrag(); closeWheel(false); throwCancel(); if (chat.isOpen && !chat.input.value.trim()) chat.close(); });
 
 // 按住滑鼠拖曳轉視角；滾輪調整第三人稱的距離
 let dragPointer = null, dragX = 0, dragY = 0, wheelPointer = null;
@@ -3091,7 +3449,8 @@ function turnView(dx, dy, k) {
   clampLookPitch(v);
 }
 canvas.addEventListener('pointerdown', (e) => {
-  if (TOUCH) { if (chat.isOpen) chat.close(); return; }   // 手機：畫面上的手指由觸控操作那邊接手（見 touch.js）；點一下畫面順便把聊天收起來
+  if (chat.isOpen) { chat.close(); if (TOUCH) return; }   // 點回遊戲畫面時順便關掉聊天輸入框，不擋住操作
+  if (TOUCH) return;   // 手機：畫面上的手指由觸控操作那邊接手（見 touch.js）
   if (!lookAllowed() || e.button !== 0) return;
   if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); // 免得空白鍵按到面板上的按鈕
   if (!locked()) {
@@ -3290,11 +3649,31 @@ function updateWeather(dt) {
   const glow = clamp((night - 0.35) / 0.45, 0, 1);
   if (boatLight.parent !== boat.mesh) { boat.mesh.add(boatLight); boatLight.position.copy(boat.parts.lamp); }
   boatLight.intensity = boat.lampOn ? 10 * glow : 0;   // 船燈可以自己關掉
-  lampLights.forEach((l, i) => {
-    const on = ROOM_LIGHTS[`dock${i}`]?.on !== false ? glow : 0;   // 路燈可以由玩家關掉
-    l.intensity = 10 * on;
-    shared.uLamp.value[i].set(l.position.x, l.position.z, 0.55 * on);
-  });
+  // 會照亮東西的燈只有這四盞（多一盞，畫面上每一點都要多算一次）：人在母港就是碼頭那四盞；
+  // 到了海上修船屋、大港，搬去照離鏡頭最近的四盞（換燈時先淡出、搬過去、再淡入）
+  const lampSite = [SITES.yard, SITES.haven].find((s) => (camera.position.x - s.x) ** 2 + (camera.position.z - s.z) ** 2 < 280 * 280);
+  if (!lampSite) {
+    lampLights.forEach((l, i) => {
+      if (lampSlots[i].at) { lampSlots[i].at = null; lampSlots[i].k = 0; l.position.set(LAMPS[i].x, LAMPS[i].y, LAMPS[i].z); }
+      const on = ROOM_LIGHTS[`dock${i}`]?.on !== false ? glow : 0;   // 路燈可以由玩家關掉
+      l.intensity = 10 * on;
+      shared.uLamp.value[i].set(l.position.x, l.position.z, 0.55 * on);
+    });
+  } else {
+    const cp = camera.position, far = (p) => (p.x - cp.x) ** 2 + (p.z - cp.z) ** 2;
+    const near = seascape.sites[lampSite.id].lamps.slice().sort((a, b) => far(a) - far(b)).slice(0, lampLights.length);
+    lampLights.forEach((l, i) => {
+      const sl = lampSlots[i];
+      if (sl.at && near.includes(sl.at)) sl.k = Math.min(1, sl.k + dt * 3);
+      else {
+        sl.k = Math.max(0, sl.k - dt * 3);
+        if (sl.k === 0) { sl.at = near.find((p) => !lampSlots.some((o) => o.at === p)) || null; if (sl.at) l.position.set(sl.at.x, sl.at.y, sl.at.z); }
+      }
+      l.intensity = sl.at ? 10 * glow * sl.k : 0;
+      shared.uLamp.value[i].set(l.position.x, l.position.z, sl.at ? 0.55 * glow * sl.k : 0);
+    });
+  }
+  seascape.light(glow);   // 修船屋的工作燈、大港的路燈和山城的窗
   EXTRA_LAMPS.forEach((p, i) => shared.uLamp.value[5 + i].set(p.x, p.z, p.k * glow));
   for (const m of BULBS) m.color.copy(m.userData.base).multiplyScalar(0.7 + 1.5 * glow * m.userData.k);   // 燈泡：天黑後亮到會暈開
   for (const b of boats) b.showLamp(glow);   // 船上的燈另外看開關
@@ -3306,10 +3685,13 @@ function updateWeather(dt) {
   for (const m of UNLIT) m.color.setScalar(lit);
   lightBulbs(glow, lit);
   boards.light(lit, glow);   // 看板晚上自己打燈
+  boards.haven.visible = Math.hypot(camera.position.x - HAVEN.origin.x, camera.position.z - HAVEN.origin.z) < 600;   // 大港那組：離遠了不畫
   for (const m of GLOW) m.emissiveIntensity = 1.3 * glow;   // 天黑了，窗戶透出燈光
   scenery.beam.visible = glow > 0.02;
   scenery.beamMat.uniforms.opacity.value = 0.34 * glow * (1 + 1.5 * fog);
   scenery.beam.rotation.y += dt * 0.55;
+  havenBeam.visible = scenery.beam.visible;   // 大港海岬的大燈塔：一樣的光束，轉得慢一點
+  havenBeam.rotation.y += dt * PORT.lighthouse.beam;
   shared.uBeam.value.set(scenery.beam.position.x, scenery.beam.position.z, Math.cos(scenery.beam.rotation.y), -Math.sin(scenery.beam.rotation.y));
   shared.uBeamOn.value = glow;
 
@@ -3436,6 +3818,10 @@ function beginWreck(b) {
   fish.wreck(b, aboard);
   toast((mine ? b.spec.name : `${b.owner.name} 的${b.spec.name}`) + (SUNK_TEXT[b.sunkBy] ?? '沉了！'));
   if (mine) net.send({ t: 'sink', why: b.sunkBy, side: b._side });
+  else if (copilot && copilot.boat === b) {   // 幫隊友開的船沉了：由我告訴伺服器（船主那邊也會收到）
+    net.send({ t: 'sink', forId: copilot.id, why: b.sunkBy, side: b._side });
+    copilot = null; b.local = false;
+  }
   if (!aboard) return;
   fishing.cancel();
   mode = 'sink';
@@ -3477,6 +3863,7 @@ function endWreck() {
 function updateWreck(dt) {
   if (!wreck) {
     if (myBoat.sinking && !myBoat._wrecked) beginWreck(myBoat);
+    else if (copilot && copilot.boat.sinking && !copilot.boat._wrecked) beginWreck(copilot.boat);
     else if (mode === 'walk' && player.boat && player.boat.remote && player.boat.sinking && !player.boat._wrecked) beginWreck(player.boat);   // 搭的那艘船沉了
   }
   if (wreck) {
@@ -3494,7 +3881,7 @@ let fuelWarned = false;
 // 水深過胸就會浮起來游；從碼頭或船上要用跳的才會下水。游泳耗體力，回到岸上或船上會慢慢恢復；
 // 體力用完會溺水：畫面變暗，被救回港口，手上的東西就沒了
 const SWIM_SECONDS = 50;   // 不拿東西、慢慢游，可以游多久
-let stamina = 1, drown = null, wasSwim = false, stamShown = false, surgeToast = false, whirlToast = false;
+let stamina = 1, drown = null, wasSwim = false, stamShown = false, surgeToast = false, whirlToast = false, spoutToast = false;
 function beginDrown(text) {
   if (devMode) return;   // 開發者模式不會溺水
   drown = { t: 0, text };
@@ -3604,10 +3991,36 @@ const MAP_PLACES = [
   ['燈標岩', WORLD.reefs.beacon.center],
 ];
 const MAP_FONT = '"Huninn", "Microsoft JhengHei", system-ui, sans-serif';
+let waypoint = null;   // 地圖上點選的導航標記點：{ x, z, place }
+const SEA_EVENT_NAME = { storm: '暴風雨', thunder: '雷暴雨', spout: '水龍捲', whirl: '大漩渦', tsunami: '海嘯', omen: '海嘯前兆', waves: '海嘯巨浪', brew: '颱風前兆', typhoon: '颱風' };
+function seaEventText(ox, oz) {
+  const out = [];
+  for (const v of sea.vortices) {
+    out.push(`${v.kind === 'whirl' ? '🌀 大漩渦' : '🌪 水龍捲'}：${whereFrom(v.x - ox, v.z - oz)}`);
+  }
+  if (sea.phase === 'omen' || sea.phase === 'waves') {
+    out.push(`🌊 ${sea.phase === 'waves' ? '海嘯巨浪' : '海嘯前兆'}：自${dirName(-sea.tsu.dx, -sea.tsu.dz)}襲來`);
+  } else if (sea.ev && (sea.phase === 'storm' || sea.phase === 'thunder' || sea.phase === 'brew' || sea.phase === 'typhoon')) {
+    out.push(`⚠️ ${SEA_EVENT_NAME[sea.phase] || '海上事件'}：${whereFrom(sea.ev.x - ox, sea.ev.z - oz)}（外海危險）`);
+  }
+  return out;
+}
 // 畫在平板「地圖」app 的畫布上。filt：要畫哪些（boat 自己的船、box 魚箱、others 其他人、hot 魚群）。回傳點得到的東西（自己的船 → 「船」app）
-function drawMap(cv, filt) {
-  if (!mapBase) { mapBase = makeMapBase(); if (document.fonts) document.fonts.load(`13px ${MAP_FONT}`, '北潮汐灣大港灣島石拱門沉船環礁燈標岩你魚群魚箱條').catch(() => {}); }
+function drawMap(cv, filt, who = null, st = null, viewOpt = null) {
+  if (!mapBase) { mapBase = makeMapBase(); if (document.fonts) document.fonts.load(`13px ${MAP_FONT}`, '北潮汐灣大港灣島石拱門沉船環礁燈標岩你魚群魚箱條導航漩渦龍捲嘯巨浪雷暴雨颱區形成中來襲方向').catch(() => {}); }
+  const selfId = who ? who.id : net.id;
+  const selfSonar = who ? !!st?.mods?.sonar : !!kit.mods?.sonar;
+  const selfBoat = who ? who.boat : myBoat;
+  const selfHelm = who ? !!(who.boat && !who.boat.sinking && who.st && (who.st[4] & 32)) : (mode !== 'walk');
+  const zoom = viewOpt?.zoom || 1, panX = viewOpt?.panX || 0, panY = viewOpt?.panY || 0;
   const g = cv.getContext('2d'), hits = [];
+  g.clearRect(0, 0, MAP_PX, MAP_PX);
+  g.save();
+  if (zoom > 1.001 || panX || panY) {
+    g.translate(MAP_PX / 2, MAP_PX / 2);
+    g.scale(zoom, zoom);
+    g.translate(-MAP_PX / 2 - panX, -MAP_PX / 2 - panY);
+  }
   g.drawImage(mapBase, 0, 0);
   const P = (x, z) => [(x / L + 0.5) * MAP_PX, (z / L + 0.5) * MAP_PX];
   g.lineJoin = 'round';
@@ -3625,11 +4038,6 @@ function drawMap(cv, filt) {
     g.restore();
   };
 
-  // 指北
-  g.fillStyle = 'rgba(20, 30, 40, 0.55)';
-  g.beginPath(); g.moveTo(MAP_PX - 26, 14); g.lineTo(MAP_PX - 19, 30); g.lineTo(MAP_PX - 33, 30); g.closePath(); g.fill();
-  g.font = `13px ${MAP_FONT}`;
-  g.textAlign = 'center'; g.fillText('北', MAP_PX - 26, 42); g.textAlign = 'left';
   // 島和礁石的名字（最不重要，最後擺）
   for (const [name, c] of MAP_PLACES) { const [px, py] = P(c.x, c.z); label(name, px, py, 'rgba(255, 255, 255, 0.92)', 5, 12); }
   // 魚群熱點 ＋ 誘魚桶人工魚群
@@ -3639,12 +4047,13 @@ function drawMap(cv, filt) {
     g.beginPath(); g.arc(hx, hy, 7, 0, Math.PI * 2);
     g.lineWidth = 3; g.strokeStyle = 'rgba(20, 30, 40, 0.9)'; g.stroke();
     g.fillStyle = '#ffd250'; g.fill();
-    if (kit.mods?.sonar) {
+    if (selfSonar) {
       const sec = Math.max(0, Math.ceil(hs.until - performance.now() / 1000));
-      label(hs.count != null ? `魚群 ${hs.count}尾 ${sec}s` : `魚群 ${sec}s`, hx, hy, '#ffe9a0', 2);
+      label(hs.count != null ? `魚群 ${hs.count}尾 ${sec}s` : `黃金魚群 ∞ ${sec}s`, hx, hy, '#ffe9a0', 2);
     } else {
       label('魚群', hx, hy, '#ffe9a0', 2);
     }
+    if (!who) hits.push({ x: hx, y: hy, r: 16, nav: { x: hs.x, z: hs.z, place: '魚群熱點' } });
   }
   if (filt.hot) {
     for (const ch of havenFx.chums()) {
@@ -3652,12 +4061,13 @@ function drawMap(cv, filt) {
       g.beginPath(); g.arc(cx, cy, 5.5, 0, Math.PI * 2);
       g.lineWidth = 2.5; g.strokeStyle = 'rgba(20, 30, 40, 0.9)'; g.stroke();
       g.fillStyle = '#ff9838'; g.fill();
-      if (kit.mods?.sonar) {
+      if (selfSonar) {
         const sec = Math.max(0, Math.ceil(ch.until - performance.now() / 1000));
         label(`誘魚 ${ch.count}尾 ${sec}s`, cx, cy, '#ffd09c', 2);
       } else {
         label('誘魚', cx, cy, '#ffd09c', 2);
       }
+      if (!who) hits.push({ x: cx, y: cy, r: 14, nav: { x: ch.x, z: ch.z, place: '人工魚群' } });
     }
   }
 
@@ -3669,7 +4079,16 @@ function drawMap(cv, filt) {
   label('潮汐灣', hx, hy, '#fff', 3);
 
   // 同房的其他人和他們的船（白色）
-  for (const o of filt.others ? others.list() : []) {
+  const othersView = filt.others ? others.list().filter((o) => o.id !== selfId) : [];
+  if (filt.others && who) {
+    const meHelm = mode !== 'walk';
+    othersView.push({
+      id: net.id, name: net.name, here: true,
+      x: meHelm ? boat.x : player.x, z: meHelm ? boat.z : player.z, yaw: meHelm ? boat.heading : player.yaw,
+      boat: !myBoat.sinking ? myBoat : null,
+    });
+  }
+  for (const o of othersView) {
     if (o.boat) { const [bx, by] = P(o.boat.x, o.boat.z); arrow(bx, by, o.boat.heading, 5.5, 3.5, 'rgba(255, 255, 255, 0.75)'); }
     if (!o.here) continue;
     const [ox, oy] = P(o.x, o.z);
@@ -3679,7 +4098,7 @@ function drawMap(cv, filt) {
     label(o.name, ox, oy, '#fff', 4);
   }
   // 自己的魚箱（橘色小方塊）
-  if (filt.box) for (const d of boxes.mine(net.id)) {
+  if (filt.box) for (const d of boxes.mine(selfId)) {
     if (d.k === 'hand') continue;
     const w = boxes.worldPos(d), [bx, by] = P(w.x, w.z);
     g.lineWidth = 2; g.strokeStyle = 'rgba(20, 30, 40, 0.9)'; g.fillStyle = '#ff9a5c';
@@ -3687,17 +4106,84 @@ function drawMap(cv, filt) {
     if (d.fish.length) label(`魚箱 ${d.fish.length} 條`, bx, by, '#ffd2b8', 3, 12);
   }
   // 自己的船（點了打開「船」）
-  const helm = mode !== 'walk';
-  if (!myBoat.sinking && filt.boat) {
-    const [bx, by] = P(myBoat.x, myBoat.z);
-    arrow(bx, by, myBoat.heading, 7, 4.5, '#ffd257');
-    if (!helm) label(myBoat.spec.name, bx, by, '#ffe9a8', 1);   // 掌舵時船就是「你」，不另外標
-    hits.push({ x: bx, y: by, r: 18, go: 'boat' });
+  if (selfBoat && !selfBoat.sinking && filt.boat) {
+    const [bx, by] = P(selfBoat.x, selfBoat.z);
+    arrow(bx, by, selfBoat.heading, 7, 4.5, '#ffd257');
+    if (!selfHelm) label(selfBoat.spec.name, bx, by, '#ffe9a8', 1);   // 掌舵時船就是「你」，不另外標
+    if (!who) hits.push({ x: bx, y: by, r: 18, go: 'boat' });
   }
 
   // 自己：掌舵時就是船的位置與船首方向
-  const [mx, my] = helm ? P(boat.x, boat.z) : P(player.x, player.z);
-  arrow(mx, my, helm ? boat.heading : player.yaw, 9, 6, '#ff5a3c');
+  const [mx, my] = who
+    ? P(selfHelm && selfBoat ? selfBoat.x : who.fig.x, selfHelm && selfBoat ? selfBoat.z : who.fig.z)
+    : (selfHelm ? P(boat.x, boat.z) : P(player.x, player.z));
+
+  // 導航標記點（只有自己看的地圖畫）
+  if (!who && waypoint) {
+    const [wx, wy] = P(waypoint.x, waypoint.z);
+    g.save();
+    g.setLineDash([6, 5]);
+    g.lineWidth = 2.2;
+    g.strokeStyle = 'rgba(120, 240, 255, 0.88)';
+    g.beginPath(); g.moveTo(mx, my); g.lineTo(wx, wy); g.stroke();
+    g.restore();
+    g.beginPath(); g.arc(wx, wy, 9, 0, Math.PI * 2);
+    g.lineWidth = 2; g.strokeStyle = 'rgba(120, 240, 255, 0.9)'; g.stroke();
+    g.beginPath(); g.arc(wx, wy, 4.5, 0, Math.PI * 2);
+    g.fillStyle = '#52f0ff'; g.fill();
+    g.lineWidth = 2; g.strokeStyle = 'rgba(20, 30, 40, 0.9)'; g.stroke();
+    const distM = Math.round(Math.hypot(waypoint.x - (selfHelm ? boat.x : player.x), waypoint.z - (selfHelm ? boat.z : player.z)));
+    label(`導航 ${distM}m`, wx, wy, '#9ff7ff', 1, 12);
+  }
+
+  // 海上事件位置／波前標記（漩渦、水龍捲、海嘯來襲／浪頭、風暴與颱風區）
+  if (sea.phase === 'omen' || sea.phase === 'waves') {
+    const dx = sea.tsu.dx, dz = sea.tsu.dz, tx = -dz, tz = dx;
+    const dFront = sea.tsu.on ? clamp(sea.tsu.front, -L * 0.48, L * 0.48) : -L * 0.42;
+    const [cx, cz] = [dx * dFront, dz * dFront], span = L * 0.65;
+    const [p1x, p1y] = P(cx - tx * span, cz - tz * span), [p2x, p2y] = P(cx + tx * span, cz + tz * span);
+    g.save();
+    g.setLineDash(sea.tsu.on ? [10, 6] : [6, 6]);
+    g.lineWidth = sea.tsu.on ? 3.5 : 2.5;
+    g.strokeStyle = sea.tsu.on ? '#ff7c61' : '#ffb86b';
+    g.beginPath(); g.moveTo(p1x, p1y); g.lineTo(p2x, p2y); g.stroke();
+    g.restore();
+    const [ax, ay] = P(cx, cz), yawT = Math.atan2(dz, dx);
+    arrow(ax, ay, yawT, 8, 5, sea.tsu.on ? '#ff6a4d' : '#ffb86b');
+    label(sea.tsu.on ? '海嘯巨浪' : '海嘯來襲方向', ax, ay, '#ffd1b8', 1, 13);
+  }
+  for (const v of sea.vortices) {
+    const [vx, vy] = P(v.x, v.z), whirl = v.kind === 'whirl';
+    const warnR = Math.max(9, ((whirl ? 90 : 80) / L) * MAP_PX);
+    g.save();
+    g.beginPath(); g.arc(vx, vy, warnR, 0, Math.PI * 2);
+    g.fillStyle = whirl ? 'rgba(155, 100, 255, 0.18)' : 'rgba(90, 225, 255, 0.18)'; g.fill();
+    g.setLineDash([4, 4]); g.lineWidth = 2;
+    g.strokeStyle = whirl ? 'rgba(195, 148, 255, 0.9)' : 'rgba(115, 240, 255, 0.9)'; g.stroke();
+    g.restore();
+    if (!whirl && Math.hypot(v.vx, v.vz) > 0.2) arrow(vx, vy, Math.atan2(v.vz, v.vx), 8, 4.5, '#8ff7ff');
+    else {
+      g.beginPath(); g.arc(vx, vy, 4.5, 0, Math.PI * 2);
+      g.fillStyle = whirl ? '#d8b4ff' : '#8ff7ff'; g.fill();
+      g.lineWidth = 2; g.strokeStyle = 'rgba(20, 30, 40, 0.9)'; g.stroke();
+    }
+    label(whirl ? (v.s < 0.25 ? '大漩渦（形成中）' : '大漩渦') : '水龍捲', vx, vy, whirl ? '#ead7ff' : '#b8faff', 1, 12);
+  }
+  if (sea.ev && (sea.phase === 'storm' || sea.phase === 'thunder' || sea.phase === 'brew' || sea.phase === 'typhoon')) {
+    const [ex, ey] = P(sea.ev.x, sea.ev.z);
+    g.save();
+    g.beginPath(); g.arc(ex, ey, 22, 0, Math.PI * 2);
+    g.fillStyle = 'rgba(255, 185, 70, 0.16)'; g.fill();
+    g.setLineDash([5, 4]); g.lineWidth = 2;
+    g.strokeStyle = 'rgba(255, 210, 95, 0.9)'; g.stroke();
+    g.restore();
+    g.beginPath(); g.arc(ex, ey, 4.5, 0, Math.PI * 2);
+    g.fillStyle = '#ffd978'; g.fill();
+    g.lineWidth = 2; g.strokeStyle = 'rgba(20, 30, 40, 0.9)'; g.stroke();
+    label(sea.phase === 'thunder' ? '雷暴雨觸發區' : sea.phase === 'storm' ? '暴風雨觸發區' : '颱風觸發區', ex, ey, '#ffe599', 1, 12);
+  }
+
+  arrow(mx, my, who ? (selfHelm && selfBoat ? selfBoat.heading : who.fig.yaw) : (selfHelm ? boat.heading : player.yaw), 9, 6, '#ff5a3c');
   label('你', mx, my, '#ffb9a6', 0, 14);
 
   // 擺標籤
@@ -3714,99 +4200,38 @@ function drawMap(cv, filt) {
     g.fillStyle = l.color;
     g.strokeText(l.text, at[0], at[1]); g.fillText(l.text, at[0], at[1]);
   }
+  g.restore();
+
+  // 海上事件左上狀態膠囊（不受縮放平移影響）
+  if (sea.phase !== 'calm' || sea.vortices.length) {
+    const tag = `⚠ ${SEA_EVENT_NAME[sea.phase] || '海上事件'}${sea.vortices.length ? ` ×${sea.vortices.length}` : ''}`;
+    g.font = `12px ${MAP_FONT}`;
+    const tw = g.measureText(tag).width + 18;
+    g.fillStyle = 'rgba(24, 38, 52, 0.82)';
+    g.beginPath(); g.roundRect(10, 10, tw, 24, 12); g.fill();
+    g.fillStyle = '#ffd584'; g.fillText(tag, 19, 22);
+  }
+
+  // 指北（固定在視窗右上角，不受縮放平移影響）
+  g.fillStyle = 'rgba(20, 30, 40, 0.62)';
+  g.beginPath(); g.moveTo(MAP_PX - 26, 14); g.lineTo(MAP_PX - 19, 30); g.lineTo(MAP_PX - 33, 30); g.closePath(); g.fill();
+  g.font = `13px ${MAP_FONT}`;
+  g.textAlign = 'center'; g.fillText('北', MAP_PX - 26, 42); g.textAlign = 'left';
   return hits;
 }
 // ---- 平板（Tab；仿 iPad：主畫面兩塊小工具＋app 圖示，見 tablet.js、tabletApps.js） ------------
 // 這裡把遊戲裡的資料交給平板：時間天氣、自己的船、圖鑑、背包、同房的人；按鈕按下去要做的事也在這裡
 let tabHand = false, tabMesh = null, tabScreen = 0;   // 手上拿著平板（給自己和別人看的 3D 模型）、螢幕上是哪個畫面（tabletMesh.js 的 SCREENS）
-const tabletScreen = () => (tablet.cur ? tablet.apps.findIndex((a) => a.id === tablet.cur) + 1 : 0);
-// 看手上的平板：拿出來時鏡頭（第一、第三人稱都一樣）沿著平板正面往後退到剛好框住它（佔畫面 TABLET.fill），
-// 收起來再回原本的位置；平板介面（網頁）照 3D 平板四個角的位置貼上去，點得到。沒辦法拿在手上時（抱著魚、掌舵、游泳）照舊是大螢幕
-let tabView = 0;   // 0 平常的鏡頭 → 1 對著手上的平板
-const _tvC = new THREE.Vector3(), _tvN = new THREE.Vector3(), _tvU = new THREE.Vector3(), _tvP = new THREE.Vector3(), _tvM = new THREE.Matrix4(), _tvQ = new THREE.Quaternion();
-const _tvK = new THREE.Vector3(), _tvPlane = new THREE.Plane();
-let ownHidden = false;
-const easeIO = (t) => t * t * (3 - 2 * t);
-function tabletCam(dt) {
-  const want = tabHand && tabMesh && tabMesh.parent;
-  tabView = clamp(tabView + (want ? dt : -dt) / TABLET.viewSec, 0, 1);
-  const k = easeIO(tabView);
-  if (k <= 0 || !tabMesh || !tabMesh.parent) { ownBody(false); return; }
-  tabMesh.updateWorldMatrix(true, false);
-  const m = tabMesh.matrixWorld, S = TABLET_SIZE;
-  _tvC.set(0, S.t / 2, 0).applyMatrix4(m);
-  _tvN.set(0, 1, 0).transformDirection(m);   // 螢幕正面朝的方向
-  _tvU.set(1, 0, 0).transformDirection(m);   // 螢幕的「上」
-  const th = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2), fill = TOUCH ? TABLET.fillTouch : TABLET.fill;
-  const d = Math.max(S.w / (2 * th * camera.aspect * fill), S.h / (2 * th * fill));
-  _tvP.copy(_tvC).addScaledVector(_tvN, d);
-  _tvQ.setFromRotationMatrix(_tvM.lookAt(_tvP, _tvC, _tvU));
-  camera.position.lerp(_tvP, k);
-  camera.quaternion.slerp(_tvQ, k);
-  setNear(0.05);
-  // 自己的身體：鏡頭靠近頭的時候只留手臂，而且離鏡頭太近的那段（肩膀、上臂）切掉，免得擋住
-  ownBody(k > 0.3, d);
-}
-function ownBody(on, d = 0) {
-  const u = player.mesh.userData, mat = u.mats[0];
-  if (on) {
-    camera.getWorldDirection(_tvK);
-    _tvPlane.set(_tvK, -(_tvK.dot(camera.position) + d * 0.7));   // 比平板近 3 成以內的都切掉
-    if (!ownHidden) {
-      ownHidden = true;
-      renderer.localClippingEnabled = true;
-      for (const x of u.mats) { x.colorWrite = x.depthWrite = true; }
-      for (const x of u.fpHide) x.visible = false;
-      for (const x of u.fpShow) x.visible = true;
-      player.mesh.traverse((x) => { if (x.userData.hull && x.parent.userData.figure) x.visible = false; });
-      mat.clippingPlanes = [_tvPlane];
-    }
-  } else if (ownHidden) {
-    ownHidden = false;
-    mat.clippingPlanes = null;
-    for (const x of u.fpHide) x.visible = true;
-    for (const x of u.fpShow) x.visible = false;
-    player.setFirstPerson(mode === 'walk' && view.walk.fp);
-  }
-}
-// 平板介面貼到手上那台的螢幕：四個角投影到畫面上，算一個透視變換（matrix3d）
-const _tvCorner = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
-let tabHeld = false;
-function placeTabletDom() {
-  // 收起來時（tablet.open 已經是 false）也照樣貼著，跟著手放下去、淡掉，等平板整個藏起來（#tab 沒有 on）才放掉
-  const held = tabView > 0 && !!tabMesh && !!tabMesh.parent && tablet.root.classList.contains('on');
-  if (held !== tabHeld) {
-    tabHeld = held;
-    tablet.root.classList.toggle('held', held);
-    tablet.root.style.setProperty('--dw', `${TOUCH ? TABLET.domWTouch : TABLET.domW}px`);
-    if (!held) { tablet.dev.style.transform = tablet.dev.style.opacity = tablet.dev.style.pointerEvents = tablet.dev.style.visibility = ''; }
-  }
-  if (!held) return;
-  const S = TABLET_SIZE, m = tabMesh.matrixWorld, W = window.innerWidth, H = window.innerHeight;
-  // 左上、右上、右下、左下（螢幕的上是平板本身的 +X、右是 +Z）
-  [[S.h / 2, -S.w / 2], [S.h / 2, S.w / 2], [-S.h / 2, S.w / 2], [-S.h / 2, -S.w / 2]].forEach(([x, z], i) => _tvCorner[i].set(x, S.t / 2 + 0.001, z).applyMatrix4(m));
-  camera.updateMatrixWorld();
-  const front = _tvK.copy(camera.position).sub(_tvC.set(0, S.t / 2, 0).applyMatrix4(m)).dot(_tvN.set(0, 1, 0).transformDirection(m)) > 0;
-  const pts = _tvCorner.map((v) => { const p = v.clone().project(camera); return [(p.x * 0.5 + 0.5) * W, (-p.y * 0.5 + 0.5) * H, p.z]; });
-  // 四個角都要在鏡頭前、離畫面不遠才貼：貼在快要平行於視線、或跑到鏡頭後面的平板上，透視變換會被拉到無限大，
-  // 瀏覽器要開一張超大的圖層，顯示記憶體一下就用光
-  const sane = front && pts.every((p) => p[2] > -1 && p[2] < 1 && Math.abs(p[0] - W / 2) < 2 * W && Math.abs(p[1] - H / 2) < 2 * H);
-  const op = sane ? clamp((tabView - 0.55) / 0.35, 0, 1) : 0;
-  const dev = tablet.dev, dw = TOUCH ? TABLET.domWTouch : TABLET.domW;
-  dev.style.opacity = op.toFixed(2);
-  dev.style.pointerEvents = op > 0.9 ? '' : 'none';
-  dev.style.visibility = op > 0 ? '' : 'hidden';
-  if (op > 0) dev.style.transform = quadMatrix(dw, dw / 1.42, pts);
-}
-// 把 w×h 的長方形對到四個點（左上、右上、右下、左下）的透視變換（Heckbert 的正方形→四邊形）
-function quadMatrix(w, h, q) {
-  const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = q;
-  const dx1 = x1 - x2, dx2 = x3 - x2, dx3 = x0 - x1 + x2 - x3, dy1 = y1 - y2, dy2 = y3 - y2, dy3 = y0 - y1 + y2 - y3;
-  const den = dx1 * dy2 - dx2 * dy1 || 1e-9;
-  const g = (dx3 * dy2 - dx2 * dy3) / den, hh = (dx1 * dy3 - dx3 * dy1) / den;
-  const a = x1 - x0 + g * x1, b = x3 - x0 + hh * x3, c = x0, d = y1 - y0 + g * y1, e = y3 - y0 + hh * y3, f = y0;
-  const n = [a / w, d / w, 0, g / w, b / h, e / h, 0, hh / h, 0, 0, 1, 0, c, f, 0, 1];
-  return `matrix3d(${n.map((v) => +v.toFixed(8)).join(',')})`;
+const SCREEN_IDX = { map: 1, boat: 2, weather: 3, dex: 4, bag: 5, shrine: 5, room: 6, rank: 6, notice: 7, set: 8 };
+const tabletScreen = () => (tablet.cur ? (SCREEN_IDX[tablet.cur] ?? 0) : 0);
+// 打開平板一律改用與開船時相同的置中介面（不切特寫、不露出貼近鏡頭的手）；走路姿勢、3D 平板與多人連線仍照舊保留
+let ownTexAt = 0;
+function syncOwnTabletTex(force = false) {
+  const now = performance.now();
+  if (!force && now - ownTexAt < 180) return;
+  ownTexAt = now;
+  tabMesh = tabMesh || makeTabletMesh(0, { fullFace: true });
+  renderOwnTablet(tabMesh, tablet.root, { width: TOUCH ? TABLET.domWTouch : TABLET.domW, touch: TOUCH });
 }
 let storedInfo = {};                   // 伺服器說倉庫裡的船：船種 → { fuel, hp 0–1 }
 const dexNew = new Set();              // 這次新釣到、還沒在圖鑑裡看過的魚種
@@ -3818,8 +4243,8 @@ function noteDex(d) {
   return !!d.isNew;
 }
 function skyNow() { return skyOf({ phase: sea.phase, rain: rainNow, fog: climate.fog, gloom, night: climate.night }); }
-const meAt = () => (mode === 'helm' ? { x: myBoat.x, z: myBoat.z } : { x: player.x, z: player.z });
-const onMyBoat = () => mode === 'helm' || player.boat === myBoat;
+const meAt = () => (mode === 'helm' ? { x: boat.x, z: boat.z } : { x: player.x, z: player.z });
+const onMyBoat = () => (mode === 'helm' && boat === myBoat) || player.boat === myBoat;
 const placeHere = (x, z) => placeAt(x, z, offAt(x, z));
 // 船在哪：停在第幾格／在港裡／某某附近，再加上離你哪個方向多遠
 function boatWhere(b) {
@@ -3832,7 +4257,7 @@ function boatWhere(b) {
 function boatBlock() {
   if (myBoat.sinking) return '船已經沉了';
   const me = meAt();
-  if (Math.hypot(me.x - QUAY_CENTER_W.x, me.z - QUAY_CENTER_W.z) > TABLET.harborR) return '要人在潮汐灣港口才能叫船、換船';
+  if (!siteAt(me.x, me.z)) return '要人在港口（潮汐灣、海上修船屋、大港灣島）才能叫船、換船';
   if (onMyBoat()) return '先下船才能叫船、換船';
   return '';
 }
@@ -3850,11 +4275,16 @@ function weatherNow() {
   const c = clockOf(climate.hour), sk = skyNow(), ms = gale.steady, lv = beaufort(ms), me = meAt();
   const wet = mode === 'helm' || !!player.boat || player.swim || bedAt(me.x, me.z) < 0;
   const sg = signsOf(sea);
+  const tideCurve = Array.from({ length: 25 }, (_, i) => ({
+    dh: i - 4,
+    norm: clamp(tideAt(climate.day, climate.hour + (i - 4)) / 0.3, -1, 1),
+    now: i === 4,
+  }));
   return {
     time: `${c.part} ${c.hm}`, part: c.part, hm: c.hm, day: climate.day, skyIcon: sk.icon, skyText: sk.text,
     windTo: bearing(WDX, WDZ), windFrom: dirName(-WDX, -WDZ), windMs: ms, windLv: lv, windWord: windWord(lv),
     waveOpen: HS * seaOpen(ocean.scale, sea.storm), waveHere: wet ? HS * shelterAt(me.x, me.z) * levelAt(me.x, me.z) : null,
-    tide: tideText(climate.day, climate.hour), tideShort: tideShort(climate.day, climate.hour),
+    tide: tideText(climate.day, climate.hour), tideShort: tideShort(climate.day, climate.hour), tideCurve,
     forecast: forecast(climate), signs: sg.list, danger: sg.danger,
   };
 }
@@ -3870,7 +4300,9 @@ const tabEnv = {
       const hp = g ? g.hp / S.hp : gs ? Math.max(0, 1 - gs.cracks.reduce((a, c) => a + c[2], 0) / S.hp) : si ? si.hp : 1;
       return { type: t, name: S.name, active: false, engine, hp, fuel, tank: S.tank, where: '', sunk: false };
     });
-    return { list, block: boatBlock(), mods: kit.mods || {}, paints: kit.paints || ['default'], paint: kit.paint || 'default', more: list.length < 2 ? '在潮汐灣的商店可以買更大的船：買了先收在倉庫，在這裡換出來' : '' };
+    return { list, block: boatBlock(), mods: kit.mods || {}, paints: kit.paints || ['default'], paint: kit.paint || 'default', active: kit.active, money, fishLamp: myBoat.fishLamp, canLamp: !!myBoat.parts.bowLamp,
+      atPaint: !player.boat && ALL_SHELF_W.some((s) => s.id === 'paint' && Math.hypot(player.x - s.stand.x, player.z - s.stand.z) < 3.5),
+      more: list.length < 2 ? '海上修船屋、大港船塢可以買更大的船：買了原地換上新船，舊船收進倉庫，在這裡換出來' : '' };
   },
   weather: weatherNow,
   dex() {
@@ -3883,32 +4315,70 @@ const tabEnv = {
   bag() {
     const baits = [{ id: '', name: '基本餌', n: 0, desc: '不花錢，也不加成' },
       ...Object.keys(BAITS).filter((t) => baitCount(kit, t) > 0).map((t) => ({ id: t, name: BAITS[t].name, n: baitCount(kit, t), desc: BAITS[t].desc }))];
-    const mine = boxes.mine(net.id).map((d) => ({ n: d.fish.length, kg: boxes.kg(d), value: boxes.value(d), where: boxWhere(d) }));
-    return { rod: { lv: rodLv, broken: rodBroken, range: castRange(rodLv) }, bait: kit.bait && baitCount(kit, kit.bait) > 0 ? kit.bait : '', baits, chum: kit.chum || 0, blessing: blessingSec(), honors: dexBook?._honors || { titles: [], title: '' }, boxes: mine, boxMax: FISHBOX.max };
+    const mine = boxes.mine(net.id).map((d) => ({ n: d.fish.length, kg: boxes.kg(d), value: boxes.value(d), used: boxes.used(d), fish: d.fish.slice(), where: boxWhere(d) }));
+    const held = fish.held ? itemLabel(fish.held) : heldBox() ? '抱著魚箱' : '空手';
+    return { money, held, rod: { lv: rodLv, broken: rodBroken, range: castRange(rodLv) }, bait: kit.bait && baitCount(kit, kit.bait) > 0 ? kit.bait : '', baits, chum: kit.chum || 0, chumMax: Math.min(CHUM_SPEC.max, BOAT_TYPES[kit.active].maxChums), blessing: blessingSec(), boxes: mine, boxMax: FISHBOX.max };
+  },
+  ranks() {
+    // atBox：人站在漁會捐款箱前面（要在那裡才能捐）
+    const atBox = mode === 'walk' && !player.boat && ALL_SHELF_W.some((s) => s.id === 'title' && Math.hypot(player.x - s.stand.x, player.z - s.stand.z) < 4);
+    return { room: boards.room || [], daily: boards.daily || [], donate: boards.donate || [], guild, atBox, money };
+  },
+  shrine() {
+    return { blessing: blessingSec(), tideWait: tideWaitSec(), stormWait: stormWaitSec(), money, hot: havenFx.hot(), chums: havenFx.chums().length, skyText: skyNow().text };
   },
   room() {
     const me = meAt();
-    const list = [{ name: net.name, me: true, here: true, where: onMyBoat() ? `在自己的船上・${placeHere(me.x, me.z)}` : placeHere(me.x, me.z), far: '' }];
-    for (const o of others.list()) list.push({ name: o.name, me: false, here: o.here, where: o.here ? placeHere(o.x, o.z) : '斷線中', far: o.here ? whereFrom(o.x - me.x, o.z - me.z) : '' });
-    return { name: room ? room.name : '', max: room ? room.max : 0, list };
+    const list = [{ id: net.id, name: net.name, title: myBadge.title, gold: myBadge.gold, lv: myBadge.lv, me: true, here: true, where: (mode === 'helm' ? '掌舵中・' : onMyBoat() ? '在自己的船上・' : '') + placeHere(me.x, me.z), far: '' }];
+    for (const o of others.list()) list.push({ id: o.id, name: o.name, title: o.title || '', gold: o.gold, lv: o.lv, mate: party.has(o.id), me: false, here: o.here, where: o.here ? (o.helm ? '掌舵中・' : '') + placeHere(o.x, o.z) : '斷線中', far: o.here ? whereFrom(o.x - me.x, o.z - me.z) : '' });
+    const n = party.id ? party.ids.size + 1 : 0;
+    return { name: room ? room.name : '', max: room ? room.max : 0, list, canParty: true, party: { n, full: n >= PARTY.max } };
   },
   drawMap,
-  mapHint() { const me = meAt(); return `你現在在${placeHere(me.x, me.z)}。點黃色箭頭（你的船）打開「船」${TOUCH ? '' : '；M 可以直接開關地圖'}`; },
+  setWaypoint(arg) {
+    if (!arg) { waypoint = null; toast('已清除導航標記'); return; }
+    const hasWorld = Number.isFinite(arg.x) && Number.isFinite(arg.z);
+    const wx = hasWorld ? clamp(arg.x, -L * 0.5, L * 0.5) : (clamp(arg.mx, 0, MAP_PX) / MAP_PX - 0.5) * L;
+    const wz = hasWorld ? clamp(arg.z, -L * 0.5, L * 0.5) : (clamp(arg.my, 0, MAP_PX) / MAP_PX - 0.5) * L;
+    if (waypoint && Math.hypot(waypoint.x - wx, waypoint.z - wz) < 35) {
+      waypoint = null; toast('已取消導航標記'); return;
+    }
+    waypoint = { x: wx, z: wz, place: arg.place || placeHere(wx, wz) };
+    toast(`📍 已設定導航標記：${waypoint.place}`);
+  },
+  mapWaypoint() {
+    const hs = havenFx.hot();
+    const onHot = hs && waypoint && Math.hypot(waypoint.x - hs.x, waypoint.z - hs.z) < 45;
+    const hotBtn = hs && !onHot ? '<button class="main" data-act="navHot">📍 導航至自然魚群</button>' : '';
+    if (!waypoint) return `<div class="tbNote" style="margin:0">📍 <b>導航標記：</b>尚未設定（點地圖海面或魚群即可插針導航）</div>${hotBtn ? `<div class="tbBtns" style="margin-top:6px">${hotBtn}</div>` : ''}`;
+    const me = meAt(), dx = waypoint.x - me.x, dz = waypoint.z - me.z;
+    const far = whereFrom(dx, dz), deg = String(Math.round(bearing(dx, dz)) % 360).padStart(3, '0');
+    return `<h4>📍 導航目標：${waypoint.place}</h4><p class="tbNote">方位與距離：<b>${far}（${deg}°）</b></p><div class="tbBtns">${hotBtn}<button data-act="clearWp">清除導航標記</button></div>`;
+  },
+  mapHint() { const me = meAt(); return `📍 你現在在${placeHere(me.x, me.z)}。紅箭頭是你、黃箭頭是你的船、橘方塊是魚箱${TOUCH ? '' : '（按 M 可直接開關地圖）'}`; },
   mapSonar() {
-    const out = [], bl = blessingSec();
-    if (bl > 0) out.push(`✨ 黃金魚潮祈福生效中（剩 ${bl} 秒）`);
-    if (!kit.mods?.sonar) return out.join('<br>');
-    const hs = havenFx.hot(), chs = havenFx.chums(), fat = localFatigue(), nowS = performance.now() / 1000;
-    if (hs) out.push(`🐟 自然魚群：剩 ${hs.count ?? '?'} 尾・${Math.max(0, Math.ceil(hs.until - nowS))} 秒`);
+    const me = meAt(), out = seaEventText(me.x, me.z), bl = blessingSec(), tw = tideWaitSec(), sw = stormWaitSec();
+    if (bl > 0) out.push(`✨ 黃金魚潮生效中（剩 ${bl} 秒）`);
+    else if (tw > 0) out.push(`⏳ 黃金魚潮倒數中（${tw} 秒後降臨）`);
+    if (sw > 0) out.push(`⏳ 風暴海神祭倒數中（${sw} 秒後降臨）`);
+    if (!kit.mods?.sonar) {
+      out.push('📡 探魚聲納：尚未安裝（可至魚市場購買，即時顯示魚群剩餘尾數與倒數）');
+      return out.join('<br>');
+    }
+    const hs = havenFx.hot(), chs = havenFx.chums(), nowS = performance.now() / 1000;
+    if (hs) out.push(`🐟 ${hs.count != null ? `自然魚群：剩 ${hs.count} 尾` : '黃金魚群：不限尾數'}・${Math.max(0, Math.ceil(hs.until - nowS))} 秒`);
     else out.push('🐟 自然魚群：目前無');
     if (chs.length) {
       const c = chs[0];
       out.push(`🪣 人工魚群 ×${chs.length}：剩 ${c.count} 尾・${Math.max(0, Math.ceil(c.until - nowS))} 秒`);
     }
-    out.push(fat > 0 ? `⚠️ 目前海域驚嚇：${fat} / 5 層（建議換點或施放誘魚桶）` : '✓ 目前海域魚況良好（驚嚇 0 / 5）');
     return out.join('<br>');
   },
-  act(name, arg, app) {
+  act(name, arg, app, el) {
+    if (name === 'subTab') { app.tab = arg; tablet.update(); return; }
+    if (name === 'dexFilt') { app.filt = arg; tablet.update(); return; }
+    if (name === 'clearWp') { tabEnv.setWaypoint(null); tablet.update(); return; }
+    if (name === 'navHot') { const hs = havenFx.hot(); if (hs) tabEnv.setWaypoint({ x: hs.x, z: hs.z, place: '魚群熱點' }); tablet.update(); return; }
     if (name === 'call' || name === 'swap') {
       const why = boatBlock();
       if (why) return toast(why);
@@ -3919,13 +4389,34 @@ const tabEnv = {
       return net.send({ t: 'swap', type: arg });
     }
     if (name === 'useChum') return castChum();
+    if (name === 'fishLamp') return toggleFishLamp(myBoat);
     if (name === 'paint') { if (!net.online) return toast('連線中斷，等接回去再試'); return net.send({ t: 'buy', id: `paint:${arg}` }); }
-    if (name === 'title') { if (!net.online) return toast('連線中斷，等接回去再試'); return net.send({ t: 'buy', id: `title:${arg}` }); }
+    if (name === 'pvPaint') { app.pv = arg; tablet.update(); return; }   // 塗裝預覽：只是看看
+    if (name === 'amtAdd') {   // 捐款金額的快捷鈕（arg 0 = 清除）
+      app.amt = arg === '0' ? '' : String(Math.min(GUILD.max, (Math.floor(+app.amt) || 0) + +arg));
+      const inp = el?.querySelector('[data-bind="amt"]');
+      if (inp) inp.value = app.amt;
+      return;
+    }
+    if (name === 'donate') {
+      const amount = Math.floor(+app.amt);
+      if (!Number.isFinite(amount) || amount < GUILD.min) return toast(`一次最少捐 $${GUILD.min}`);
+      if (amount > money) return toast('錢不夠');
+      if (!net.online) return toast('連線中斷，等接回去再試');
+      app.amt = '';
+      const inp = el?.querySelector('[data-bind="amt"]');
+      if (inp) inp.value = '';
+      return net.send({ t: 'donate', amount });
+    }
+    if (name === 'wear') { if (!net.online) return toast('連線中斷，等接回去再試'); return net.send({ t: 'wear', title: guild && guild.wear === arg ? '' : arg }); }
+    if (name === 'partyInvite') { if (!net.online) return toast('連線中斷，等接回去再試'); return net.send({ t: 'partyInvite', to: +arg }); }
+    if (name === 'partyLeave') { if (!net.online) return toast('連線中斷，等接回去再試'); return net.send({ t: 'partyLeave' }); }
     if (name === 'bless') { if (!net.online) return toast('連線中斷，等接回去再試'); return net.send({ t: 'buy', id: `bless_${arg}` }); }
     if (name === 'mapBoat') return tablet.go('map');
     if (name === 'bait') { if ((kit.bait && baitCount(kit, kit.bait) > 0 ? kit.bait : '') !== arg) setBait(arg); return; }
-    if (name === 'pick') { app.sel = arg; tablet.update(); }
+    if (name === 'pick') { app.sel = arg; tablet.update(); flushTabState(true); }
   },
+  onFilter() { flushTabState(true); },
 };
 // 平板的「設定」app：把原本的設定整塊（#panel）搬進去，離開時搬回原位
 const panelHome = $('panel').parentNode, panelNext = $('panel').nextSibling;
@@ -3936,7 +4427,8 @@ tabEnv.settings = {
 tablet = new Tablet(makeApps(tabEnv), {
   status() {
     const c = clockOf(climate.hour);
-    return { time: `${c.part} ${c.hm}`, day: climate.day, sky: skyNow(), room: room ? room.name : '', n: inGame ? others.count + 1 : 0, ping: net.ping, night: climate.night };
+    return { time: `${c.part} ${c.hm}`, day: climate.day, sky: skyNow(), money, blessing: blessingSec(), tideWait: tideWaitSec(), stormWait: stormWaitSec(), room: room ? room.name : '', n: inGame ? others.count + 1 : 0, ping: net.ping, night: climate.night,
+      lv: inGame ? levelOf(myExp) : null, title: myBadge.title, gold: myBadge.gold };
   },
   widgets() {
     const w = weatherNow(), b = myBoat, S = b.spec;
@@ -3948,12 +4440,183 @@ tablet = new Tablet(makeApps(tabEnv), {
         + `<span>燃油</span><div class="tbMeter"><i style="width:${Math.round(b.fuel / S.tank * 100)}%"${lowF ? ' class="low"' : ''}></i></div><span>${Math.floor(b.fuel)} 公升</span></div>`);
     return [clock, boatW];
   },
-  changed(open) {
+  changed(open, cur = undefined) {
     syncAim();
     if (open) { closeWheel(false); throwCancel(); }
+    if (inGame && (cur !== undefined || !open)) syncOwnTabletTex(true);
+    flushHold();
+    flushTabState(true);
   },
+  scroll() { flushTabState(false); if (tabHand && !view.walk.fp) syncOwnTabletTex(false); },
 });
 tablet.root.style.setProperty('--lift', `${TABLET.lift}s`);   // 拿起／收起平板的動畫秒數
+
+let lastTabState = '', tabSentAt = 0;
+function collectTabState() {
+  const mfObj = tablet.apps.find((a) => a.id === 'map')?.filt;
+  const mf = mfObj ? (mfObj.boat ? 1 : 0) | (mfObj.box ? 2 : 0) | (mfObj.others ? 4 : 0) | (mfObj.hot ? 8 : 0) : 15;
+  const dexApp = tablet.apps.find((a) => a.id === 'dex');
+  const dexHave = Object.keys(dexBook).filter((id) => SPECIES[id]);
+  const dexSel = dexApp?.sel || '';
+  const selEntry = dexSel && dexBook[dexSel];
+  const dexSelStat = selEntry ? [selEntry.n, r2(selEntry.len), r2(selEntry.kg)] : null;
+  const baits = Object.keys(BAITS).filter((t) => baitCount(kit, t) > 0).map((t) => [t, baitCount(kit, t)]);
+  const boxesMine = boxes.mine(net.id).map((d) => [d.fish.length, Math.round(boxes.kg(d) * 10) / 10, boxes.value(d)]);
+  const stored = BOAT_ORDER.filter((t) => kit.boats[t] && t !== kit.active).map((t) => {
+    const S = BOAT_TYPES[t], g = garage.get(t), gs = garageState.get(t), si = storedInfo[t];
+    const fuel = g ? g.fuel : gs ? gs.fuel : si ? si.fuel : S.tank;
+    const hp = g ? g.hp / S.hp : gs ? Math.max(0, 1 - gs.cracks.reduce((a, c) => a + c[2], 0) / S.hp) : si ? si.hp : 1;
+    return [t, Math.round(clamp(fuel / S.tank, 0, 1) * 100) / 100, Math.round(clamp(hp, 0, 1) * 100) / 100, kit.boats[t].engineLv || 0];
+  });
+  const lv = presetOf();
+  return {
+    scr: tabletScreen(), sc: tablet.scroll, mf, dexSel, dexHave, dexSelStat,
+    rodLv, rodBrk: rodBroken, bait: kit.bait && baitCount(kit, kit.bait) > 0 ? kit.bait : '', baits,
+    chum: kit.chum || 0, mods: kit.mods || {}, paint: kit.paint || 'default',
+    title: myBadge.title || '', titles: guild?.titles || [], boxes: boxesMine, stored, money,
+    gfxLv: lv >= 0 ? lv : 1, gfxPage: $('panel').classList.contains('gfx'), sound: audio.on, vol: soundVol,
+  };
+}
+function flushTabState(force = false) {
+  if (!inGame || !net.online) return;
+  const active = tabOpen() && !fish.held && !heldBox() && mode === 'walk' && !player.swim && !player.seat;
+  if (!active) { lastTabState = ''; return; }
+  const now = performance.now();
+  const d = collectTabState(), msg = JSON.stringify(d);
+  if (msg !== lastTabState && (force || now - tabSentAt > 400)) {
+    lastTabState = msg; tabSentAt = now;
+    net.send({ t: 'ts', d });
+  }
+}
+
+function remotePlaceFrom(ox, oz, mx, mz) {
+  const at = placeAt(ox, oz, offAt(ox, oz));
+  return { at, far: whereFrom(ox - mx, oz - mz) };
+}
+function buildRemoteEnv(o, st) {
+  const ob = o.boat, oPos = { x: o.fig?.x ?? 0, z: o.fig?.z ?? 0 };
+  const boatWhereRemote = (b) => {
+    if (!b) return '';
+    if (b.sinking) return '沉了';
+    if (!o.st?.[8] && o.fig?.boat === b) return '你在船上';
+    return `${inHarbor(b.x, b.z) ? '在港裡' : placeAt(b.x, b.z, offAt(b.x, b.z))}・${whereFrom(b.x - oPos.x, b.z - oPos.z)}`;
+  };
+  const weatherRemote = () => {
+    const c = clockOf(climate.hour), sk = skyNow(), ms = gale.steady, lv = beaufort(ms);
+    const wet = !!(o.st?.[8]) || bedAt(oPos.x, oPos.z) < 0;
+    const sg = signsOf(sea);
+    const tideCurve = Array.from({ length: 25 }, (_, i) => ({
+      dh: i - 4,
+      norm: clamp(tideAt(climate.day, climate.hour + (i - 4)) / 0.3, -1, 1),
+      now: i === 4,
+    }));
+    return {
+      time: `${c.part} ${c.hm}`, part: c.part, hm: c.hm, day: climate.day, skyIcon: sk.icon, skyText: sk.text,
+      windTo: bearing(WDX, WDZ), windFrom: dirName(-WDX, -WDZ), windMs: ms, windLv: lv, windWord: windWord(lv),
+      waveOpen: HS * seaOpen(ocean.scale, sea.storm), waveHere: wet ? HS * shelterAt(oPos.x, oPos.z) * levelAt(oPos.x, oPos.z) : null,
+      tide: tideText(climate.day, climate.hour), tideShort: tideShort(climate.day, climate.hour), tideCurve,
+      forecast: forecast(climate), signs: sg.list, danger: sg.danger,
+    };
+  };
+  const bActive = ob ? {
+    type: ob.spec.id, name: ob.spec.name, active: true, engine: ob.engineLv || 0,
+    hp: ob.hp / ob.spec.hp, fuel: ob.fuel, tank: ob.spec.tank, where: boatWhereRemote(ob), sunk: !!ob.sinking,
+  } : null;
+  const haveSet = new Set(st?.dexHave || []);
+  const remMoney = Math.max(0, Math.round(st?.money ?? 0));
+  return {
+    low: { hp: TABLET.lowHp, fuel: TABLET.lowFuel },
+    status() {
+      const c = clockOf(climate.hour);
+      return { time: `${c.part} ${c.hm}`, day: climate.day, sky: skyNow(), money: remMoney, blessing: blessingSec(), room: room ? room.name : '', n: inGame ? others.count + 1 : 0, ping: 0, night: climate.night };
+    },
+    widgets() {
+      const w = weatherRemote();
+      const clock = `<div class="sub">${w.part}</div><div class="big">${w.hm}</div><div>${ICON[w.skyIcon]} ${w.skyText}・${w.windFrom}風 ${w.windLv} 級</div><div class="sub">浪約 ${w.waveOpen.toFixed(1)} 公尺・${w.tideShort}</div>`;
+      const boatW = !bActive
+        ? `<div class="sub">目前沒有船隻資料</div>`
+        : bActive.sunk
+          ? `<div>${ICON.boat} ${bActive.name}</div><div class="sub" style="color:var(--coral-d)">沉了：港口會補一艘給你</div>`
+          : `<div style="display:flex;gap:8px;align-items:baseline"><span style="white-space:nowrap">${ICON.boat} ${bActive.name}</span><span class="sub" style="margin-left:auto;text-align:right">${bActive.where}</span></div>`
+            + `<div class="tbRows" style="margin:6px 0 0"><span>耐久</span><div class="tbMeter"><i style="width:${Math.round(bActive.hp * 100)}%"${bActive.hp < TABLET.lowHp ? ' class="low"' : ''}></i></div><span>${Math.round(bActive.hp * 100)}%</span>`
+            + `<span>燃油</span><div class="tbMeter"><i style="width:${Math.round((bActive.fuel / bActive.tank) * 100)}%"${bActive.fuel < bActive.tank * TABLET.lowFuel ? ' class="low"' : ''}></i></div><span>${Math.floor(bActive.fuel)} 公升</span></div>`;
+      return [clock, boatW];
+    },
+    boatWarn: () => !!bActive && (bActive.sunk || bActive.hp < TABLET.lowHp || bActive.fuel < bActive.tank * TABLET.lowFuel),
+    boats() {
+      const list = [];
+      if (bActive) list.push(bActive);
+      for (const s of st?.stored || []) {
+        const S = BOAT_TYPES[s[0]];
+        if (!S || bActive?.type === s[0]) continue;
+        list.push({ type: s[0], name: S.name, active: false, engine: s[3] || 0, hp: s[2], fuel: s[1] * S.tank, tank: S.tank, where: '', sunk: false });
+      }
+      return { list, block: '', mods: st?.mods || {}, paints: [st?.paint || 'default'], paint: st?.paint || 'default', more: '' };
+    },
+    weather: weatherRemote,
+    dex() {
+      const list = Object.entries(SPECIES).map(([id, sp]) => {
+        const caught = haveSet.has(id);
+        const e = caught ? (id === st?.dexSel && st?.dexSelStat ? { n: st.dexSelStat[0], len: st.dexSelStat[1], kg: st.dexSelStat[2], at: '' } : { n: 1, len: sp.len || 0.4, kg: 1, at: '' }) : null;
+        return { id, name: sp.name, rarity: sp.rarity || 'common', junk: sp.kind === 'junk', e, isNew: false };
+      });
+      return { list, got: haveSet.size, total: list.length };
+    },
+    dexNew: () => 0,
+    dexSeen() {},
+    thumbs: () => fishThumbs(renderer),
+    bag() {
+      const bMap = new Map(st?.baits || []);
+      const baits = [{ id: '', name: '基本餌', n: 0, desc: '不花錢，也不加成' },
+        ...Object.keys(BAITS).filter((t) => (bMap.get(t) || 0) > 0).map((t) => ({ id: t, name: BAITS[t].name, n: bMap.get(t), desc: BAITS[t].desc }))];
+      const mine = (st?.boxes || []).map((x) => ({ n: x[0], kg: x[1], value: x[2], used: 0.3, fish: [], where: '持有中' }));
+      return { money: remMoney, held: '使用平板中', rod: { lv: st?.rodLv ?? 0, broken: !!st?.rodBrk, range: castRange(st?.rodLv ?? 0) }, bait: st?.bait || '', baits, chum: st?.chum ?? 0, blessing: blessingSec(), boxes: mine, boxMax: FISHBOX.max };
+    },
+    ranks() {
+      return { room: boards.room || [], daily: boards.daily || [], donate: boards.donate || [], guild: null };
+    },
+    shrine() {
+      return { blessing: blessingSec(), money: remMoney, hot: havenFx.hot(), chums: havenFx.chums().length, skyText: skyNow().text };
+    },
+    room() {
+      const list = [{ name: o.name, title: o.title || '', gold: o.gold, lv: o.lv, me: true, here: true, where: o.st?.[8] ? `在船上・${placeAt(oPos.x, oPos.z, offAt(oPos.x, oPos.z))}` : placeAt(oPos.x, oPos.z, offAt(oPos.x, oPos.z)), far: '' }];
+      for (const p of others.list()) {
+        if (p.id === o.id) continue;
+        const r = remotePlaceFrom(p.x, p.z, oPos.x, oPos.z);
+        list.push({ name: p.name, title: p.title || '', gold: p.gold, lv: p.lv, me: false, here: p.here, where: p.here ? r.at : '斷線中', far: p.here ? r.far : '' });
+      }
+      const mr = remotePlaceFrom(mode !== 'walk' ? boat.x : player.x, mode !== 'walk' ? boat.z : player.z, oPos.x, oPos.z);
+      list.push({ name: net.name, title: myBadge.title, gold: myBadge.gold, lv: myBadge.lv, me: false, here: true, where: mr.at, far: mr.far });
+      return { name: room ? room.name : '', max: room ? room.max : 0, list };
+    },
+    mapHint: () => `目前在${placeAt(oPos.x, oPos.z, offAt(oPos.x, oPos.z))}`,
+    mapSonar: () => {
+      const out = seaEventText(oPos.x, oPos.z);
+      if (st?.mods?.sonar) out.push('✓ 已啟用探魚聲納');
+      return out.join('<br>');
+    },
+  };
+}
+
+const renderRemoteHtml = createRemoteTabletRenderer({ buildEnv: buildRemoteEnv, renderMap: drawMap });
+renderRemoteTab = function (o, tab) {
+  if (!o?.fig || !tab?.parent) return;
+  const dist = Math.hypot(o.fig.x - camera.position.x, o.fig.z - camera.position.z);
+  if (dist > 18) return;
+  const now = performance.now();
+  if (!o.tabDirty && now - (o.tabAt || 0) < 1200) return;
+  if (o.tabDirty && now - (o.tabAt || 0) < 120) return;
+  const c = clockOf(climate.hour), scrIdx = o.hold?.[0] === 'tablet' ? Math.round(o.hold[1] || 0) : (o.tabState?.scr ?? 0), scr = SCREENS[scrIdx] || 'home';
+  const bKey = o.boat ? `${Math.round((o.boat.hp / o.boat.spec.hp) * 50)}:${Math.floor(o.boat.fuel)}` : '';
+  const tick = scr === 'map' || scr === 'notice' || scr === 'room' ? Math.floor(now / 1500) : 0;
+  const evKey = scr === 'map' ? `${sea.phase}:${sea.vortices.length}:${sea.ev?.x ?? ''}` : '';
+  const hash = `${scr}|${c.hm}|${climate.day}|${others.count}|${bKey}|${tick}|${evKey}|${JSON.stringify(o.tabState || null)}`;
+  o.tabDirty = false;
+  if (hash === tab.userData.liveHash) return;
+  tab.userData.liveHash = hash;
+  o.tabAt = now;
+  renderRemoteHtml(o, tab, TOUCH || presetOf() === 0 ? 512 / 696 : 1);
+};
 
 // 畫面上指向自己的船：離船超過 TABLET.markFar 公尺（而且不在船上）時，看得到就標在船上方，看不到就貼在畫面邊上。
 // 叫船、換船之後不管多近都標 TABLET.markSec 秒（亮珊瑚色、會跳），讓人知道船停在哪（不講第幾號船位）
@@ -3986,6 +4649,95 @@ function markMyBoat() {
   boatMarkEl.style.top = `${(-sy * 0.5 + 0.5) * window.innerHeight}px`;
   const t = flash && d <= TABLET.markFar ? `你的${b.spec.name}在這` : `你的${b.spec.name} ${Math.round(d / 10) * 10}m`;
   if (t !== boatMarkText) { boatMarkText = t; boatMarkEl.innerHTML = `${ICON.boat}${t}`; }
+}
+
+// 畫面上指向地圖設定的導航標記點（到達 18 公尺內自動完成清除）；標示抬高並以垂直虛線連到下方目標點，避免遮擋海面與船隻視線
+const wpMarkEl = document.createElement('div');
+wpMarkEl.style.cssText = 'position:fixed;z-index:6;pointer-events:none;display:none;flex-direction:column;align-items:center;'
+  + 'filter:drop-shadow(0 1px 3px rgba(6,24,40,0.65));';
+const wpPillEl = document.createElement('div');
+wpPillEl.style.cssText = 'display:flex;align-items:center;gap:4px;padding:3px 10px 3px 7px;border-radius:12px;'
+  + 'font:600 13px var(--font);white-space:nowrap;background:rgba(16, 48, 72, 0.88);color:#8af3ff;border:2px solid #45e2ff;box-shadow:0 2px 8px rgba(0,0,0,.3)';
+const wpLineEl = document.createElement('div');
+wpLineEl.style.cssText = 'width:0;border-left:2px dashed rgba(138, 243, 255, 0.9);';
+const wpDotEl = document.createElement('div');
+wpDotEl.style.cssText = 'width:8px;height:8px;border-radius:50%;background:#ffffff;border:2px solid #45e2ff;box-sizing:border-box;';
+wpMarkEl.append(wpPillEl, wpLineEl, wpDotEl);
+document.body.appendChild(wpMarkEl);
+let wpMarkText = '';
+function markWaypoint() {
+  if (!inGame || !waypoint) { wpMarkEl.style.display = 'none'; return; }
+  const me = meAt(), d = Math.hypot(waypoint.x - me.x, waypoint.z - me.z);
+  if (d < 18) {
+    toast(`✓ 已抵達導航標記點（${waypoint.place}）`);
+    waypoint = null;
+    wpMarkEl.style.display = 'none';
+    return;
+  }
+  if (tabOpen()) { wpMarkEl.style.display = 'none'; return; }
+  wpMarkEl.style.display = 'flex';
+  const wy = Math.max(0, bedAt(waypoint.x, waypoint.z)) + 1.0;
+  _bm.set(waypoint.x, wy, waypoint.z).project(camera);
+  const behind = _bm.z > 1;
+  let sx = behind ? -_bm.x : _bm.x, sy = behind ? -_bm.y : _bm.y;
+  const edge = Math.max(Math.abs(sx), Math.abs(sy));
+  const clamped = behind || edge > 0.9;
+  if (clamped) { const k = 0.9 / Math.max(edge, 1e-3); sx *= k; sy *= k; }
+  const W = window.innerWidth, H = window.innerHeight;
+  const ax = (sx * 0.5 + 0.5) * W, ay = (-sy * 0.5 + 0.5) * H;
+  const wantStem = Math.min(150, Math.max(84, Math.round(H * 0.17)));
+  const stem = !clamped ? Math.min(wantStem, Math.max(0, Math.round(ay - 88))) : 0;
+  if (stem >= 14) {
+    wpLineEl.style.display = 'block';
+    wpLineEl.style.height = `${stem}px`;
+    wpDotEl.style.display = 'block';
+    wpMarkEl.style.transform = 'translate(-50%, -100%)';
+    wpMarkEl.style.left = `${ax}px`;
+    wpMarkEl.style.top = `${ay + 4}px`;
+  } else {
+    wpLineEl.style.display = 'none';
+    wpDotEl.style.display = 'none';
+    wpMarkEl.style.transform = 'translate(-50%, -50%)';
+    wpMarkEl.style.left = `${ax}px`;
+    wpMarkEl.style.top = `${Math.max(66, ay)}px`;
+  }
+  const t = `導航・${waypoint.place} ${d < 100 ? `${Math.round(d)}m` : `${Math.round(d / 10) * 10}m`}`;
+  if (t !== wpMarkText) { wpMarkText = t; wpPillEl.innerHTML = `${ICON.pin}${t}`; }
+}
+
+const compass = new CompassBar($('compass'));
+const _cmpDir = new THREE.Vector3(), _cmpList = [];
+function updateCompass() {
+  const on = inGame && !tabOpen() && mode !== 'sink';
+  if (!on) { compass.update(false, 0, _cmpList); return; }
+  camera.getWorldDirection(_cmpDir);
+  const camDeg = Math.hypot(_cmpDir.x, _cmpDir.z) > 0.02
+    ? bearing(_cmpDir.x, _cmpDir.z)
+    : ((player.lookYaw * 180 / Math.PI + 90) % 360 + 360) % 360;
+  const me = meAt(), sonar = !!kit.mods?.sonar;
+  _cmpList.length = 0;
+  const hs = havenFx.hot();
+  const wpOnHot = !!(waypoint && hs && Math.hypot(waypoint.x - hs.x, waypoint.z - hs.z) < 45);
+  if (waypoint) {
+    const dx = waypoint.x - me.x, dz = waypoint.z - me.z;
+    _cmpList.push({ kind: 'wp', deg: bearing(dx, dz), dist: Math.hypot(dx, dz), count: wpOnHot && sonar && hs.count != null ? hs.count : null, hotLinked: wpOnHot, edge: true });
+  }
+  if (hs && !wpOnHot) {
+    const dx = hs.x - me.x, dz = hs.z - me.z;
+    _cmpList.push({ kind: 'hot', deg: bearing(dx, dz), dist: Math.hypot(dx, dz), count: sonar && hs.count != null ? hs.count : null, edge: true });
+  }
+  for (const ch of havenFx.chums()) {
+    const dx = ch.x - me.x, dz = ch.z - me.z, dist = Math.hypot(dx, dz);
+    if (dist < 360) _cmpList.push({ kind: 'chum', deg: bearing(dx, dz), dist, count: sonar ? ch.count : null, edge: dist > 25 });
+  }
+  const b = myBoat;
+  if (b && !b.sinking && player.boat !== b) {
+    const dx = b.x - me.x, dz = b.z - me.z, dist = Math.hypot(dx, dz);
+    if (dist > TABLET.markFar || performance.now() < boatMarkUntil) {
+      _cmpList.push({ kind: 'boat', deg: bearing(dx, dz), dist, edge: false });
+    }
+  }
+  compass.update(true, camDeg, _cmpList);
 }
 
 // 叫船：伺服器分好最近的空船位，船直接放過去（纜繩解開、停下來）
@@ -4034,14 +4786,11 @@ function updateFishUi() {
 
 // ---- 多人：跟伺服器對時、送出自己的狀態、照伺服器說的更新 -----------------------
 let mergeAt = 0;   // 這間房幾時要合併到別間（倒數用；0 = 沒有）
-let blessingUntilMs = 0, worldFishSpots = [];
-const blessingSec = () => Math.max(0, Math.ceil((blessingUntilMs - performance.now()) / 1000));
-function localFatigue() {
-  const me = meAt();
-  let n = 0;
-  for (const [sx, sz] of worldFishSpots) if (Math.hypot(sx - me.x, sz - me.z) < 22) n++;
-  return Math.min(5, Math.max(0, n - 2));
-}
+let blessingUntilMs = 0, tideWaitUntilMs = 0, stormWaitUntilMs = 0;
+const secLeft = (untilMs) => Math.max(0, Math.ceil((untilMs - performance.now()) / 1000));
+const blessingSec = () => secLeft(blessingUntilMs);
+const tideWaitSec = () => secLeft(tideWaitUntilMs);
+const stormWaitSec = () => secLeft(stormWaitUntilMs);
 // 海浪是「時間的函數」，每 WAVE_LOOP 秒循環一次：時間跟房間對齊，每個人看到的浪就一模一樣
 // （別人的船是照他那邊的浪在搖的，放到這邊的海面上才會剛好貼著水）
 // 進房之後，時間不是一幀一幀加上去的，而是「房間的時間 = clockBase + 這台電腦的時鐘」：畫面再卡，浪也不會慢慢跟別人錯開
@@ -4058,7 +4807,8 @@ function applyWorld(w, snap = false) {
   if (w.lights) applyRoomLights(w.lights);
   if (w.extras) havenFx.sync(w.extras);
   if (typeof w.blessingLeft === 'number') blessingUntilMs = performance.now() + w.blessingLeft * 1000;
-  if (Array.isArray(w.spots)) worldFishSpots = w.spots;
+  if (typeof w.tideWait === 'number') tideWaitUntilMs = performance.now() + w.tideWait * 1000;
+  if (typeof w.stormWait === 'number') stormWaitUntilMs = performance.now() + w.stormWait * 1000;
   Object.assign(climate, w.climate);
   const oldV = sea.vortices, oldFront = sea.tsu.on ? sea.tsu.front : null;
   for (const k in w.sea) sea[k] = w.sea[k];
@@ -4086,6 +4836,17 @@ function sendBoatDetail() {
   if (dm !== lastBoatDetail) { lastBoatDetail = dm; net.send(d); }
 }
 const r3 = (v) => Math.round(v * 1000) / 1000;
+function flushHold() {
+  if (!inGame || !net.online) return;
+  const h = fish.held;
+  const tab = tabOpen() && !h && !heldBox() && mode === 'walk' && !player.swim && !player.seat;
+  const scr = tab ? tabletScreen() : 0;
+  const hk = h ? `${h.id}:${r2(h.len)}` : tab ? `tablet:${scr}` : '';
+  if (hk !== lastHold) {
+    lastHold = hk;
+    net.send({ t: 'h', id: h ? h.id : tab ? 'tablet' : '', len: h ? r2(h.len) : tab ? scr : 0 });   // 平板：len 是哪個畫面
+  }
+}
 function sendState(dt) {
   if (!inGame || !net.online) return;
   if ((sendAcc += dt) < 0.1) return;
@@ -4095,27 +4856,29 @@ function sendState(dt) {
   let st;
   if (mode === 'sink' && wreck) st = [r2(wreck.boat.x), 0, r2(wreck.boat.z), r3(player.yaw), 4, 0, 0, 0, 0, 0, 0, '', ''];
   else {
-    const b = helm ? myBoat : player.boat, l = b ? b.toLocal(player.x, player.z) : null;
+    const b = helm ? boat : player.boat, l = b ? b.toLocal(player.x, player.z) : null;   // 掌舵的可能是隊友的船（副駕）
     const flags = (player.moving ? 1 : 0) | (player.run ? 2 : 0) | (player.swim ? 4 : 0) | (player.carry ? 8 : 0) | (player.rod ? 16 : 0) | (helm ? 32 : 0) | (player.seat ? 64 : 0);
-    st = [r2(helm ? myBoat.x : player.x), r2(b ? player.y - b.deckY(player.x, player.z) : player.y), r2(helm ? myBoat.z : player.z), r3(player.yaw), flags, r2(Math.max(player.h, 0)),
+    st = [r2(helm ? boat.x : player.x), r2(b ? player.y - b.deckY(player.x, player.z) : player.y), r2(helm ? boat.z : player.z), r3(player.yaw), flags, r2(Math.max(player.h, 0)),
       r3(player.lookYaw), r3(player.lookPitch), b ? (b === myBoat ? net.id : b.owner.id) : 0, l ? r2(l.x) : 0, l ? r2(l.z) : 0, player.act ? player.act.id : '', player.mood || ''];
   }
   let msg = JSON.stringify(st);
   if (msg !== lastPosMsg || now - lastPosAt > 1000) { lastPosMsg = msg; lastPosAt = now; net.send({ t: 'p', s: st }); }
-  // 手上拿著什麼、釣線另一頭的浮標在哪：給別人看的，有變才送
-  const h = fish.held, hk = h ? `${h.id}:${r2(h.len)}` : tabHand ? `tablet:${tabScreen}` : '';
-  if (hk !== lastHold) { lastHold = hk; net.send({ t: 'h', id: h ? h.id : tabHand ? 'tablet' : '', len: h ? r2(h.len) : tabHand ? tabScreen : 0 }); }   // 平板：len 是哪個畫面
+  // 手上拿著什麼、平板摘要、釣線另一頭的浮標在哪：給別人看的，有變才送
+  flushHold();
+  flushTabState(false);
   const bp = fishing.bob.position, fs = fishing.state;
   const ln = fishing.bob.visible && mode === 'walk' ? [r2(bp.x), r2(bp.y), r2(bp.z), fs === 'fly' ? 1 : fs === 'fight' ? 3 : 2] : null;
   const lk = ln ? ln.join() : '';
   if (lk !== lastLine) { lastLine = lk; net.send({ t: 'fl', s: ln }); }
-  // 船：停著沒人開的時候不用送那麼勤
-  if (myBoat.sinking || myBoat._lost) return;
+  // 幫隊友開的那艘：位置由我這邊送（帶著船主是誰）
+  if (copilot && !copilot.boat.sinking) { const cs = copilot.boat.netState(); copilot.boat.net = cs; net.send({ t: 'b', forId: copilot.id, s: cs }); }
+  // 船：停著沒人開的時候不用送那麼勤（隊友正在幫我開的話，由他那邊送）
+  if (myBoat.sinking || myBoat._lost || piloted) return;
   const bs = myBoat.netState(), idle = !myBoat.manned && Math.abs(myBoat.speed) < 0.3;
   msg = JSON.stringify(bs);
   if ((msg !== lastBoatMsg && (!idle || now - lastBoatAt > 400)) || now - lastBoatAt > 1000) { lastBoatMsg = msg; lastBoatAt = now; net.send({ t: 'b', s: bs }); }
   // 破洞和纜繩：兩秒看一次（或自動抽水龍骨修完/累積修補時馬上送）
-  if (myBoat.healDirty || ++detailN >= 20) { myBoat.healDirty = false; detailN = 0; sendBoatDetail(); }
+  if (++detailN >= 20) { detailN = 0; sendBoatDetail(); }
 }
 
 // 自己身上、船上、籃子裡所有魚的編號
@@ -4218,21 +4981,136 @@ net.on('expired', (m) => {
 
 net.on('k', (m) => {
   for (const q of m.p) if (q[0] !== net.id) others.setPos(q[0], q.slice(1));
-  for (const q of m.b) if (q[0] !== net.id) others.setBoatState(q[0], q.slice(1));
+  for (const q of m.b) {
+    if (q[0] !== net.id) others.setBoatState(q[0], q.slice(1));
+    else if (piloted && !myBoat.sinking) {
+      // 隊友正在幫我開：我的船照他傳來的位置擺；他那邊撞壞的也算在我的船上
+      const s = q.slice(1), lost = myBoat.hp / myBoat.spec.hp - s[11];
+      myBoat.setNet(s);
+      if (lost > 0.01) myBoat.hurt(lost * myBoat.spec.hp);
+    }
+  }
 });
 net.on('world', (m) => applyWorld(m));
-net.on('join', (m) => others.add({ id: m.id, name: m.name, title: m.title || '', look: m.look, here: m.here, boat: m.boat }));
+net.on('join', (m) => others.add({ id: m.id, name: m.name, title: m.title || '', gold: m.gold, lv: m.lv, look: m.look, here: m.here, boat: m.boat }));
 net.on('h', (m) => others.setHold(m.id, m.s));
+net.on('ts', (m) => others.setTabState(m.id, m.d));
 net.on('fl', (m) => others.setLine(m.id, m.s));
 net.on('leave', (m) => others.leave(m.id, m.reclaimMs));
 net.on('passengerReturn', returnPassenger);
 net.on('boatGone', (m) => others.boatGone(m.id));
 net.on('boat', (m) => { if (m.id !== net.id) others.setBoat(m.id, m.boat); });
-net.on('sunk', (m) => { const b = others.boat(m.id); if (b) b.founder(m.why, m.side); });
-net.on('title', (m) => others.setTitle(m.id, m.title || ''));
-net.on('honors', (m) => { dexBook._honors = m.honors || { titles: [], title: '' }; if (tabOpen()) tablet.update(); refreshTags(); });
-net.on('chumOk', () => { audio.play('plop'); toast(`已施放誘魚桶！清除周圍驚嚇並產生 ${CHUM_SPEC.life} 秒魚群`); });
-net.on('chat', (m) => chat.say(m.name, m.text, m.id === net.id, m.title || ''));
+net.on('sunk', (m) => { const b = m.id === net.id ? myBoat : others.boat(m.id); if (m.id === net.id) piloted = null; if (b) b.founder(m.why, m.side); });   // 自己的：隊友幫我開的時候沉了
+
+// ---- 漁會、等級、船隊、拖船、副駕 ----
+// 右上角的等級、稱號徽章
+function showBadge() {
+  $('hLv').textContent = `Lv.${myBadge.lv}`;
+  const el = $('hTitle');
+  if (el.textContent !== myBadge.title) el.textContent = myBadge.title;
+  el.classList.toggle('gold', !!myBadge.gold);
+}
+function setParty(of) {
+  party.id = of[net.id] || 0;
+  party.ids = new Set(party.id ? Object.keys(of).map(Number).filter((id) => id !== net.id && of[id] === party.id) : []);
+  others.setMates(party.ids);
+  if (tabOpen()) tablet.update();
+}
+// 進房、重連、合併時伺服器給的那一包
+function applySocial(j) {
+  if (j.me) myBadge = { title: j.me.title || '', gold: !!j.me.gold, lv: j.me.lv || 1 };
+  if (j.guild !== undefined) guild = j.guild;
+  myExp = dexBook?._lv?.exp || 0;
+  setParty(j.party || {});
+  tows = (j.tows || []).map(([tug, tow]) => ({ tug, tow }));
+  endCopilot(false);
+  piloted = j.pilot ? { id: j.pilot, name: others.map.get(j.pilot)?.name || '隊友' } : null;
+  if (!piloted) myBoat.net = null;
+  showBadge();
+}
+net.on('title', (m) => {
+  if (m.id === net.id) { myBadge.title = m.title || ''; myBadge.gold = !!m.gold; showBadge(); if (tabOpen()) tablet.update(); } else others.setTitle(m.id, m.title || '', !!m.gold);
+});
+net.on('lv', (m) => { if (m.id !== net.id) others.setBadge(m.id, { lv: m.lv }); });
+net.on('exp', (m) => {
+  myExp = m.exp;
+  if (m.up) { myBadge.lv = m.lv; showBadge(); audio.play('coin'); toast(`🎉 升級了！現在是 Lv.${m.lv}`); }
+});
+net.on('guild', (m) => { guild = m.guild; if (tabOpen()) tablet.update(); });
+net.on('donated', (m) => {
+  guild = m.guild;
+  audio.play('coin');
+  toast(`捐了 ${cash(m.amount)} 給漁會，這一週累積 ${cash(m.guild?.amount ?? m.amount)}${m.fresh?.length ? `　解鎖稱號：${m.fresh.join('、')}` : ''}`);
+  if (tabOpen()) tablet.update();
+});
+net.on('party', (m) => setParty(m.of || {}));
+net.on('partyBonus', (m) => { applyKit(m.kit); audio.play('coin'); toast(`🤝 隊友 ${m.from} 賣魚，船隊分紅 +${cash(m.amount)}`); });
+// 別人問我：要不要加入船隊、要不要拖船
+net.on('ask', async (m) => {
+  const text = m.kind === 'party' ? `${m.from} 邀你加入船隊`
+    : m.me ? `${m.from} 想請你用你的船拖他的【${m.boat}】，是否同意？` : `${m.from} 想用【${m.boat}】拖行你的船，是否同意？`;
+  const yes = await ask(text, { yes: m.kind === 'party' ? '加入船隊' : '同意', no: m.kind === 'party' ? '婉拒' : '拒絕', sec: m.sec, tag: `ask${m.aid}` });
+  if (net.online) net.send({ t: 'askAns', aid: m.aid, yes });
+});
+net.on('askGone', (m) => cancelAsk(`ask${m.aid}`));
+net.on('tow', (m) => {
+  tows = tows.filter((t) => t.tug !== m.tugId && t.tow !== m.towId).concat({ tug: m.tugId, tow: m.towId });
+  const name = (id) => others.map.get(id)?.name ?? '對方';
+  if (m.towId === net.id) { myBoat.moor = null; lastBoatDetail = ''; toast(`拖纜接上了：${name(m.tugId)} 正在拖你的船（按 T、踩油門、或對準拖船樁按 E 就解開）`); audio.play('rope'); }
+  else if (m.tugId === net.id) { toast(`拖纜接上了：你正在拖 ${name(m.towId)} 的船（極速會慢一些；按 T 解開）`); audio.play('rope'); }
+});
+net.on('towCut', (m) => {
+  tows = tows.filter((t) => !(t.tug === m.tugId && t.tow === m.towId));
+  if (m.tugId === net.id || m.towId === net.id || (copilot && (m.tugId === copilot.id || m.towId === copilot.id))) { toast(m.why || '拖纜解開了'); audio.play('rope'); }
+});
+// 副駕
+net.on('helmOk', (m) => beginCopilot(m.forId, m.s));
+net.on('pilotEnd', (m) => { if (copilot && copilot.id === m.forId) { endCopilot(false); toast('方向盤交回給船主了'); } });
+net.on('pilot', (m) => {
+  if (!m.id) { piloted = null; myBoat.net = null; lastBoatMsg = ''; return; }
+  piloted = { id: m.id, name: m.name || '隊友' };
+  myBoat.moor = null;   // 隊友要把船開走：岸上的纜繩解開
+  for (const k in myBoat.keys) myBoat.keys[k] = false;
+  if (mode === 'helm' && boat === myBoat) releaseHelm();
+  toast(`${piloted.name} 在幫你開船（你握方向盤就收回來）`);
+});
+net.on('feedbackOk', () => { feedbackDone(true); toast('感謝投遞！漁會已收到你的寶貴意見 📮'); });
+// 畫面上指向同隊隊友：離超過 PARTY.markFar 公尺時標出他在哪、多遠（看不到就貼在畫面邊上）
+const mateMarks = [];
+const _mm = new THREE.Vector3();
+function markParty() {
+  let n = 0;
+  if (inGame && party.ids.size && !tabOpen() && mode !== 'sink') {
+    const me = meAt();
+    for (const o of others.list()) {
+      if (!party.has(o.id) || !o.here) continue;
+      const d = Math.hypot(o.x - me.x, o.z - me.z);
+      if (d < PARTY.markFar) continue;
+      let el = mateMarks[n];
+      if (!el) {
+        el = mateMarks[n] = document.createElement('div');
+        el.style.cssText = 'position:fixed;z-index:6;pointer-events:none;transform:translate(-50%,-50%);padding:2px 9px;border-radius:12px;display:none;'
+          + 'font:600 12.5px var(--font);white-space:nowrap;background:rgba(206,246,214,.94);color:#156b3a;border:2px solid #27a05a;box-shadow:0 2px 6px rgba(0,0,0,.25)';
+        document.body.appendChild(el);
+      }
+      n++;
+      const fig = others.map.get(o.id)?.fig;
+      _mm.set(o.x, (o.helm && o.boat ? o.boat.y + 3 : (fig?.y ?? 0) + 2.6), o.z).project(camera);
+      const behind = _mm.z > 1;
+      let sx = behind ? -_mm.x : _mm.x, sy = behind ? -_mm.y : _mm.y;
+      const edge = Math.max(Math.abs(sx), Math.abs(sy));
+      if (behind || edge > 0.88) { const k = 0.88 / Math.max(edge, 1e-3); sx *= k; sy *= k; }
+      el.style.left = `${(sx * 0.5 + 0.5) * window.innerWidth}px`;
+      el.style.top = `${(-sy * 0.5 + 0.5) * window.innerHeight}px`;
+      const t = `★ ${o.name}・${d < 100 ? Math.round(d) : Math.round(d / 10) * 10}m`;
+      if (el.textContent !== t) el.textContent = t;
+      el.style.display = 'block';
+    }
+  }
+  for (let i = n; i < mateMarks.length; i++) mateMarks[i].style.display = 'none';
+}
+net.on('chumOk', () => { audio.play('plop'); toast(`已施放誘魚桶！吸引方圓 ${CHUM_SPEC.radius}m 魚群，持續 ${CHUM_SPEC.life} 秒`); });
+net.on('chat', (m) => chat.say(m.name, m.text, m.id === net.id, { lv: m.lv, title: m.title || '', gold: !!m.gold }));
 net.on('sys', (m) => chat.sys(m.text, m.kind));
 // 全服公告（跑馬燈）：伺服器發的文字，可帶「幾秒後重開」的倒數；沒有公告（text 空、left < 0）就收起來。重開之後新連線收到的是空的，舊的自然清掉
 const marqEl = $('marquee');
@@ -4253,10 +5131,10 @@ net.on('notice', (m) => {
   document.body.classList.add('marq');
   if (end) marqTimer = setInterval(draw, 1000);
 });
-net.on('boards', (m) => boards.set(m));
+net.on('boards', (m) => { boards.set(m); if (tabOpen()) tablet.update(); });
 net.on('lights', (m) => applyRoomLights(m.lights));
 net.on('kit', (m) => applyKit(m.kit));
-net.on('no', (m) => { buying = false; if (m.msg) toast(m.msg); });
+net.on('no', (m) => { buying = false; if (m.msg) toast(m.msg); syncChums(); feedbackDone(false); });   // 誘魚桶丟出去卻沒放成：桶子回到船上
 
 // ---- 釣魚：咬了、試探假咬、是哪條魚、算不算釣起來，都是伺服器說了算 ----
 net.on('nibble', () => fishing.serverNibble());
@@ -4276,23 +5154,24 @@ net.on('caught', (m) => {
 });
 
 // ---- 買賣、換船 ----
+const freshText = (m) => (m.fresh > 0 ? `・急凍魚艙多 ${Math.round(m.fresh * 100)}%` : '');   // 自己或隊友開著遠洋大漁船
 net.on('sold', (m) => {
   if (m.box) {   // 抱著魚箱整箱賣（箱子空了由 box 訊息重畫）
     applyKit(m.kit);
-    if (m.total > 0) { audio.play('coin'); toast(`整箱 ${m.uids.length} 條賣出${m.at === 'haven' ? `（大港多 ${Math.round(PORT.bonus * 100)}%）` : ''}，得到 ${cash(m.total)}`); }
+    if (m.total > 0) { audio.play('coin'); toast(`整箱 ${m.uids.length} 條賣出${m.at === 'haven' ? `（大港多 ${Math.round(PORT.bonus * 100)}%）` : ''}${freshText(m)}，得到 ${cash(m.total)}`); }
     return;
   }
   if (m.at === 'haven') {
     // 成交回覆抵達時，魚可能已從手上放到地面或甲板。
     for (const uid of m.uids) fish.removeOwn(uid);
     applyKit(m.kit);
-    if (m.total > 0) { audio.play('coin'); toast(`大港收購價（多 ${Math.round(PORT.bonus * 100)}%）：賣出 ${m.uids.length} 條，得到 ${cash(m.total)}`); }
+    if (m.total > 0) { audio.play('coin'); toast(`大港收購價（多 ${Math.round(PORT.bonus * 100)}%${freshText(m)}）：賣出 ${m.uids.length} 條，得到 ${cash(m.total)}`); }
     return;
   }
   fish.sell(m.uids);   // 籃子裡自己的魚賣掉了（別人的由 loose 拿掉）
   applyKit(m.kit);
   refreshBoard();
-  if (m.total > 0) { audio.play('coin'); toast(m.by ? `${m.by} 按了賣出：你籃子裡的魚得到 ${cash(m.total)}` : `賣出，得到 ${cash(m.total)}`); }
+  if (m.total > 0) { audio.play('coin'); toast(m.by ? `${m.by} 按了賣出：你籃子裡的魚得到 ${cash(m.total)}` : `賣出${freshText(m)}，得到 ${cash(m.total)}`); }
   else if (m.helped) toast('幫大家把籃子裡的魚賣掉了（錢付給每條魚的主人）');
 });
 net.on('chestGot', (m) => {
@@ -4301,22 +5180,28 @@ net.on('chestGot', (m) => {
   if (m.fuel) { if (fish.held) fish.drop(); fish.spawnCan(CAN); toast(`寶箱裡是一桶油（${CAN} 公升）`); }
   else toast(`寶箱裡有 ${cash(m.cash)}`);
 });
-net.on('pumped', (m) => {
-  buying = false;
-  applyKit(m.kit);
-  myBoat.fuel = clamp(m.fuel ?? myBoat.fuel + m.liters, 0, myBoat.spec.tank);
-  audio.play('pour');
-  toast(`加了 ${m.liters} 公升，花了 ${cash(m.price)}。油箱 ${litres(myBoat.fuel)} / ${myBoat.spec.tank} 公升`);
+// 修船台修好了一艘船（自己的、或隊友幫忙付的）：全房都收到，船主那邊把破洞補回去
+net.on('repaired', (m) => {
+  if (m.byId === net.id) buying = false;
+  const mine = m.id === net.id;
+  if (mine) {
+    myBoat.damage.slice().forEach((c) => myBoat.repair(c));
+    lastBoatMsg = lastBoatDetail = '';
+    audio.play('repair');
+    toast(m.byId === net.id ? `修好了，花了 ${cash(m.cost)}（耐久 ${hpText(myBoat)}）` : `${m.by} 幫你把船修好了（${cash(m.cost)}）`);
+  } else if (m.byId === net.id) { audio.play('repair'); toast(`幫 ${others.map.get(m.id)?.name ?? '隊友'} 把船修好了，花了 ${cash(m.cost)}`); }
+  if (copilot && copilot.id === m.id) copilot.boat.damage.slice().forEach((c) => copilot.boat.repair(c));   // 我正在幫忙開的那艘：我這邊算的耐久也要補滿，不然下一則位置又把舊的耐久送回去
 });
 net.on('bought', (m) => {
   buying = false;
   const o = offer(m.id);   // 買之前的說明（要它的名字）
+  if (m.id === 'chum' && !fish.held && !heldBox() && mode === 'walk' && !player.swim) fish.spawnChum();   // 誘魚桶：買了直接提在手上（手上有東西就放到船上，見 syncChums）
   applyKit(m.kit);
   if (m.swap) {
-    if (m.title !== undefined) toast(dexBook._honors?.title ? `已配戴頭銜：${dexBook._honors.title}` : '已卸下頭銜');
-    else if (m.paint) toast(`已切換船殼塗裝：${m.paint}`);
+    if (m.paint) toast(`已切換船殼塗裝：${m.paint}`);
     return;
   }
+  if (m.boat) { audio.play('coin'); return; }   // 買新船：接著會收到 swapped（原地換船），話在那邊講
   audio.play('coin');
   if (m.id === 'fuel') {
     if (fish.held) fish.drop();
@@ -4325,11 +5210,11 @@ net.on('bought', (m) => {
   }
   if (m.id === 'box' && fish.held) fish.drop();   // 魚箱抱在手上：手上原本拿的先放下
   toast(m.repair ? (m.cheap ? '釣竿修好了（錢不夠，老闆算你便宜）' : '釣竿修好了')
-    : m.id === 'bless_tide' ? `✨ 已發動${BLESSINGS.tide.name}！全服生效 ${BLESSINGS.tide.duration} 秒`
-    : m.id === 'bless_storm' ? `⛈ 已發動${BLESSINGS.storm.name}！巨浪風暴來襲`
+    : m.id === 'bless_tide' ? `✨ 已獻上${BLESSINGS.tide.name}！將在 ${m.delay ?? BLESSINGS.tide.delay} 秒後全服降臨`
+    : m.id === 'bless_storm' ? `⛈ 已獻上${BLESSINGS.storm.name}！風暴將於 ${m.delay ?? BLESSINGS.storm.delay} 秒後降臨`
     : m.paint ? `已解鎖並套用塗裝：${m.paint}`
-    : m.title ? `已永久解鎖並配戴頭銜：${m.title}`
-    : BOAT_TYPES[m.id] ? `買了${o.name}，先收在倉庫。拿出平板（${TOUCH ? '右上角的平板鈕' : 'Tab'}）打開「船」就能換出來` : `買了${o.name}`);
+    : m.id === 'engine' ? `${BOAT_TYPES[m.kit.active].name}的引擎升到 Lv.${m.kit.boats[m.kit.active]?.engineLv ?? 0}（每艘船分開升）`
+    : `買了${o.name}`);
 });
 // 換了一艘船放到世界裡：平板上換船、或是船沉了之後伺服器補一艘
 net.on('swapped', (m) => {
@@ -4341,6 +5226,7 @@ net.on('swapped', (m) => {
   applyKit(m.kit);
   flashMyBoat();
   const where = `${myBoat.spec.name}停在港口（畫面上標出來了）`;
+  if (m.bought) { fish.rehome?.(myBoat); audio.play('rope'); return toast(`新船已停妥於船塢旁（畫面上標出來了）。新船引擎是 Lv.0，可以在這裡另外升級；舊船收進倉庫`); }
   if (!m.wreck) { audio.play('rope'); return toast(`換好了：${where}`); }
   if (w) wreck = null;
   const text = m.gift ? '港口留了一艘小舢舨給你（畫面上標出來了）' : `倉庫裡的${where}`;
@@ -4361,6 +5247,7 @@ net.on('reset', (m) => {
   berth = m.berth;
   storedInfo = {};
   dexBook = m.dex || {}; dexNew.clear();
+  myExp = dexBook?._lv?.exp || myExp;   // 等級不跟著刷新清掉
   useBoat(kit.active, berth);
   fish.clearAll();
   applyKit(kit);
@@ -4392,6 +5279,7 @@ net.on('merged', (m) => {
   }
   applyKit(m.kit);
   boards.set(m.boards);
+  applySocial(m);
   applyWorld(m.world, true);
   fish.applyLoose(m.loose ?? [], net.id);
   boxes.apply(m.boxes);
@@ -4430,6 +5318,7 @@ net.on('rejoin', (j) => {
   applyWorld(j.world, true);
   pendingIn.clear();
   dexBook = j.dex ?? {};
+  applySocial(j);
   const catchupBoat = j.resume?.boat;
   if (catchupBoat && !catchupBoat.sunk && !myBoat.sinking) myBoat.fuel = clamp(catchupBoat.s[10], 0, myBoat.spec.tank);
   boxes.apply(j.boxes);
@@ -4477,6 +5366,8 @@ function enterRoom(j) {
   }
   camHeading = myBoat.heading;
   wreck = null; mergeAt = 0; mode = 'walk';
+  copilot = null;
+  applySocial(j);
   applyKit(kit);
   boards.set(j.boards);
   applyWorld(j.world, true);
@@ -4515,11 +5406,13 @@ function enterRoom(j) {
   $('net').style.display = 'none';
   inGame = true;
   document.body.classList.add('playing');   // 設定搬進平板（左上角的設定鈕收起來）
+  tablet.update(true);
+  syncOwnTabletTex(true);
   fadeIn = 1.2;
   if (back?.passengerReturn) returnPassenger(back.passengerReturn);
 }
 
-let wakeIdx = 0, wakeTimer = 0, sprayAcc = 0, crestSide = 1, crestI = -1, jetShake = 0, lastStep = 0;
+let wakeIdx = 0, wakeTimer = 0, sprayAcc = 0, crestSide = 1, crestI = -1, jetShake = 0, lastStep = 0, dtSim = 0.016;
 function advance(dt) {
   time = inGame && clockBase !== null ? clockBase + performance.now() / 1000 : time + dt;
   updateOcean(dt);
@@ -4529,26 +5422,51 @@ function advance(dt) {
   // 踩上另一艘船，它就變成「目前這艘」（可能是別人的）；不在別人的船上了，就回到自己的
   if (mode === 'walk' && player.boat && player.boat !== boat) { boat = player.boat; camHeading = boat.heading; }
   else if (mode === 'walk' && !player.boat && boat.remote) { boat = myBoat; camHeading = boat.heading; }
-  const mb = myBoat;   // 自己的船：只有它的物理、損傷在這裡算（別人的船由船主那邊算好傳過來）
+  const mb = myBoat;   // 自己的船：它的物理、損傷在這裡算（別人的船由船主那邊算好傳過來）
+  const cb = copilot ? copilot.boat : null;   // 正在幫隊友開的那艘：物理也在這裡算
   const drive = helm && !tabOpen();   // 拿著平板：放開油門和方向盤（船自己慢慢停）
-  mb.keys.w = drive && (keys.w || touch.my > 0.38); mb.keys.s = drive && (keys.s || touch.my < -0.38);
-  mb.keys.a = drive && (keys.a || touch.mx < -0.38); mb.keys.d = drive && (keys.d || touch.mx > 0.38);
-  ocean.cacheBlock(boat.x, boat.z);
-  mb.update(dt, mb === boat ? boatEnv : calmEnv);
-  others.update(dt);
-  collideBoats(mb, helm);
-  updateMooring(dt, helm);
-  const core = !mb.sinking && sea.vortices.length ? sea.coreAt(mb.x, mb.z) : null;
-  if (core) mb.founder(core, 1);   // 被拉進漩渦或水龍捲的中心
-  // 大漩渦：被拉到七十幾公尺內，水流又急又亂，船板被扯得越來越厲害（越靠近中心越傷）
-  if (!mb.sinking && sea.vortices.length) {
-    const w = sea.whirlNear(mb.x, mb.z);
-    if (w.r < 75) mb.hurt(mb.spec.hp * 0.03 * w.s * ((75 - w.r) / 55) ** 2 * dt);
-    if (helm && w.r < 120 && w.s > 0.4 && !whirlToast) { whirlToast = true; toast('被漩渦拉住了！全速往外開！'); }
-    if (w.r > 220) whirlToast = false;
+  dtSim = dt;
+  for (const b of cb ? [mb, cb] : [mb]) {
+    const on = drive && boat === b && !(b === mb && piloted);
+    b.keys.w = on && (keys.w || touch.my > 0.38); b.keys.s = on && (keys.s || touch.my < -0.38);
+    b.keys.a = on && (keys.a || touch.mx < -0.38); b.keys.d = on && (keys.d || touch.mx > 0.38);
   }
+  ocean.cacheBlock(boat.x, boat.z);
+  if (piloted) mb.updateRemote(dt);   // 隊友在幫我開：照他傳來的位置擺
+  else mb.update(dt, mb === boat ? boatEnv : calmEnv);
+  if (cb) {
+    cb.update(dt, cb === boat ? boatEnv : calmEnv);
+    const c2 = !cb.sinking && sea.vortices.length ? sea.coreAt(cb.x, cb.z) : null;
+    if (c2) cb.founder(c2, 1);
+  }
+  others.update(dt);
+  updateTows(dt);
+  if (!piloted) collideBoats(mb, helm && boat === mb);
+  if (cb) collideBoats(cb, true);
+  updateMooring(dt, helm);
+  const hazard = !mb.sinking && !piloted;   // 隊友在幫我開的時候，漩渦、巨浪的傷害由他那邊算
+  const core = hazard && sea.vortices.length ? sea.coreAt(mb.x, mb.z) : null;
+  if (core) mb.founder(core, 1);   // 被拉進漩渦或水龍捲的中心
+  // 大漩渦與水龍捲：進入白浪旋臂就開始劇烈吸扯、水花四濺並扯傷船板
+  if (hazard && sea.vortices.length) {
+    const w = sea.whirlNear(mb.x, mb.z), spv = sea.spoutNear(mb.x, mb.z);
+    if (w.r < 155) {
+      const wk = w.s * ((155 - w.r) / 123) ** 2;
+      mb.hurt(mb.spec.hp * 0.055 * wk * dt);
+    }
+    if (w.r < 210 && w.s > 0.25 && Math.random() < 16 * w.s * (1 - w.r / 210) * dt) {
+      splash(mb.x + (Math.random() - 0.5) * mb.spec.len, mb.mesh.position.y + 0.45, mb.z + (Math.random() - 0.5) * mb.spec.beam, 5);
+    }
+    if (helm && w.r < 240 && w.s > 0.25 && !whirlToast) { whirlToast = true; toast('捲入大漩渦吸流了！立刻全速往外衝！'); }
+    if (w.r > 320) whirlToast = false;
+    if (helm && spv.r < 260 && spv.s > 0.35 && !spoutToast) { spoutToast = true; toast('捲入水龍捲暴風圈！頂風全速拉開距離！'); }
+    if (spv.r > 340) spoutToast = false;
+    if (spv.r < 220 && spv.s > 0.35 && Math.random() < 16 * spv.s * (1 - spv.r / 220) * dt) {
+      splash(mb.x + (Math.random() - 0.5) * mb.spec.len, mb.mesh.position.y + 0.5, mb.z + (Math.random() - 0.5) * mb.spec.beam, 5);
+    }
+  } else { whirlToast = false; spoutToast = false; }
   // 巨浪淹進港口：停在岸邊的船被湧進來的水抬起來、退水時摔回去，會撞壞一些
-  for (const b of [mb]) {
+  for (const b of piloted ? [] : [mb]) {
     if (b.sinking || tsuKAt(b.x, b.z) > 0.45) { b._surgePeak = 0; continue; }
     const h = surgeAt(b.x, b.z);
     b._surgePeak = Math.max(b._surgePeak || 0, h);
@@ -4563,7 +5481,7 @@ function advance(dt) {
   // 正在捲的那一段不一樣：浪壁是往前倒的（爬不上去），浪頂的水拋出去、落在浪頂前方幾十公尺——
   // 船在落點上，就是被好幾層樓高的水從上面直接壓下來，船頭對不對準都一樣。浪越高、船越小越撐不住
   jetShake *= Math.exp(-dt * 2.2);
-  if (sea.tsu.on && !mb.sinking) {
+  if (sea.tsu.on && hazard) {
     const tK = tsuKAt(mb.x, mb.z), c = sea.jetAt(mb.x, mb.z, tK, shared.uTime.value), side = c.q > c.land ? 1 : -1;
     if (side < 0 && crestSide > 0 && c.i === crestI && c.q > -20) {
       const jet = c.Bw * c.Hc / (5 + mb.spec.len);         // 捲舌砸下來的力道，1 以上船就沒了
@@ -4598,6 +5516,8 @@ function advance(dt) {
     walker.feet = player.boat ? null : player.y; walker.air = player.h > 0 || player.fly; walker.fly = player.fly;
     const rise = player.fly ? (keys.shift ? 1 : 0) - (keys.q ? 1 : 0) : 0;   // 飛行：Shift 上升、Q 下降、按住 R 衝刺
     player.flyDash = keys.r;
+    const holdTab = tabOpen() && !fish.held && !heldBox() && !player.swim && !player.seat;
+    player.steady = holdTab; player.tabHold = holdTab;
     player.update(dt, cy * f - sy * r, sy * f + cy * r, (keys.shift || touch.run) && !player.fly, keys.space && !drown && !player.fly && !tabOpen(), walkWorld, rise);
     walker.feet = null; walker.fly = false;
     if (v.fp) { player.yaw = v.yaw; player.mesh.rotation.y = -v.yaw; } // 第一人稱時身體跟著視線
@@ -4622,14 +5542,16 @@ function advance(dt) {
   // 拿著平板（空手、走路、沒在游泳時才拿在手上；別人也看得到）
   tabHand = tabOpen() && !fish.held && !hbx && mode === 'walk' && !player.swim && !player.seat;
   tabScreen = tabHand ? tabletScreen() : 0;
-  // 拿起來：平板跟著手從腰邊抬到胸前；收起來：等手放下去才拿掉（手上要拿別的東西就馬上拿掉）
-  if (tabHand && !(tabMesh && tabMesh.parent)) { tabMesh = tabMesh || makeTabletMesh(); holdTablet(player.mesh, tabMesh); }
+  // 拿起來：平板跟著手從腰邊抬到胸前（第一人稱自己隱藏 3D 平板與手只留動作與陰影）；收起來：等手放下去才拿掉
+  if (tabHand && !(tabMesh && tabMesh.parent)) { tabMesh = tabMesh || makeTabletMesh(0, { fullFace: true }); holdTablet(player.mesh, tabMesh); }
   if (tabMesh && tabMesh.parent) {
+    tabMesh.visible = !(mode === 'walk' && view.walk.fp);
     const k = poseTablet(tabMesh);
     if (!tabHand && (k < 0.3 || fish.held || hbx || mode !== 'walk' || player.swim || player.seat)) tabMesh.removeFromParent();
   }
   if (tabHand) setTabletScreen(tabMesh, tabScreen);   // 螢幕上畫的是現在開著的畫面（別人看到的也是）
   player.carry = !!fish.held || !!hbx || tabHand;
+  player.steady = tabHand; player.tabHold = tabHand;
   player.load = hbx ? boxes.speed(hbx) : 1;
   // （抱著魚箱也能游：比較慢、比較累（player.carry 讓體力掉得快），騰不出手放下，要上岸或爬上船才能放）
   boxes.update(time);
@@ -4661,9 +5583,10 @@ function advance(dt) {
 
   // 航跡：船在動就定時在船尾留下一點泡沫
   wakeTimer += dt;
-  if (wakeTimer > 0.3 && sp > 0.8 && !boat.aground) {
+  const wsp = Math.max(sp, boat.moveSpeed || 0);
+  if (wakeTimer > 0.3 && wsp > 0.8 && !boat.aground) {
     wakeTimer = 0;
-    wake[wakeIdx].set(boat.x - fx * boat.spec.len * 0.46, boat.z - fz * boat.spec.len * 0.46, time, clamp(sp / 5, 0, 1) * Math.min(1, boat.spec.len / 13));
+    wake[wakeIdx].set(boat.x - fx * boat.spec.len * 0.46, boat.z - fz * boat.spec.len * 0.46, time, clamp(wsp / 5, 0, 1) * Math.min(1, boat.spec.len / 13));
     wakeIdx = (wakeIdx + 1) % wake.length;
   }
   // 還看得到的航跡圈在一個圓裡：海面的著色器只在圓內才去算那 16 筆（以前整片海的每個像素都算）
@@ -4683,8 +5606,11 @@ function drawFrame(dt, ms = performance.now()) {
   updateCamera(dt);
   boxes.marks(camera, meAt(), net.id, inGame && !tabOpen());   // 開船時用船的位置量距離
   markMyBoat();
+  markParty();
+  markWaypoint();
+  updateCompass();
+  updateSonar(dt);
   updateFishUi();
-  placeTabletDom();
   lpUniforms.uTime.value = time;   // 低面模型（樹、草）隨風搖
   seascape.update(time, camera.position);   // 燈標閃光；太遠、被霧蓋掉的島不畫
   havenFx.update(dt, time, camera.position);
@@ -4705,7 +5631,7 @@ function drawFrame(dt, ms = performance.now()) {
       camera.getWorldDirection(_rf);
       spoutPan = clamp((dx * -_rf.z + dz * _rf.x) / Math.max(d, 1), -1, 1) * 0.8;
     }
-    shake = Math.max(shake, m.touch * clamp(1 - d / 380, 0, 1) ** 1.5);
+    shake = Math.max(shake, (0.35 + 0.9 * m.touch) * clamp(1 - d / 440, 0, 1) ** 1.4);
   }
   // 巨浪：浪牆逼近時轟鳴越來越大，浪頭從身邊過去的那一下最響、鏡頭跟著震
   let crestRoar = 0;
@@ -4719,9 +5645,9 @@ function drawFrame(dt, ms = performance.now()) {
   let whirlRoar = 0;
   if (sea.vortices.length) {
     const w = sea.whirlNear(cp.x, cp.z);
-    whirlRoar = w.s * clamp(1 - w.r / 520, 0, 1) ** 2;
-    if (1.3 * whirlRoar > 1.5 * crestRoar) spots.roar = [w.x, 0, w.z, clamp(1 - w.r / 150, 0.2, 0.9)];
-    shake = Math.max(shake, 0.7 * w.s * clamp(1 - w.r / 110, 0, 1) ** 1.5);
+    whirlRoar = w.s * clamp(1 - w.r / 640, 0, 1) ** 1.8;
+    if (1.45 * whirlRoar > 1.5 * crestRoar) spots.roar = [w.x, 0, w.z, clamp(1 - w.r / 190, 0.25, 0.95)];
+    shake = Math.max(shake, 1.15 * w.s * clamp(1 - w.r / 230, 0, 1) ** 1.35);
   }
   const galeHere = gale.v * windK(cp.x, cp.z);
   shake = Math.max(shake, 0.3 * clamp((galeHere - 22) / 24, 0, 1));   // 強風：鏡頭被陣風吹得晃
@@ -4751,7 +5677,7 @@ function drawFrame(dt, ms = performance.now()) {
   const fogWanted = under ? underFog : airFog;
   if (scene.fog !== fogWanted) scene.fog = fogWanted;
 
-  audio.set((0.45 + 0.95 * levelAt(cp.x, cp.z) ** 0.8) * (0.35 + 0.65 * shelterAt(cp.x, cp.z)), Math.max(sea.rumble * 0.6, 1.5 * crestRoar, 1.3 * whirlRoar), under,
+  audio.set((0.45 + 0.95 * levelAt(cp.x, cp.z) ** 0.8) * (0.35 + 0.65 * shelterAt(cp.x, cp.z)), Math.max(sea.rumble * 0.6, 1.5 * crestRoar, 1.45 * whirlRoar), under,
     boat.fuel > 0 ? Math.abs(boat.throttle) : 0, Math.abs(boat.speed) / 7, rainNow, spoutNear, spoutPan, under ? 0 : clamp((galeHere - 5) / 32, 0, 1.4));
 
   // 實地錄音的那一層：外海的浪、岸邊的小浪、港口的海鷗、雨、引擎、捲線器、腳步
@@ -4761,7 +5687,7 @@ function drawFrame(dt, ms = performance.now()) {
     camera.getWorldDirection(_rf);
     _sp.set(0, 1, 0).applyQuaternion(camera.quaternion);
     audio.listen(cp.x, cp.y, cp.z, _rf.x, _rf.y, _rf.z, _sp.x, _sp.y, _sp.z);
-    if (!spots.roar || sea.rumble * 0.6 > Math.max(1.5 * crestRoar, 1.3 * whirlRoar)) spots.roar = [cp.x, cp.y, cp.z, 1];   // 說不出從哪來的隆隆聲
+    if (!spots.roar || sea.rumble * 0.6 > Math.max(1.5 * crestRoar, 1.45 * whirlRoar)) spots.roar = [cp.x, cp.y, cp.z, 1];   // 說不出從哪來的隆隆聲
     // 引擎：在船尾油箱那一帶
     const tk = boat.parts.tank;
     _sp.set(tk ? tk.x : -2, 0.5, tk ? tk.z : 0).applyMatrix4(boat.mesh.matrixWorld);
@@ -4852,6 +5778,9 @@ function drawFrame(dt, ms = performance.now()) {
   } else SIGHT.r.value.set(0, 0);
   syncWaterTsu();
   fitWater(under);
+  const aim = inGame && mode === 'walk' && !debugCam && !tabOpen() && !chat.isOpen && !wheel.isOpen && !$('panel').open ? aimTarget() : null;
+  const outline = aimOutlineTargets(aim);
+  aimOutline.setTargets(outline?.objs, outline?.ignore);
   composer.render();
   checkWater();
 }
@@ -4863,8 +5792,6 @@ ocean.cacheBlock(boat.x, boat.z);
 boat.update(0.016, boatEnv);
 player.place(walkWorld, SPAWN_W.x, SPAWN_W.z);
 
-let frame = 0;
-const simClock = new FramePacer(), drawClock = new FramePacer(), hudClock = new FramePacer();
 // 角落一直顯示每秒幾幀、平均一幀幾毫秒；網址加 ?fps 的話，後面再加上解析度、畫質、顯示晶片這些細節
 const fpsMore = new URLSearchParams(window.location.search).has('fps');
 const fpsEl = document.body.appendChild(Object.assign(document.createElement('div'), { id: 'fps', textContent: '-- fps　-- ms' }));
@@ -4954,16 +5881,16 @@ const diag = new URLSearchParams(window.location.search).has('diag') ? (() => {
 })() : null;
 function animate(ms) {
   if (mobileRefresh?.sample(ms)) syncFrameChoices();
-  const drawMs = TOUCH ? drawClock.take(ms, inGame ? frameLimit : 20) : simClock.take(ms);
-  // 手機的走路、掌舵和釣魚獨立排程，模擬上限為每秒 60 次。
+  const drawMs = drawClock.take(ms, TOUCH ? (inGame ? frameLimit : 20) : frameLimit);
+  // 手機的走路、掌舵和釣魚獨立排程，模擬上限為每秒 60 次；電腦版跟隨畫面步調。
   const simMs = TOUCH ? simClock.take(ms, inGame ? 60 : 30) : drawMs;
   if (simMs > 0) advance(Math.min(simMs / 1000, 0.05));
   if (drawMs === null) return;
   if (diag) diag(ms);
-  if (probe) probeGfx(ms, drawMs);
+  if (probe && !frameLimit) probeGfx(ms, drawMs);
   drawFrame(Math.min(drawMs / 1000, TOUCH && !inGame ? 0.075 : 0.05), ms);
   if (TOUCH && (adaptiveEnabled || !adaptiveAsked)) checkAdaptiveQuality(ms);
-  if (TOUCH ? hudClock.take(ms, 10) !== null : frame++ % 6 === 0) { updatePrompt(); if (tabOpen()) tablet.update(); }
+  if (hudClock.take(ms, TOUCH ? 10 : 20) !== null) { updatePrompt(); if (tabOpen()) { tablet.update(); if (tabHand && !view.walk.fp) syncOwnTabletTex(false); } }
   if (++fpsN && ms - fpsT >= 1000) {
     const span = ms - fpsT;
     fpsEl.textContent = `${Math.round(fpsN * 1000 / span)} fps　${(span / fpsN).toFixed(1)} ms`
@@ -4995,7 +5922,7 @@ window.__sim = {
   get gfxLv() { return presetOf(); }, get waterSplit() { return waterSplit; }, get pixelRatio() { return pixelRatio; }, get frameLimit() { return frameLimit; }, gs, applyGfx, PRESETS, get gfx() { return gfx; }, diag,
   get kit() { return kit; }, get myBoat() { return myBoat; }, get berth() { return berth; }, get room() { return room; }, get inGame() { return inGame; }, get time() { return time; },
   dev: (cmd, o = {}) => net.send({ t: 'dev', cmd, ...o }),   // 測試指令（伺服器開了開發模式才收）：event / calm / skip / money / fish / refresh（立刻刷新）
-  sea, dangerAt, tsuAt, stormK, waterY, nearTank, nearCrack, get wrench() { return wrench; },
+  sea, dangerAt, tsuAt, stormK, waterY, nearTank,
   get wreck() { return wreck; }, surfProbe, climate, lightning, updateWeather, boatEnv, rain, bolt, spouts,
   get rainNow() { return rainNow; }, get gloom() { return gloom; }, lampLights, boatLight, wildlife,
   updatePrompt, N, DX, L, ISLANDS, camera, scene, water, terrain, scenery, harbor, shared, spray, renderer,

@@ -294,6 +294,21 @@ export class OceanAudio {
     src.start(t, at, dur);
   }
 
+  // 探魚聲納掃到魚群的提示音：兩聲短短的高音「叮、叮」（合成的，不用檔案）
+  sonarPing(vol = 1) {
+    if (!this.ctx || !this.on) return;
+    const t = this.ctx.currentTime;
+    for (const [dt, hz] of [[0, 1480], [0.19, 1480]]) {
+      const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+      o.type = 'sine'; o.frequency.value = hz;
+      g.gain.setValueAtTime(0, t + dt);
+      g.gain.linearRampToValueAtTime(0.11 * vol, t + dt + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0008, t + dt + 0.5);
+      o.connect(g).connect(this.master);
+      o.start(t + dt); o.stop(t + dt + 0.55);
+    }
+  }
+
   stop() {
     if (!this.ctx) return;
     this.on = false;

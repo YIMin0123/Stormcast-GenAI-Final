@@ -43,6 +43,8 @@ export class Player {
     this.moving = false;
     this.run = false;
     this.carry = false;                    // 雙手捧著東西
+    this.tabHold = false;                  // 雙手捧著平板：手臂略往外展以托住左右兩側邊框
+    this.steady = false;                   // 拿著平板時停止待機晃動，避免鎖住平板的鏡頭跟著搖
     this.fly = false;                      // 開發者模式：飛行中（速度、上下速度、最高高度由 main.js 照 DEVMODE 設）
     this.flySpeed = 24; this.flyFast = 72; this.flyVert = 8; this.flyMaxH = 150;
     this.rod = false;                      // 右手拿著釣竿
@@ -359,9 +361,10 @@ export class Player {
   }
 
   // 別人的人偶（多人）：沒有物理，位置和狀態都是網路傳來的，填好之後呼叫這個擺動作
-  // st：{ moving, run, swim, carry, rod, seated, h }
+  // st：{ moving, run, swim, carry, rod, seated, h, tab }
   puppet(dt, st) {
     this.moving = st.moving; this.run = st.run; this.swim = st.swim; this.carry = st.carry; this.rod = st.rod; this.h = st.h;
+    this.tabHold = !!st.tab; this.steady = !!st.tab;
     this.seat = st.seated ? (this.seat || {}) : null;
     if (this.moving) this.phase += dt * (this.swim ? 6 : this.run ? 13 : 8.5);
     this.animate(dt);
@@ -381,7 +384,7 @@ export class Player {
       if (this.moving || air || swim || seat || this.carry || this.rod || (!this.act.loop && this.actT > this.act.dur)) this.act = null;
     }
     const stroke = Math.sin(this.phase);
-    const idle = !this.moving && !air && !swim;
+    const idle = !this.moving && !air && !swim && !this.steady;
     const T = (this.clock += dt);
     // 每次離地換一邊：這次左腳右手在前，下次就右腳左手在前（別人看你跳也一樣會換）
     if (air && !this.wasAir) this.airSide = -this.airSide;
@@ -390,9 +393,9 @@ export class Player {
     const { legs, arms, head } = this.mesh.userData;
     const ease = 1 - Math.exp(-dt * 14);
     // 剛開始捧東西或剛放下時，手臂抬起／放下慢一點（拿起平板、把魚抱起來的動作看得到）
-    if (this.carry !== this.wasCarry) { this.wasCarry = this.carry; this.liftT = 0.6; }
+    if (this.carry !== this.wasCarry) { this.wasCarry = this.carry; this.liftT = 0.5; }
     this.liftT = Math.max(0, (this.liftT || 0) - dt);
-    const armE = this.liftT > 0 ? 1 - Math.exp(-dt * 7) : ease;
+    const armE = this.liftT > 0 ? 1 - Math.exp(-dt * 10) : ease;
     const shift = idle ? 0.06 * Math.sin(T * 1.3) : 0;
     // 游泳：往前游時兩腿快速交替打水；停著踩水時兩腿慢慢一前一後地踩
     const kick = swim ? (this.moving ? 0.42 * Math.sin(T * 13) : 0.32 * Math.sin(T * 3.2)) : 0;
@@ -403,14 +406,15 @@ export class Player {
     const tread = paddle && !this.moving;   // 停在水裡踩水：雙手在胸前左右撥水
     const loose = idle ? 0.10 * Math.sin(T * 1.7) : 0;
     const scull = 0.15 * Math.sin(T * 3.2);
-    const armL = this.carry ? 1.15 : tread ? 1.25 + scull : paddle ? 2.3 + stroke * 0.9 : -swing * 1.05 + loose;
-    const armR = this.carry ? 1.15 : tread ? 1.25 - scull : paddle ? 2.3 - stroke * 0.9 : this.rod ? 0.95 : swing * 1.05 - loose;
+    const holdAny = this.carry || this.tabHold;
+    const armL = holdAny ? 1.15 : tread ? 1.25 + scull : paddle ? 2.3 + stroke * 0.9 : -swing * 1.05 + loose;
+    const armR = holdAny ? 1.15 : tread ? 1.25 - scull : paddle ? 2.3 - stroke * 0.9 : this.rod ? 0.95 : swing * 1.05 - loose;
     arms[0].rotation.z += (armL - arms[0].rotation.z) * armE;
     arms[1].rotation.z += (armR - arms[1].rotation.z) * armE;
-    // 手臂往兩旁張開多少：平常張成 A 字（手才不會插進裙子，也比較像設定圖），走路時多一點，跳起來時舉高
+    // 手臂往兩旁張開多少：拿平板時微微外展撐住左右下角，不會穿進螢幕正中央；平常張成 A 字
     for (const arm of arms) {
-      const side = arm.userData.side, busy = this.carry || (paddle && !tread) || (this.rod && side > 0);
-      const out = tread ? 0.55 + 0.35 * Math.sin(T * 3.2) : busy ? 0 : 0.48 + (air ? 0.8 : this.moving ? 0.08 : 0.04 * Math.sin(T * 1.7 + side));
+      const side = arm.userData.side, busy = holdAny || (paddle && !tread) || (this.rod && side > 0);
+      const out = tread ? 0.55 + 0.35 * Math.sin(T * 3.2) : this.tabHold ? 0.06 : busy ? 0 : 0.48 + (air ? 0.8 : this.moving ? 0.08 : 0.04 * Math.sin(T * 1.7 + side));
       arm.rotation.x += (-side * out - arm.rotation.x) * armE;
     }
     if (swim && !this.moving) this.phase += dt * 2.5;   // 停在水裡時踩水

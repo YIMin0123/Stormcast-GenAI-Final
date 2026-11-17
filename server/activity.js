@@ -2,6 +2,7 @@
 // 給管理者（我們）看，跟遊戲內的紀錄榜（daily.js）和玩家看的公告無關。
 //   - 事件：每天一個 JSONL（DATA/activity/YYYY-MM-DD.jsonl，台灣時間），一行一件事，只會附加
 //       boot 伺服器啟動 / join 進房 / back 斷線接回 / drop 斷線 / end 場次結束（含摘要）/ rename 換名 / pop 線上人數
+//   - 意見：DATA/activity/feedback.jsonl（港口的漁會意見信箱收到的，只留最新 FEEDBACK.keep 則，見 feedback()）
 //   - 人：DATA/activity/people.json，每個裝置代碼一筆（名字沿革、IP、裝置、場次累計）
 //   - 保留 KEEP_DAYS 天，超過的檔案與很久沒出現的人自動刪掉
 //   - 認人代碼本身能用來接回別人的進度，所以紀錄裡只放它的雜湊（pid），不放原值
@@ -11,7 +12,8 @@ import { appendFileSync, readFileSync, writeFileSync, mkdirSync, readdirSync, un
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { isIP } from 'node:net';
-import { BOAT_TYPES, BOAT_MODS, BOAT_PAINTS, HONOR_TITLES } from '../src/boatdata.js';
+import { BOAT_TYPES, BOAT_MODS, BOAT_PAINTS } from '../src/boatdata.js';
+import { FEEDBACK } from '../src/config.js';
 
 export const KEEP_DAYS = 30;
 const POP_BEAT = 10 * 60 * 1000;   // 有人在線時，沒變化也每 10 分鐘記一次人數
@@ -56,8 +58,7 @@ function owned(p) {
   m.set('rod', { label: '釣竿', lv: Number(k.rodLv) || 0 });
   for (const id of Object.keys(k.mods || {})) if (k.mods[id]) m.set('mod:' + id, { label: BOAT_MODS[id]?.name || id, lv: 0 });
   for (const id of k.paints || []) if (id !== 'default') m.set('paint:' + id, { label: '塗裝' + (BOAT_PAINTS.find((x) => x.id === id)?.name || id), lv: 0 });
-  if (k.wrench) m.set('wrench', { label: '扳手', lv: 0 });
-  for (const id of p.dex?._honors?.titles || []) m.set('title:' + id, { label: '頭銜' + (HONOR_TITLES.find((x) => x.id === id)?.name || id), lv: 0 });
+  for (const name of p.titles || []) m.set('title:' + name, { label: '稱號' + name, lv: 0 });   // 這一週漁會捐款解鎖的稱號
   return m;
 }
 function gained(before, after) {
@@ -80,9 +81,19 @@ export class Activity {
     this.lastPop = { n: -1, at: 0 };
     this.people = {};
     this.dirty = false;
+    this.fb = [];              // 漁會意見信箱收到的意見（最新的在最後）：{ at, pid, name, kind, text }
+    this.fbAt = new Map();     // pid → 上次投遞的時間（防洗版）
     if (off) return;
     mkdirSync(this.dir, { recursive: true });
     this.file = join(this.dir, 'people.json');
+    this.fbFile = join(this.dir, 'feedback.jsonl');
+    try {
+      for (const line of readFileSync(this.fbFile, 'utf8').split('\n')) {
+        if (!line) continue;
+        try { const e = JSON.parse(line); if (e && Number.isFinite(e.at) && typeof e.text === 'string') this.fb.push(e); } catch { /* 壞掉的那一行跳過 */ }
+      }
+      this.fb = this.fb.slice(-FEEDBACK.keep);
+    } catch { /* 還沒有人投過 */ }
     try {
       const d = JSON.parse(readFileSync(this.file, 'utf8'));
       if (d && typeof d.people === 'object' && d.people) this.people = d.people;
@@ -159,6 +170,28 @@ export class Activity {
     this.log({ t: 'end', pid: a.pid, name: p.name, room: p.room?.name || '', why, sec, catches, earned: a.earned, spent: a.spent, bought });
   }
 
+  // 漁會意見信箱：收一則意見。只記時間、分類、玩家代碼與名字、內容（不記位置、裝置狀況）；同一個人 FEEDBACK.cdSec 秒內只收一則。
+  // 檔案 feedback.jsonl 只留最新 FEEDBACK.keep 則，全服定時刷新不清。回傳 { ok, msg }
+  feedback(p, kind, text) {
+    if (typeof kind !== 'string' || !Object.hasOwn(FEEDBACK.kinds, kind) || typeof text !== 'string') return { ok: false, msg: '意見的格式不對' };
+    const clean = text.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '').trim();   // 控制字元換成空白；會把文字方向倒過來的隱形字元拿掉
+    if (!clean.length || [...clean].length > FEEDBACK.maxLen) return { ok: false, msg: `內容要 1～${FEEDBACK.maxLen} 個字` };
+    const pid = pidOf(p.token || String(p.id)), now = this.now();
+    if (now - (this.fbAt.get(pid) || -Infinity) < FEEDBACK.cdSec * 1000) return { ok: false, msg: '剛投遞過意見，請稍後再試' };
+    this.fbAt.set(pid, now);
+    const e = { at: now, pid, name: String(p.name || '').slice(0, 24), kind, text: clean };
+    this.fb.push(e);
+    const over = this.fb.length > FEEDBACK.keep;
+    if (over) this.fb = this.fb.slice(-FEEDBACK.keep);
+    if (!this.off) {
+      try {
+        if (over) writeFileSync(this.fbFile, this.fb.map((x) => JSON.stringify(x)).join('\n') + '\n');   // 超過上限：整個重寫，只留最新的
+        else appendFileSync(this.fbFile, JSON.stringify(e) + '\n');
+      } catch (err) { console.error('[activity] 意見寫不進去', err.message); }
+    }
+    return { ok: true };
+  }
+
   // 伺服器要關了：還沒結束的場次都結束掉，免得時間、摘要丟了
   stopAll() { for (const p of [...this.live.values()]) this.end(p, 'restart'); this.save(); }
 
@@ -193,7 +226,7 @@ export class Activity {
 
   // 給管理網頁：把最近 KEEP_DAYS 天的紀錄整理成每日統計、每日時間表、玩家清單、現在在線的人
   report() {
-    if (this.off) return { generatedAt: this.now(), keepDays: KEEP_DAYS, days: [], events: {}, people: [], online: [], off: true };
+    if (this.off) return { generatedAt: this.now(), keepDays: KEEP_DAYS, days: [], events: {}, people: [], online: [], feedback: this.fb.slice().reverse(), off: true };
     const now = this.now(), cut = dayOf(now - KEEP_DAYS * 86400 * 1000);
     let files = [];
     try { files = readdirSync(this.dir).filter((f) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f) && f.slice(0, 10) >= cut).sort(); } catch { /* 沒有就空的 */ }
@@ -234,6 +267,6 @@ export class Activity {
       pid, ...r, same: [...new Set((r.ips || []).flatMap((ip) => byIp.get(ip) || []))].filter((x) => x !== pid),
     })).sort((a, b) => b.last - a.last);
     const online = [...this.live.values()].map((p) => ({ pid: p.act.pid, name: p.name, room: p.room?.name || '', dev: p.act.dev, ip: p.act.ip, since: p.act.at, connected: !!p.ws }));
-    return { generatedAt: now, keepDays: KEEP_DAYS, days: list, events, people, online };
+    return { generatedAt: now, keepDays: KEEP_DAYS, days: list, events, people, online, feedback: this.fb.slice().reverse() };
   }
 }

@@ -28,6 +28,7 @@ input[type=search]{padding:5px 9px;border:1px solid var(--line);border-radius:7p
 <div class="sub" id="meta"></div>
 <div id="off" class="warn" hidden>這是測試伺服器，不記錄玩家活動（只統計正式機）。看正式機請在專案資料夾跑 bash deploy/stats.sh。</div>
 <section><h2>現在線上</h2><div id="online"></div></section>
+<section><div class="top"><h2>📮 玩家意見箱（共 <span id="fbN"></span> 則，最新的在上面）</h2><input type="search" id="fbQ" placeholder="找內容、名字、代碼"></div><div class="chips" id="fbKinds" style="margin:6px 0"></div><div class="wrap"><table id="fb"></table></div></section>
 <section><h2>每日統計（近 <span id="keep"></span> 天，台灣時間；點一天看細節）</h2><div class="wrap"><table id="days"></table></div></section>
 <section><div class="top"><h2 id="dayTitle">當天</h2><div class="chips" id="dayChips"></div></div>
 <div class="sub">每小時同時在線的最高人數</div><div class="chart" id="chart"></div><div class="axis" id="axis"></div></section>
@@ -86,6 +87,16 @@ table($('people'),['名字（舊→新）','裝置','IP','首次','最近','場�
  r.title='代碼 '+p.pid;if(same)r.lastChild.className='warn';return r}),[5,7,8,9]);
 if(!list.length)$('people').append(el('caption','沒有符合的玩家。'))}
 $('q').oninput=drawPeople;
-drawDays();drawDay();drawPeople();
+// 玩家意見箱（港口的漁會意見信箱收到的）：依分類篩選、找關鍵字。內容一律用 textContent 放進畫面
+const FBK={bug:'🐛 Bug 回報',idea:'💡 玩法建議',perf:'📱 卡頓／操作問題'};let fbKind='';
+function drawFb(){const q=$('fbQ').value.trim().toLowerCase(),all=R.feedback||[];
+const list=all.filter((f)=>(!fbKind||f.kind===fbKind)&&(!q||(f.text+' '+f.name+' '+f.pid).toLowerCase().includes(q)));
+$('fbN').textContent=all.length;
+const ks=$('fbKinds');ks.replaceChildren();
+[['','全部']].concat(Object.entries(FBK)).forEach(([k,t])=>{const b=el('button',t+'（'+all.filter((f)=>!k||f.kind===k).length+'）','chip');b.style.cursor='pointer';b.style.font='inherit';b.style.color='inherit';b.style.background=k===fbKind?'var(--bar)':'transparent';b.onclick=()=>{fbKind=k;drawFb()};ks.append(b)});
+table($('fb'),['時間','分類','玩家（代碼）','意見內容'],list.map((f)=>row([full(f.at),FBK[f.kind]||f.kind,f.name+'（'+f.pid+'）',f.text])));
+if(!list.length)$('fb').append(el('caption',all.length?'沒有符合的意見。':'還沒有人投遞意見。'))}
+$('fbQ').oninput=drawFb;
+drawDays();drawDay();drawPeople();drawFb();
 </script></body></html>`;
 }

@@ -23,9 +23,9 @@ export function runMenu(net, onLook) {
     $('noticeList').replaceChildren(...NOTICE.items.map((t) => Object.assign(document.createElement('li'), { textContent: t })));
     // 更新資訊：最近 3 條（全部在進遊戲後平板的「公告」app 裡；看過沒、小紅點見 updates.js）
     const mk = (tag, text) => Object.assign(document.createElement(tag), { textContent: text });
-    updList.replaceChildren(...UPDATES.slice(0, 3).map((u) => {
+    updList.replaceChildren(...UPDATES.slice(0, 3).map((u, i) => {
       const sec = document.createElement('section'), h = mk('h4', u.title), ul = document.createElement('ul');
-      if (isUnread(u)) {
+      if (i === 0 && isUnread(u)) {
         sec.className = 'fresh';
         h.append(Object.assign(mk('span', '新'), { className: 'updNew' }));
       }

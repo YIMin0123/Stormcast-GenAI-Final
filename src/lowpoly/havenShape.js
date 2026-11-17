@@ -1,6 +1,7 @@
 // 探險大港灣島的形狀：只有數字和算式（不碰畫面），瀏覽器和伺服器共用。座標是大港座標（見 havenPlan.js）。
 import * as V from './havenPlan.js';
 import { fbm } from './homeShape.js';
+import { ladderRamp } from './seaYardShape.js';
 
 const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -331,7 +332,7 @@ export function havenDeck(x, z, feet) {
   const K = diveDeck(), dx = x - K.x, dz = z - K.z, a = dx * K.ux + dz * K.uz, b = -dx * K.uz + dz * K.ux;
   if (a > -0.2 && a < K.len && Math.abs(b) < K.half && feet > K.y - 0.7) return K.y;
   const hit = deckAt(x, z);
-  if (!hit) return null;
+  if (!hit) return ladderRamp(PT.ladders, PT.deckY, x, z);   // 爬梯：落水的人從這裡爬上棧橋
   const y = hit[0].y0 + (hit[0].y1 - hit[0].y0) * hit[1];
   return feet > y - 0.9 ? y : null;
 }
@@ -348,8 +349,24 @@ function deckAt(x, z, grow = 0) {
 }
 // 船會不會撞上碼頭（棧橋、坡道底下都是樁，船過不去）
 export const portPier = (x, z) => deckAt(x, z, -0.15) !== null;
-// 這一點是不是在小屋裡（牆擋著，人進不去）。pad：多算寬幾公尺
+// (x, z) 離棧橋、坡道不到 pad 公尺（擺石頭的時候避開用）
+export const portDeckNear = (x, z, pad) => deckAt(x, z, pad) !== null;
+// 岸上三棟和裡面的擺設、祭壇上的東西：擋路的長方形（大港座標）
+const WT = 0.25;
+const shedWalls = (b) => [
+  { x0: b.x0, x1: b.x1, z0: b.z0, z1: b.z0 + WT },            // 背牆
+  { x0: b.x0, x1: b.x0 + WT, z0: b.z0, z1: b.z1 - 1.2 },      // 兩道側牆（靠正面留一段，像敞開的店面）
+  { x0: b.x1 - WT, x1: b.x1, z0: b.z0, z1: b.z1 - 1.2 },
+];
+export const PORT_BLOCKS = [
+  ...shedWalls(PT.chandlery), PT.bar, PT.island,
+  { x0: PT.market.x0, x1: PT.market.x1, z0: PT.market.z0, z1: PT.market.z0 + WT }, ...PT.troughs,
+  { x0: PT.boards.cols[0].x - 1.1, x1: PT.boards.cols[3].x + 0.95, z0: PT.boards.z - 0.2, z1: PT.boards.z + 0.2 },   // 榜亭裡那排看板
+  { x0: PT.altar.x - PT.altar.table.hw, x1: PT.altar.x + PT.altar.table.hw, z0: PT.altar.table.z0, z1: PT.altar.table.z1 },   // 祭壇的供桌
+];
+// 這一點是不是在小屋或店面的牆、擺設裡（擋著，人進不去）。pad：多算寬幾公尺
 export function portWall(x, z, pad = 0.1) {
+  if (z > -70 && z < -50) for (const r of PORT_BLOCKS) if (x > r.x0 - pad + 0.1 && x < r.x1 + pad - 0.1 && z > r.z0 - pad + 0.1 && z < r.z1 + pad - 0.1) return true;
   for (const [hx, hz, w, d, , turn] of PT.houses) {
     if (Math.abs(x - hx) + Math.abs(z - hz) > w + d) continue;
     const rot = Math.atan2(V.BAY.x - hx, V.BAY.z - hz) + turn * Math.PI / 180, c = Math.cos(rot), s = Math.sin(rot);
@@ -358,8 +375,12 @@ export function portWall(x, z, pad = 0.1) {
   }
   return false;
 }
-// 山城小屋的石砌地基和門前平台，與 port3d 的建模採用同一組尺寸及高度。
+// 山城小屋的石砌地基和門前平台，與 port3d 的建模採用同一組尺寸及高度。祭壇的石台也在這裡（圓的，比地面高 lift）
 export function portFoundation(x, z, groundAt) {
+  const A = PT.altar;
+  const ad = (x - A.x) ** 2 + (z - A.z) ** 2;
+  if (ad < A.r * A.r) return groundAt(A.x, A.z) + A.lift;
+  if (ad < (A.r + A.step) ** 2) return groundAt(A.x, A.z) + A.lift / 2;   // 外圈的一階石階
   for (const [hx, hz, w, d, , turn] of PT.houses) {
     if (Math.abs(x - hx) + Math.abs(z - hz) > w + d + 2) continue;
     const rot = Math.atan2(V.BAY.x - hx, V.BAY.z - hz) + turn * Math.PI / 180, c = Math.cos(rot), s = Math.sin(rot);
@@ -379,5 +400,5 @@ export function portBollards() {
       for (const b of d.id === 'pier' ? [-d.half + 0.3, d.half - 0.3] : [d.half - 0.3]) list.push({ x: d.x + d.ux * a - d.uz * b, z: d.z + d.uz * a + d.ux * b });
     }
   }
-  return list;
+  return list.concat(PT.moreBollards);
 }

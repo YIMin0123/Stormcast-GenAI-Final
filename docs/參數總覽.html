@@ -1,0 +1,204 @@
+<title>Stormcast 參數總覽</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<style>
+/* 版面：左側目錄 + 右側各章節的資料表；像一本船用手冊的參數頁 */
+:root {
+  --bg: #f3f6f7; --panel: #ffffff; --fg: #14272e; --muted: #5d727a; --line: #d5e0e4;
+  --accent: #0b7a8a; --accent-soft: #dcf0f3; --warn: #b4532a;
+  --sans: "Noto Sans TC", system-ui, "Microsoft JhengHei", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0d1a1f; --panel: #14262d; --fg: #dbe8ec; --muted: #8aa1a9; --line: #274049;
+  --accent: #4fc3d4; --accent-soft: #163640; --warn: #e8946a; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0d1a1f; --panel: #14262d; --fg: #dbe8ec; --muted: #8aa1a9; --line: #274049;
+  --accent: #4fc3d4; --accent-soft: #163640; --warn: #e8946a; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); line-height: 1.65; font-size: 15px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 64px; }
+.wrap { max-width: 1080px; margin: 0 auto; }
+header h1 { font-size: 28px; margin: 0 0 6px; letter-spacing: .02em; text-wrap: balance; }
+header p { margin: 0; color: var(--muted); max-width: 62ch; }
+nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 22px 0 8px; }
+nav a { color: var(--accent); text-decoration: none; border: 1px solid var(--line); background: var(--panel); padding: 4px 12px; border-radius: 999px; font-size: 13px; }
+nav a:hover, nav a:focus-visible { background: var(--accent-soft); outline: none; }
+section { margin-top: 40px; }
+h2 { font-size: 19px; margin: 0 0 4px; padding-bottom: 8px; border-bottom: 2px solid var(--accent); display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+h2 small { font-family: var(--mono); font-weight: 400; font-size: 12px; color: var(--muted); }
+.note { color: var(--muted); font-size: 13.5px; margin: 8px 0 14px; max-width: 70ch; }
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; vertical-align: top; }
+th { font-weight: 500; font-size: 12px; letter-spacing: .06em; color: var(--muted); background: var(--accent-soft); }
+tr:last-child td { border-bottom: 0; }
+td.n, th.n { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+td.k { font-weight: 500; }
+td.w { white-space: normal; min-width: 14em; color: var(--muted); }
+code { font-family: var(--mono); font-size: 12.5px; background: var(--accent-soft); padding: 1px 6px; border-radius: 4px; }
+.kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.kv > div { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; min-width: 0; }
+.kv dt { font-size: 12px; color: var(--muted); }
+.kv dd { margin: 2px 0 0; font-family: var(--mono); font-size: 16px; overflow-wrap: anywhere; }
+.kv dd span { font-family: var(--sans); font-size: 12px; color: var(--muted); display: block; }
+.tag { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); margin-left: 6px; }
+.tag.night { background: #2a2f5c; color: #b8c2ff; }
+footer { margin-top: 48px; color: var(--muted); font-size: 12.5px; }
+</style>
+
+<div class="wrap">
+<header>
+  <h1>Stormcast 參數總覽</h1>
+  <p>島嶼釣魚遊戲目前的數值整理，全部從程式碼讀出來。想改的話，欄位旁標了檔案位置；地圖與港口的參數在 <code>src/config.js</code>。</p>
+  <nav>
+    <a href="#world">世界與地圖</a><a href="#boats">船</a><a href="#shop">商店</a><a href="#fish">魚種</a>
+    <a href="#zones">釣魚海域</a><a href="#rod">釣竿與咬餌</a><a href="#sea">海況與災害</a><a href="#multi">多人</a>
+  </nav>
+</header>
+
+<section id="world">
+  <h2>世界與地圖 <small>src/config.js · src/frame.js</small></h2>
+  <p class="note">只留一座母港島。港口用「港座標」設計，整個轉到世界裡；浪向與太陽水平方向一起轉，港內才維持背風面。</p>
+  <dl class="kv">
+    <div><dt>地圖邊長</dt><dd>2048 m<span>原點在中央，+x 東、+z 南</span></dd></div>
+    <div><dt>母島中心（世界）</dt><dd>(−552, −579)<span>地圖左上一帶</span></dd></div>
+    <div><dt>港口面向</dt><dd>135°<span>正北 0、順時針；東南</span></dd></div>
+    <div><dt>母島中心（港座標）</dt><dd>(0, 40)<span>設計圖參照點</span></dd></div>
+    <div><dt>浪向偏斜</dt><dd>8.6°<span>相對港口背面；浪由西北吹向東南</span></dd></div>
+    <div><dt>島半徑 / 主丘高</dt><dd>150 m / 18 m<span>圓丘半徑 125 m</span></dd></div>
+    <div><dt>地形解析度</dt><dd>2 m / 格<span>1024 × 1024；避浪、危險度 4 m / 格</span></dd></div>
+    <div><dt>船可航行範圍</dt><dd>±994 m<span>邊長一半再縮 30 m</span></dd></div>
+    <div><dt>遊戲時間</dt><dd>1 小時 = 75 秒<span>一天 30 分鐘；天黑 18:30、天亮 05:30</span></dd></div>
+    <div><dt>島上植被</dt><dd>闊葉 300 · 針葉 150 · 灌木 160<span>岸邊石 46 · 陸上石 30</span></dd></div>
+  </dl>
+</section>
+
+<section id="boats">
+  <h2>船 <small>src/boatdata.js · src/boat.js</small></h2>
+  <p class="note">引擎每升一級極速 +15%。魚箱等級 0–3 各能裝 0／6／12／20 條魚（再加上船本身的魚箱）。</p>
+  <div class="scroll"><table id="tBoats"></table></div>
+</section>
+
+<section id="shop">
+  <h2>商店 <small>src/boatdata.js</small></h2>
+  <p class="note">引擎價錢 = 基本價 × 船的倍率，四捨五入到十位。釣竿斷了先修，錢不夠也修得起，身上有多少收多少。</p>
+  <div class="scroll"><table id="tShop"></table></div>
+  <p class="note" style="margin-top:14px">一桶油 = 20 公升；修釣竿依釣竿等級 $40／$100／$220／$450；扳手一個 $150（修船破洞用）；新船：漁船 $700、大漁船 $3,000。</p>
+</section>
+
+<section id="fish">
+  <h2>魚種 <small>src/fishdata.js</small></h2>
+  <p class="note">價值 = 每公斤 $100 × 魚種倍率 × 重量。大小是長尾分布：多數落在常見範圍前段，偶爾冒出好幾倍大的。重量欄是常見範圍，可以超出。</p>
+  <div class="scroll"><table id="tFish"></table></div>
+</section>
+
+<section id="zones">
+  <h2>釣魚海域 <small>pickSpecies</small></h2>
+  <p class="note">依水深與離最近陸地的距離決定魚種；交界處有 ±35 公尺的隨機，兩邊的魚都釣得到。表中是出現機率權重。「特產」現在只剩母島的黑鯛，其他島已移除。</p>
+  <div class="scroll"><table id="tZones"></table></div>
+  <p class="note" style="margin-top:14px">離岸越遠個頭越大：離岸 60 m 起算，到 440 m 滿；浪大的日子（離岸 120 m 以上）外海魚更大；離岸 250–550 m 起再加「遠洋」加成最多 +60%。越值錢的魚越難釣（身價 $20 以下不算、$800 以上到頂）。</p>
+</section>
+
+<section id="rod">
+  <h2>釣竿與咬餌 <small>fishdata.js · fishing.js</small></h2>
+  <div class="scroll"><table id="tRod"></table></div>
+  <p class="note" style="margin-top:14px">咬餌等待 = (2.5～9 秒) × 0.82<sup>竿等級</sup> × (1 − 0.35 × 雨量比例，雨到 0.5 就封頂)。拋竿距離 = 22 m × (1 + 0.25 × 竿等級)。魚的掙扎力 = 魚種力道 × 個頭係數 × 價值係數；收線進度從 30% 開始，伺服器依力道擋掉「太快釣起來」。</p>
+</section>
+
+<section id="sea">
+  <h2>海況與災害 <small>src/weather.js</small></h2>
+  <p class="note">離陸地越遠越危險：風暴與巨浪只在外海發威，島周圍與港口由避浪係數保持平靜。</p>
+  <div class="scroll"><table id="tSea"></table></div>
+</section>
+
+<section id="multi">
+  <h2>多人與停船 <small>server/room.js · src/layout.js</small></h2>
+  <dl class="kv">
+    <div><dt>每房人數上限</dt><dd>30</dd></div>
+    <div><dt>停船格</dt><dd>58<span>浮橋小舢舨 24 · 堤內大船 4 · 港外錨地 30</span></dd></div>
+    <div><dt>每人在世界裡的船</dt><dd>1 艘<span>其他收進倉庫；離開 30 秒後船消失</span></dd></div>
+    <div><dt>港內範圍（港座標）</dt><dd>x −125～30 · z 112～210<span>換船、收船要在這裡面</span></dd></div>
+    <div><dt>岸壁高度</dt><dd>1.3 m<span>浮橋橋面 0.55 m</span></dd></div>
+    <div><dt>商店位置（港座標）</dt><dd>(−20, 107.5)<span>9 × 6 m；燈塔 (30, 108)</span></dd></div>
+  </dl>
+</section>
+
+<footer>資料來源：專案原始碼（home-island-move 合併後的 main）。數值以程式碼為準，這頁是整理用。</footer>
+</div>
+
+<script>
+const E = (id) => document.getElementById(id);
+const fmt = (v) => '$' + Math.round(v).toLocaleString('en-US');
+function table(el, head, rows, nums = []) {
+  el.innerHTML = '<thead><tr>' + head.map((h, i) => `<th class="${nums.includes(i) ? 'n' : ''}">${h}</th>`).join('') + '</tr></thead><tbody>' +
+    rows.map((r) => '<tr>' + r.map((c, i) => `<td class="${i === 0 ? 'k' : ''} ${nums.includes(i) ? 'n' : ''}">${c}</td>`).join('') + '</tr>').join('') + '</tbody>';
+}
+
+// 船
+const boats = [
+  ['小舢舨', 0, 6, 2.2, 0.45, 4.4, 60, 20, 0.04, '敞船', 0.4],
+  ['漁船', 700, 13, 4.6, 1.0, 7, 120, 60, 0.09, '有駕駛艙', 1],
+  ['大漁船', 3000, 18, 6.2, 1.3, 8.6, 200, 120, 0.16, '有駕駛艙', 1.8],
+];
+table(E('tBoats'), ['船', '價錢', '長 m', '寬 m', '吃水 m', '極速 m/s', '耐久', '油箱 L', '全速耗油 L/s', '型式', '引擎價格倍率'],
+  boats.map((b) => [b[0], fmt(b[1]), b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], '×' + b[10]]), [1, 2, 3, 4, 5, 6, 7, 8, 10]);
+
+// 商店
+const eng = [200, 500, 1000], box = [100, 300, 700], rod = [120, 350, 800];
+const engP = (k) => eng.map((p) => fmt(Math.round(p * k / 10) * 10)).join(' → ');
+table(E('tShop'), ['項目', '一級', '二級', '三級', '說明'], [
+  ['釣竿', ...rod.map(fmt), '拋得更遠、咬餌更快'],
+  ['魚箱', ...box.map(fmt), '裝在目前放在世界裡的那艘船'],
+  ['引擎（小舢舨）', ...eng.map((p) => fmt(Math.round(p * 0.4 / 10) * 10)), '極速每級 +15%'],
+  ['引擎（漁船）', ...eng.map((p) => fmt(p)), '極速每級 +15%'],
+  ['引擎（大漁船）', ...eng.map((p) => fmt(Math.round(p * 1.8 / 10) * 10)), '極速每級 +15%'],
+  ['油', fmt(30) + ' / 桶', '—', '—', '一桶 20 公升'],
+  ['扳手', fmt(150), '—', '—', '修船上的破洞'],
+], []);
+
+// 魚種
+const sp = [
+  ['沙丁魚', 0.15, 0.4, 0.30, 0.3, ''], ['鯖魚', 0.4, 1.2, 0.30, 0.5, ''], ['黑鯛（母島特產）', 0.6, 1.5, 0.40, 0.6, ''],
+  ['鰹魚', 2, 5, 0.38, 1.0, ''], ['鮪魚', 8, 25, 0.18, 1.2, ''],
+  ['小卷', 0.1, 0.4, 0.75, 0.3, 'night'], ['白帶魚', 0.5, 1.8, 0.62, 0.7, 'night'], ['旗魚', 15, 40, 0.22, 1.12, 'night'],
+  ['比目魚', 1, 2.5, 0.45, 0.6, 'gone'], ['石斑', 1.5, 4, 0.50, 0.9, 'gone'], ['海鰻', 1.3, 3.2, 0.45, 0.8, 'gone'], ['烏魚', 1, 2.6, 0.35, 0.7, 'gone'], ['紅鯛', 1.1, 2.8, 0.55, 0.8, 'gone'],
+];
+table(E('tFish'), ['魚', '常見重量 kg', '每公斤價', '常見價值', '掙扎力'],
+  sp.map((s) => [s[0] + (s[5] === 'night' ? '<span class="tag night">夜晚</span>' : s[5] === 'gone' ? '<span class="tag">其他島特產・目前釣不到</span>' : ''),
+    `${s[1]}～${s[2]}`, fmt(100 * s[3]), `${fmt(100 * s[3] * s[1])}～${fmt(100 * s[3] * s[2])}`, s[4]]), [1, 2, 3, 4]);
+
+// 海域
+table(E('tZones'), ['時段／海域', '離岸距離', '魚種與權重'], [
+  ['白天・淺灘', '水深 < 7 m', '沙丁魚 70 · 黑鯛 30'],
+  ['白天・近海', '< 120 m', '黑鯛 45 · 鯖魚 40 · 沙丁魚 15'],
+  ['白天・離岸', '120–250 m', '鯖魚 50 · 鰹魚 35 · 黑鯛 15'],
+  ['白天・外海', '250–400 m', '鰹魚 45 · 鯖魚 30 · 鮪魚 25'],
+  ['白天・遠洋', '> 400 m', '鮪魚 50 · 鰹魚 40 · 鯖魚 10'],
+  ['夜晚・淺灘', '水深 < 7 m', '小卷 55 · 沙丁魚 30 · 黑鯛 15'],
+  ['夜晚・近海', '< 120 m', '白帶魚 40 · 黑鯛 30 · 鯖魚 20 · 小卷 10'],
+  ['夜晚・離岸', '120–250 m', '白帶魚 35 · 鯖魚 30 · 鰹魚 25 · 旗魚 10'],
+  ['夜晚・外海', '250–400 m', '鰹魚 35 · 旗魚 30 · 鮪魚 20 · 白帶魚 15'],
+  ['夜晚・遠洋', '> 400 m', '旗魚 45 · 鮪魚 35 · 鰹魚 20'],
+]);
+
+// 釣竿
+table(E('tRod'), ['竿等級', '升級價', '平均咬餌等待（晴）', '拋竿距離', '修理價'], [
+  ['0（初始）', '—', '≈ 5.8 秒', '22 m', '$40'],
+  ['1', '$120', '≈ 4.8 秒', '27.5 m', '$100'],
+  ['2', '$350', '≈ 3.9 秒', '33 m', '$220'],
+  ['3', '$800', '≈ 3.2 秒', '38.5 m', '$450'],
+], [1, 2, 3, 4]);
+
+// 海況
+table(E('tSea'), ['災害', '數值'], [
+  ['巨浪（海嘯）', '三道水牆，間距 260 m；高度比例 0.6／1.0／0.75（第二道最大）；前進 22 m/s；從地圖外 1500 m 開始；浪頭水流速為浪速的 30%'],
+  ['捲浪', '浪頂水比浪快 9.2 m/s；尖端落下 72% 浪高後砸在浪腳；浪頂附近網格加密 4 倍'],
+  ['退潮（海嘯前）', '深度 7.5% 浪高；第一道浪前 1000 m 開始退、350 m 退到底；兩道浪之間退到 80%'],
+  ['大漩渦', '核心半徑 32 m；邊緣流速 √(9.8×26)≈16 m/s；水面凹陷 26 m；影響範圍 460 m；進入 24 m 內船就沉'],
+  ['水龍捲', '核心半徑 80 m；往中心 3.2 m/s、繞圈 7 m/s；影響 380 m；進入 46 m 內船就沉；周圍風 340 m 內'],
+  ['長浪（颱風）', '振幅 6.5 m；三道波長 310／215／150 m，振幅比 0.5／0.32／0.18'],
+  ['纜繩', '水流超過 4 m/s 或水位被抬高 2 m 就扯斷；船舷離樁 7.5 m 內才綁得到'],
+  ['浪時間循環', '2048 秒繞一圈（多人時大家的浪對得上）'],
+]);
+</script>

@@ -74,6 +74,16 @@ export function floatBoxes(room, owner) {
   }
 }
 
+// 買新船原地換船：這艘船甲板上的箱子（不管誰的）搬到新船的前甲板（spot() 給一個船身座標 [x, z]）
+export function moveDeckBoxes(room, owner, spot) {
+  for (const bx of room.boxes.values()) {
+    if (bx.k !== 'd' || bx.b !== owner.id) continue;
+    const [x, z] = spot();
+    Object.assign(bx, { x, y: 0, z });
+    show(room, bx);
+  }
+}
+
 // 進房（新來的、帶著存檔的）：存著的箱子放回他的船上；以前買過「船上的魚箱」的換成一個箱子放在船上
 export function homeBoxes(room, p) {
   const saved = p.savedBoxes || [];
@@ -143,10 +153,9 @@ export function sellBox(room, p, m) {
     total += f.value; p.fish.delete(u);
     if (!isJunk(f.id) && (!best || f.value > best.value)) best = f;
   }
-  if (haven) total = Math.round(total * (1 + PORT.bonus));
   bx.fish = [];
-  p.kit.money += total;
-  room.send(p, { t: 'sold', total, uids, kit: p.kit, box: bx.bid, at: haven ? 'haven' : undefined });
+  const pay = room.payout(p, total, haven ? PORT.bonus : 0);   // 大港多 15%、急凍魚艙、船隊分紅、經驗都在 payout 算
+  room.send(p, { t: 'sold', total: pay.total, fresh: pay.fresh, uids, kit: p.kit, box: bx.bid, at: haven ? 'haven' : undefined });
   show(room, bx);
   if (best) room.record(room.creditOf(p, best), best, p.name);
 }
@@ -237,11 +246,13 @@ export function onBoxMsg(room, p, m, now) {
       show(room, bx);
       return true;
     }
-    case 'boxOut': {   // 從自己的箱子拿一條出來（最上面那條）
+    case 'boxOut': {   // 從自己的箱子拿一條出來（玩家指到的那一條，沒指定就拿最上面那條）
       const bx = p.boxes.find((o) => o.bid === m.bid);
       if (!bx || bx.k === 'hand' || !bx.fish.length) return true;
       if (!nearBox(room, p, bx)) return room.send(p, { t: 'no', msg: '太遠了，拿不到' }), true;
-      const u = bx.fish.pop(), f = p.fish.get(u);
+      const idx = Number.isInteger(m.uid) ? bx.fish.indexOf(m.uid) : -1;
+      const u = idx >= 0 ? bx.fish.splice(idx, 1)[0] : bx.fish.pop();
+      const f = p.fish.get(u);
       if (f) room.send(p, { t: 'boxOut', fish: fishPub(u, f) });
       show(room, bx);
       return true;

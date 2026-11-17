@@ -6,7 +6,7 @@ import { SPECIES } from '../src/fishdata.js';
 
 // 釣到一條：更新圖鑑，回傳要告訴他的那一筆（isNew：第一次釣到這種）
 export function recordDex(p, f, at) {
-  const e = p.dex[f.id] || (p.dex[f.id] = { n: 0, len: 0, kg: 0, at: '' });
+  const e = (Object.hasOwn(p.dex, f.id) && p.dex[f.id]) || (p.dex[f.id] = { n: 0, len: 0, kg: 0, at: '' });
   e.n++;
   if (f.len > e.len) { e.len = f.len; e.kg = f.kg; e.at = at || e.at; }
   return { id: f.id, e, isNew: e.n === 1 };
@@ -47,17 +47,13 @@ export class Dexbooks {
   }
 }
 
-// 存檔讀回來：只留認得的魚種、數字正常的（另保留跨季榮譽稱號 _honors）
+// 存檔讀回來：只留認得的魚種、數字正常的；另外留著等級經驗 _lv（{ exp }）
 export function loadDex(raw) {
   const out = {};
   if (!raw || typeof raw !== 'object') return out;
   for (const [id, e] of Object.entries(raw)) {
-    if (id === '_honors' && e && typeof e === 'object') {
-      const titles = Array.isArray(e.titles) ? [...new Set(e.titles.filter((t) => typeof t === 'string' && t.length <= 24))] : [];
-      const title = typeof e.title === 'string' && titles.includes(e.title) ? e.title : '';
-      if (titles.length || title) out._honors = { titles, title };
-      continue;
-    }
+    if (id === '_lv') { if (e && e.exp > 0) out._lv = { exp: Math.floor(Math.min(e.exp, 1e9)) }; continue; }   // 等級經驗（永久）
+    if (id[0] === '_') continue;   // 舊版的跨季榮譽稱號（_honors）已經拿掉：稱號改成每週漁會捐款榜（guild.js）
     if (!SPECIES[id] || !e || !(e.n > 0)) continue;
     out[id] = { n: Math.floor(e.n), len: +e.len || 0, kg: +e.kg || 0, at: typeof e.at === 'string' ? e.at.slice(0, 20) : '' };
   }

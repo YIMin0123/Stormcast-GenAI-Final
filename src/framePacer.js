@@ -26,6 +26,8 @@ export class FramePacer {
 }
 
 export const MOBILE_FRAME_LIMITS = [30, 45, 60, 90, 120];
+export const DESKTOP_FRAME_LIMITS = [30, 60, 90, 120, 144, 0];
+export const fpsLabel = (fps) => (fps > 0 ? `${fps} FPS` : '不限');
 
 // 取瀏覽器回呼的間隔。修掉幾個過短或漏掉更新的樣本，避免單次抖動誤開高幀率。
 export class RefreshRateProbe {

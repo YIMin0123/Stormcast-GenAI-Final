@@ -53,6 +53,10 @@ export const ICON = {
   signal: svg(p('M5 19v-3M9.7 19v-6M14.3 19v-9M19 19V6')),
   rod: svg(p('M4 20L19 5') + p('M19 5v9') + p('M19 14a2 2 0 1 1-2 2')),
   box: svg(p('M3.5 9h17l-1.5 10.5h-14z') + p('M3.5 9l2-4h13l2 4') + p('M10 13h4')),
+  trophy: svg(p('M7 4h10v5a5 5 0 0 1-10 0z') + p('M7 6H4v2a3 3 0 0 0 3 3') + p('M17 6h3v2a3 3 0 0 1-3 3') + p('M12 14v4') + p('M8 20h8')),
+  shrine: svg(p('M12 3v18') + p('M7 7v3a5 5 0 0 0 10 0V7') + p('M5.5 8.5L7 6l1.5 2.5') + p('M15.5 8.5L17 6l1.5 2.5') + p('M10.5 5.5L12 3l1.5 2.5')),
+  battery: svg('<rect x="2.5" y="7" width="16.5" height="10" rx="2"/>' + p('M21.5 10v4') + '<rect x="5" y="9.5" width="11.5" height="5" rx="1" fill="currentColor" stroke="none"/>'),
+  compass: svg('<circle cx="12" cy="12" r="9"/>' + p('M15.5 8.5l-2.2 5.3-5.3 2.2 2.2-5.3z')),
   // 刷新：循環箭頭
   refresh: svg(p('M20.5 12A8.5 8.5 0 1 1 19.36 7.75') + p('M19.6 3.7v4.2h-4.2')),
 };

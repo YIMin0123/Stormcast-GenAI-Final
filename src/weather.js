@@ -194,12 +194,12 @@ export const VORTEX = {
   // 水面的形狀是流速決定的：中心凹下去的深度 = 最大流速² ÷ 重力，核心邊緣剛好是一半深，往外跟距離平方成反比。
   // 外海只有三十公尺深，所以漏斗做到二十六公尺（再深就挖到海床了）；洞口（陷下去超過一公尺的範圍）直徑約兩百三十公尺
   //   vt：核心邊緣的流速（= √(9.8 × 深度)）；kin0–kin1：往中心流的速度佔繞圈速度的幾成（kr0 → kr1 公尺之間越靠近越大）
-  whirl: { rc: 32, vt: Math.sqrt(9.8 * 26), h: -26, far: 460, core: 24, kin0: 0.1, kin1: 0.2, kr0: 80, kr1: 32 },
-  // 水龍捲是個龐然大物（漏斗腳下的半徑就有四十幾公尺），幾百公尺外就感覺得到它在拉
-  spout: { rc: 80, vin: 3.2, vt: 7, far: 380, core: 46, h: 3, hw: 55 },
+  whirl: { rc: 32, vt: Math.sqrt(9.8 * 26), h: -26, far: 560, core: 32, kin0: 0.15, kin1: 0.43, kr0: 190, kr1: 32 },
+  // 水龍捲是個龐然大物（漏斗腳下核心半徑五十多公尺），即使滿改大船靠近也會被狠狠吸扯
+  spout: { rc: 105, vin: 15.5, vt: 21.0, far: 480, core: 54, h: 4.2, hw: 65 },
 };
 // 水龍捲周圍的風：繞著它轉、越靠近越強，一陣一陣的。吹在船身上會把船壓歪（橫著受風最危險）
-const SPOUT_WIND = { rc: 80, far: 340 };
+const SPOUT_WIND = { rc: 105, far: 420 };
 const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 const TOPU = 1 / Math.cosh(CURL.aU) ** 2;
 // shader 裡 tsuCurlPos 的反函數（只算浪壁和背面，不含拋出去的捲舌）：浪頂被往前推之後，
@@ -252,9 +252,11 @@ export class Sea {
     this.slow = 1;                   // 變化放慢的倍數（颱風來之前要醞釀很久）
     this.tsu = { on: false, dx: 0, dz: 1, front: 0, H: 0, seed: 0 };
     this.vortices = [];              // 漩渦與水龍捲：{ kind, x, z, vx, vz, s, age, life }
+    this.endedVortices = [];         // 剛自然消散的漩渦／水龍捲（供伺服器產生消散獎勵用）
     this.spoutIn = Infinity;         // 再過幾秒可能冒出一道水龍捲
     this.spoutLeft = 0;
     this.after = 0;                  // 風暴、颱風、海嘯剛過去：還剩幾秒（這段時間海裡會冒出平常看不到的魚與漂流物）
+    this.ev = null;                  // 目前海上事件的觸發起點／中心（給地圖標記用）：{ kind, x, z }
   }
 
   // 對釣魚來說現在的海況：'before' 快要有大事了（颱風醞釀、海嘯前兆）、'after' 剛過去、其餘 null
@@ -269,8 +271,8 @@ export class Sea {
       this.phase = 'storm';
       this.dur = rand(170, 230);
       this.goal = { ...CALM, storm: rand(0.9, 1.3), gloom: 0.9, rumble: 0.35, rain: 0.7, thunder: 0.35, swell: 0.3, veer: rand(-0.3, 0.3) };
-      this.spoutLeft = kind === 'spout' || Math.random() < 0.6 ? 1 : 0;
-      this.spoutIn = kind === 'spout' ? 6 : rand(50, 110);
+      if (kind === 'spout' && this._spawn('spout', env)) { this.spoutLeft = 0; this.spoutIn = Infinity; }
+      else { this.spoutLeft = kind === 'spout' || Math.random() < 0.7 ? 1 : 0; this.spoutIn = kind === 'spout' ? 6 : rand(45, 95); }
     } else if (kind === 'thunder') {
       this.phase = 'thunder';
       this.dur = rand(150, 200);
@@ -294,26 +296,41 @@ export class Sea {
       const a = rand(0, Math.PI * 2);
       this.tsu = { on: false, dx: Math.cos(a), dz: Math.sin(a), front: -TSU.reach, H: rand(26, 34), seed: rand(0, 6.28) };
     }
+    const vLast = this.vortices.at(-1);
+    if ((kind === 'whirl' || kind === 'spout') && vLast) {
+      this.ev = { kind, x: Math.round(vLast.x), z: Math.round(vLast.z) };
+    } else if (this.phase === 'omen') {
+      this.ev = { kind: 'tsunami', x: Math.round(-this.tsu.dx * 820), z: Math.round(-this.tsu.dz * 820) };
+    } else {
+      const pt = this._pickSpot(env, 420, 720) || env?.near;
+      this.ev = pt ? { kind, x: Math.round(pt.x), z: Math.round(pt.z) } : null;
+    }
     return true;
   }
 
-  // 在外海找一個地方生成漩渦或水龍捲：離玩家的船不遠（看得到、有時間躲），但不會直接出現在腳下
-  _spawn(kind, env) {
-    if (!env) return false;
-    // 水龍捲很大，要生在更遠的地方（不然一出現船就在它的風圈裡）
-    const spout = kind === 'spout', dMin = spout ? 520 : 400, dMax = spout ? 820 : 680;   // 大漩渦四百公尺外就感覺得到水流，也要生遠一點
+  _pickSpot(env, dMin, dMax) {
+    if (!env) return null;
     for (let n = 0; n < 80; n++) {
       const a = rand(0, Math.PI * 2), d = rand(dMin, dMax);
       const x = (n < 50 ? env.near.x : 0) + Math.cos(a) * (n < 50 ? d : rand(0, 850));
       const z = (n < 50 ? env.near.z : 0) + Math.sin(a) * (n < 50 ? d : rand(0, 850));
       if (Math.abs(x) > 900 || Math.abs(z) > 900 || env.dangerAt(x, z) < 0.9) continue;
       if (Math.hypot(x - env.near.x, z - env.near.z) < dMin * 0.8) continue;
-      // 水龍捲大致朝著船這邊過來（偏個幾十度），不會一出現就往反方向走掉
-      const va = spout ? Math.atan2(env.near.z - z, env.near.x - x) + rand(-0.9, 0.9) : 0, sp = spout ? rand(3, 5.5) : 0;
-      this.vortices.push({ kind, x, z, vx: Math.cos(va) * sp, vz: Math.sin(va) * sp, s: 0, age: 0, life: spout ? rand(110, 150) : rand(190, 250) });
-      return true;
+      return { x, z };
     }
-    return false;
+    return null;
+  }
+
+  // 在外海找一個地方生成漩渦或水龍捲：離玩家的船不遠（看得到、有時間躲），但不會直接出現在腳下
+  _spawn(kind, env) {
+    // 水龍捲很大，要生在更遠的地方（不然一出現船就在它的風圈裡）
+    const spout = kind === 'spout', dMin = spout ? 520 : 500, dMax = spout ? 820 : 780;   // 外圍拉扯變遠了，生成時離船夠遠免得直接貼臉
+    const spot = this._pickSpot(env, dMin, dMax);
+    if (!spot) return false;
+    // 水龍捲大致朝著船這邊壓過來（偏角收斂一點），不會一出現就往反方向飄走
+    const va = spout ? Math.atan2(env.near.z - spot.z, env.near.x - spot.x) + rand(-0.75, 0.75) : 0, sp = spout ? rand(4.5, 7.8) : 0;
+    this.vortices.push({ kind, x: spot.x, z: spot.z, vx: Math.cos(va) * sp, vz: Math.sin(va) * sp, s: 0, age: 0, life: spout ? rand(120, 160) : rand(190, 250) });
+    return true;
   }
 
   update(dt, env) {
@@ -366,10 +383,13 @@ export class Sea {
         // 靠近陸地、或風暴已經過去，就開始消散（留夠時間讓漏斗變細、縮回雲裡）
         const fade = (env && env.dangerAt(v.x, v.z) < 0.6) || this.phase === 'calm';
         if (fade && v.age < v.life - 40) v.life = v.age + 40;
-        // 海面先起白沫，漏斗垂到海面（約半分鐘）之後吸力和風才到最強
-        v.s = smooth(6, 40, v.age) * smooth(0, 28, v.life - v.age);
-      } else v.s = smooth(0, 55, v.age) * smooth(0, 35, v.life - v.age);   // 這麼大的漩渦要轉將近一分鐘才成形，散掉也要半分鐘
-      if (v.age >= v.life) this.vortices.splice(this.vortices.indexOf(v), 1);
+        // 十幾秒內快速觸海，立即展現猛烈吸扯與陣風
+        v.s = smooth(2, 14, v.age) * smooth(0, 18, v.life - v.age);
+      } else v.s = smooth(0, 12, v.age) * smooth(0, 22, v.life - v.age);   // 十幾秒內成形為狂暴漩渦，進到白浪圈就會明顯被吸扯
+      if (v.age >= v.life) {
+        this.vortices.splice(this.vortices.indexOf(v), 1);
+        if (!this.remote && v.life >= 60) this.endedVortices.push({ kind: v.kind, x: v.x, z: v.z });
+      }
     }
 
     // 每樣東西變化的快慢不同（秒）：天色先變，海才跟著變；風暴來得慢，巨浪前的平靜來得比較快
@@ -383,6 +403,7 @@ export class Sea {
     this.next = SEA_GAP;
     this.goal = { ...CALM };
     this.spoutLeft = 0;
+    this.ev = null;
   }
 
   // 巨浪在 (x, z) 的高度（還沒乘上危險係數）
@@ -484,15 +505,23 @@ export class Sea {
     return h;
   }
 
-  // 離最近的漩渦多遠：回傳 { r, s }（沒有漩渦時 r 是 Infinity）
-  whirlNear(x, z) {
+  nearOf(kind, x, z) {
     const out = { r: Infinity, s: 0, x: 0, z: 0 };
     for (const v of this.vortices) {
-      if (v.kind !== 'whirl') continue;
+      if (v.kind !== kind) continue;
       const r = Math.hypot(v.x - x, v.z - z);
       if (r < out.r) { out.r = r; out.s = v.s; out.x = v.x; out.z = v.z; }
     }
     return out;
+  }
+  whirlNear(x, z) { return this.nearOf('whirl', x, z); }
+  spoutNear(x, z) { return this.nearOf('spout', x, z); }
+  // 在成形中的漩渦或水龍捲外圍危險圈（260m／280m 內）冒險垂釣可享風險加成
+  vortexBonusAt(x, z) {
+    for (const v of this.vortices) {
+      if (v.s > 0.35 && Math.hypot(v.x - x, v.z - z) < (v.kind === 'whirl' ? 260 : 280)) return true;
+    }
+    return false;
   }
 
   // 漩渦與水龍捲對 (x, z) 處的船的拉扯：往中心拉、帶著繞圈。回傳 { x, z, spin, wx, wz }
@@ -504,25 +533,27 @@ export class Sea {
       if (r < 0.01) continue;
       const ux = dx / r, uz = dz / r;
       if (v.kind === 'spout' && r < SPOUT_WIND.far) {
-        // 漏斗真的碰到海面之後風才大（v.s 在漏斗還沒垂下來時就開始漲了，所以再壓一次）
-        const gust = 0.8 + 0.2 * Math.sin(v.age * 1.7 + r * 0.15) + 0.14 * Math.sin(v.age * 4.3 + v.life);
-        const w = v.s * v.s * gust * (r / SPOUT_WIND.rc) * Math.exp(1 - r / SPOUT_WIND.rc) * smooth(SPOUT_WIND.far, SPOUT_WIND.far - 80, r);
+        const gust = 0.92 + 0.28 * Math.sin(v.age * 2.1 + r * 0.15) + 0.20 * Math.sin(v.age * 4.9 + v.life);
+        const w = Math.pow(v.s, 1.5) * gust * (r / SPOUT_WIND.rc) * Math.exp(1 - r / SPOUT_WIND.rc) * smooth(SPOUT_WIND.far, SPOUT_WIND.far - 85, r);
         out.wx += w * (0.3 * ux - uz); out.wz += w * (0.3 * uz + ux);
       }
       if (r > V.far) continue;
       if (v.kind === 'whirl') {
-        // 繞圈的流速：核心外跟距離成反比，核心裡跟距離成正比；往中心流的那一份越靠近越大（小船在四十幾公尺內就開不出來了）
-        const vt = V.vt * (r < V.rc ? r / V.rc : V.rc / r) * v.s * smooth(V.far, V.far - 120, r);
-        const k = V.kin0 + V.kin1 * smooth(V.kr0, V.kr1, r);
-        out.x += vt * (k * ux - uz);
-        out.z += vt * (k * uz + ux);
-        out.spin -= 0.35 * vt / Math.max(r, V.rc);   // 船頭跟著水流轉的方向被帶著轉
+        // 廣域漩渦吸流：白色旋臂區（120–240m）就有強烈向心拖拽與甩尾；進到百公尺內連滿改大漁船都必須全力掙脫
+        const fade = smooth(V.far, V.far - 140, r);
+        const sw = (r < V.rc ? r / V.rc : Math.pow(V.rc / r, 0.45)) * 21.0 * v.s * fade;
+        const vr = (r < V.rc ? r / V.rc : 1) * (15.5 * smooth(300, 42, r) + 3.0 * smooth(540, 200, r)) * v.s * fade;
+        out.x += vr * ux - sw * uz;
+        out.z += vr * uz + sw * ux;
+        out.spin -= 1.45 * sw / Math.max(r, 42);   // 船頭被急流猛力帶偏、空轉失速時直接打橫捲入
         continue;
       }
-      const f = v.s * (r / V.rc) * Math.exp(1 - r / V.rc);
-      out.x += f * (V.vin * ux - V.vt * uz);
-      out.z += f * (V.vin * uz + V.vt * ux);
-      out.spin += f * 0.25;
+      const fade = smooth(V.far, V.far - 90, r);
+      const f = v.s * (r / V.rc) * Math.exp(1 - r / V.rc) * fade;
+      const fIn = v.s * (r < V.rc ? smooth(0, 12, r) : (r / V.rc) * Math.exp(1 - r / V.rc)) * fade;
+      out.x += fIn * V.vin * ux - f * V.vt * uz;
+      out.z += fIn * V.vin * uz + f * V.vt * ux;
+      out.spin += f * 0.78;
     }
     return out;
   }
@@ -530,7 +561,7 @@ export class Sea {
   // (x, z) 是不是已經進到漩渦或水龍捲的中心；是的話回傳 'whirl' 或 'spout'
   coreAt(x, z) {
     for (const v of this.vortices) {
-      if (v.s > (v.kind === 'spout' ? 0.85 : 0.5) && Math.hypot(v.x - x, v.z - z) < VORTEX[v.kind].core) return v.kind;
+      if (v.s > (v.kind === 'spout' ? 0.65 : 0.40) && Math.hypot(v.x - x, v.z - z) < VORTEX[v.kind].core) return v.kind;
     }
     return null;
   }

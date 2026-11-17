@@ -19,6 +19,7 @@ import { Admission, admissionKey } from './admission.js';
 import { Daily } from './daily.js';
 import { Profiles, epochAt } from './profiles.js';
 import { Dexbooks, loadDex } from './dex.js';
+import { Guild, syncTitles } from './guild.js';
 import { Activity, parseDevice, clientIp } from './activity.js';
 import { prodReport } from './prodStats.js';
 import { statsPage } from './statsPage.js';
@@ -44,6 +45,7 @@ const hub = {
   daily: new Daily(DATA),
   profiles: new Profiles(DATA),
   dexbook: new Dexbooks(DATA),   // 圖鑑：跟家當分開存，刷新不清
+  guild: new Guild(DATA),        // 漁會：每週捐款榜與稱號（guild.json），刷新不清、每週一重置
   activity: new Activity(DATA, { off: DEV }),  // 玩家活動紀錄（進出、換名、裝置、摘要），給管理網頁看，見 activity.js
   nextId: 1,
   merge: null,            // 正在進行的合併：{ from, to, phase: 'wait' | 'count', left }
@@ -112,6 +114,9 @@ function doMerge() {
   const boxes = [...from.boxes.values()];
   for (const bx of boxes) to.boxes.set(bx.bid, bx);
   from.boxes.clear(); from.offers.clear();
+  // 問到一半的船隊邀請、拖船請求作廢；拖纜不跟著搬（船隊、副駕在 enter 裡收掉，新房間的整包資料會讓畫面跟著清乾淨）
+  for (const a of from.asks.values()) { const t = moving.find((p) => p.id === a.to); if (t && t.ws) to.send(t, { t: 'askGone', aid: a.aid }); }
+  from.asks.clear(); from.tows = [];
   const moved = new Map();
   for (const p of moving) moved.set(p, to.enter(p, { fresh: false, quiet: true }));
   if (boxes.length) to.all({ t: 'box', add: boxes.map((bx) => boxPub(to, bx)) });
@@ -264,7 +269,8 @@ wss.on('connection', (ws, req) => {
     hub.lobby.delete(ws);
     const r = me.room;
     r.send(me, { t: 'joined', resume: r.resumeData(me), ...r.snapshot(me) });
-    r.all({ t: 'join', id: me.id, name: me.name, look: me.look, here: true, boat: r.boatInfo(me), quiet: true }, me);
+    hub.guild.rename(me.token, me.name);   // 接回來時可能改了名字：功德榜上的名字跟著換
+    r.tellJoin(me, true);                   // 稱號、等級要一起帶，不然別人看他的名牌會變空的
     // 斷線時遇到定時刷新：畫面上的船、魚還是舊的，整包重置再送一次
     if (me.resetMsg) { r.send(me, { t: 'reset', text: me.resetMsg, kit: me.kit, berth: r.berthInfo(me), boards: r.boards() }); me.resetMsg = null; }
     hub.activity.back(me, meta, r.name);
@@ -374,7 +380,14 @@ setInterval(() => {
     hub.eachRoom((r) => { for (const p of r.players.values()) hub.keep(p); });
     hub.profiles.save();
     hub.dexbook.save();
+    hub.guild.save();
     hub.activity.save();
+  }
+  // 每週一次（GUILD 設的那一天那個鐘點）：漁會功德榜清空，稱號跟著收回
+  if (n % 100 === 0 && hub.guild.roll(now)) {
+    syncTitles(hub);
+    hub.eachRoom((r) => { r.all(r.boards()); r.sys('📜 新的一週開始了：漁會功德榜重新計算，上週的稱號已收回', 'record'); for (const p of r.players.values()) r.on(p, { t: 'guild' }); });
+    hub.guild.save();
   }
   if (n % 600 === 0) {
     if (hub.daily.roll()) hub.eachRoom((r) => r.all(r.boards()));   // 午夜：今日紀錄清空
@@ -403,7 +416,7 @@ function refresh(test) {
   console.log(`[refresh] ${test ? '（測試）' : ''}刷新：重置了 ${k} 人（第 ${hub.profiles.epoch} 期）`);
 }
 
-const stop = () => { hub.eachRoom((r) => { for (const p of r.players.values()) hub.keep(p); }); hub.profiles.save(); hub.dexbook.save(); hub.daily.save(); hub.activity.stopAll(); process.exit(0); };
+const stop = () => { hub.eachRoom((r) => { for (const p of r.players.values()) hub.keep(p); }); hub.profiles.save(); hub.dexbook.save(); hub.guild.save(); hub.daily.save(); hub.activity.stopAll(); process.exit(0); };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
 http.listen(PORT, HOST, () => console.log(`Stormcast 伺服器：ws://${HOST}:${PORT}　今日紀錄、進度存在 ${DATA}`));

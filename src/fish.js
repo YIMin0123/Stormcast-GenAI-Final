@@ -102,7 +102,28 @@ export function makeCanMesh() {
   return g;
 }
 
-// 管理所有拿得起來的東西：釣上來的魚，還有油桶。env：
+// 誘魚桶的模型：橘紅色的木桶、上下兩道深灰鐵箍、蓋子上一塊餌料、金屬提把、正面一張白標牌畫著金色小魚
+// （提在手上、放在甲板上、漂在海上的都用這個）
+const HOLD_Y = { chest: 1.08, low: 0.74 };   // 東西拿在手上的高度：平常捧在胸前；第一人稱提著誘魚桶時放低到腰邊
+export function makeChumMesh() {
+  const g = new THREE.Group();
+  const L = (c) => new THREE.MeshLambertMaterial({ color: c });
+  const body = L(0xd95f18), hoop = L(0x3a3d40), lid = L(0xb04a12), bait = L(0x7a5a3a), white = L(0xf3efe4), gold = L(0xf2c230);
+  const cyl = (r0, r1, h, mat, y) => { const m = new THREE.Mesh(new THREE.CylinderGeometry(r0, r1, h, 10), mat); m.position.y = y; g.add(m); };
+  cyl(0.15, 0.135, 0.34, body, -0.02);
+  cyl(0.156, 0.154, 0.035, hoop, 0.09); cyl(0.146, 0.142, 0.035, hoop, -0.13);
+  cyl(0.14, 0.15, 0.03, lid, 0.165);
+  const part = (w, h, d, mat, x, y, z) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); g.add(m); return m; };
+  part(0.09, 0.04, 0.07, bait, 0.02, 0.195, 0.01);
+  part(0.2, 0.018, 0.025, hoop, 0, 0.27, 0); part(0.018, 0.1, 0.025, hoop, -0.1, 0.22, 0); part(0.018, 0.1, 0.025, hoop, 0.1, 0.22, 0);   // 提把
+  part(0.15, 0.11, 0.012, white, 0, -0.02, 0.146);   // 標牌
+  part(0.07, 0.035, 0.012, gold, -0.01, -0.02, 0.153);
+  part(0.03, 0.03, 0.012, gold, 0.04, -0.02, 0.153).rotation.z = Math.PI / 4;   // 魚尾
+  return g;
+}
+export const makeChumCan = makeChumMesh;
+
+// 管理所有拿得起來的東西：釣上來的魚，還有油桶、誘魚桶。env：
 //   player、boats（所有的船）、scene
 //   ground(x, z)：地面或棧板高度（很大的值 = 牆）
 //   waveAt(x, z)：該處的浪高
@@ -154,6 +175,35 @@ export class FishWorld {
     this.held = keep;
     this.env.player.carry = !!keep;
   }
+
+  // 誘魚桶：跟油桶一樣提著走、放下、丟出去；丟進海裡就是施放（由 env.landed 告訴伺服器）。
+  // 身上有幾桶是伺服器記的（kit.chum），這裡的桶子只是照那個數字擺出來（見 main.js 的 syncChums）
+  spawnChum() {
+    const it = {
+      can: true, chum: true, liters: 0, id: 'chum', sp: { name: '誘魚桶' }, kg: 0, value: 0, len: 0.3, thick: 0.4,
+      mesh: makeChumMesh(), state: 'held', boat: null,
+      x: 0, z: 0, y: 0, lx: 0, lz: 0, yaw: 0, vx: 0, vz: 0,
+      lively: 0, flopT: 1e9, hop: null, wash: 0, t: 0,
+    };
+    this._hold(it);
+    return it;
+  }
+  stowChum(boat, lx, lz) {
+    const keep = this.held;
+    this.held = null;
+    this._toBoat(this.spawnChum(), boat, lx, lz);
+    this.held = keep;
+    this.env.player.carry = !!keep;
+  }
+  // 現在擺出來的誘魚桶（手上的排最前面）、油桶
+  get chums() { return [this.held, ...this.items].filter((it) => it && it.chum); }
+  get cans() { return [this.held, ...this.items].filter((it) => it && it.can && !it.chum); }
+  // 收掉 n 桶誘魚桶（用掉了）：先收手上的
+  removeChum(it) {
+    if (it === this.held) this.discardHeld();
+    else { it.mesh.removeFromParent(); this._unlist(it); }
+  }
+  removeChums(n) { for (const it of this.chums.slice(0, n)) this.removeChum(it); }
 
   // 全部清掉（進到一間新的房間時）：地上、甲板上、籃子裡、手上的都不留（魚箱另外由 fishBox.js 照伺服器重畫）
   clearAll() {
@@ -242,6 +292,11 @@ export class FishWorld {
     if (!this.items.includes(it)) this.items.push(it);
     this._pose(it, 0);
     this._pub(it);
+  }
+
+  // 買新船原地換船：原本放在舊船（已收進倉庫）甲板上的自己的東西搬到新船的前甲板
+  rehome(boat) {
+    for (const it of this.items.filter((o) => o.boat && o.boat !== boat && o.boat.stored && !o.remote)) this._toBoat(it, boat, rand(1.2, 2.5), rand(-0.5, 0.5));
   }
 
   _toGround(it, x, z, y = this.env.ground(x, z)) {
@@ -447,7 +502,7 @@ export class FishWorld {
     this.env.splash(v.x, Math.max(v.y - 0.6, 0.1), v.z);
     it.mesh.removeFromParent();
     this._unlist(it);
-    this.env.toast(`${it.sp.name}${text}`);
+    if (!it.chum) this.env.toast(`${it.sp.name}${text}`);   // 誘魚桶丟進海裡是施放，話由伺服器回
     this._gone([it]);
   }
 
@@ -587,6 +642,7 @@ export class FishWorld {
     if (this.held) {
       const it = this.held;
       it.t += dt; it.lively -= dt;
+      if (it.chum) it.mesh.position.y = this.env.lowHold?.() ? HOLD_Y.low : HOLD_Y.chest;
       if (!it.can) {   // 在手上扭動：身體一陣一陣地甩（剛釣上來最兇，慢慢沒力）
         it.mesh.rotation.z = it.lively > 0 ? Math.sin(it.t * 9) * 0.05 : 0;
         flexFish(it.mesh, it.lively > 0 ? Math.min(1, it.lively / 25) * (Math.sin(it.t * 1.3) > 0.2 ? 1 : 0.3) : 0, dt);

@@ -1,12 +1,13 @@
 // 橋頭的商店（港口漁具行）和魚市場：外觀、店裡的裝潢、魚市場的攤位、收購站。配置都在 harborPlan.js（SHOP、SHOP_IN、GOODS、MARKET、MARKET_IN、SELL）。
 // 一樣是低面平塗，但做得比較細：木板牆一條一條、屋簷有封簷板和椽頭、店門口掛暖簾、屋頂立招牌；
-// 店裡有櫃台、整面貨架、釣竿架、吊燈、展示台上的引擎和船模型；魚市場有鋪冰的展示台、一排排的魚、晾乾的魚乾、活魚水槽。
+// 店裡有櫃台、整面貨架、釣竿架、吊燈、展示台上的漁村擺設（船務在海上修船屋和大港）；魚市場有鋪冰的展示台、一排排的魚、晾乾的魚乾、活魚水槽。
 // fb：主要的網格（大家都畫）；fd：小東西（貨架上的雜貨、魚乾、工具…），手機不畫。
 // 亂數用自己的種子：這裡加東西不會改到島上其他東西（石頭、樹）的位置
 import * as THREE from 'three';
 import { FaceBuilder, rng, SColor, SURF, withSurf } from './kit.js';
 import { jitter } from './palette.js';
 import * as H from './harborPlan.js';
+import { goodGeo, placeGeo } from './goods3d.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const C = (hex, surf = 0) => withSurf(new THREE.Color(hex), surf);
@@ -264,17 +265,6 @@ export function buildShopMarket({ fb, fd, P, box, obox, gableRoof, boatGeo, out,
     for (const sx of [-1, 1]) box(fb, g.x - 0.17, g.x + 0.17, y + 0.12, y + 0.36, g.z + sx * 0.1 - 0.005, g.z + sx * 0.1 + 0.005, Q.redDark, Q.redDark, r, 0.02);   // 側面的 X 壓紋（簡化成一塊）
   }
   {
-    // 扳手：斜立的展示板上一支大扳手
-    const g = G.wrench, y = g.y, M = mat4(g.x, y + 0.2, g.z - 0.02, 0, -0.35);
-    const sub = new FaceBuilder();
-    box(sub, -0.28, 0.28, -0.2, 0.2, -0.03, 0.0, P.woodLight, P.woodDark, r);
-    box(sub, -0.2, 0.12, -0.03, 0.03, 0.0, 0.025, Q.steel, Q.steel, r, 0.02);
-    for (const [a, b] of [[0.12, 0.2]]) { box(sub, a, b, -0.07, -0.025, 0, 0.025, Q.steel, Q.steel, r, 0.02); box(sub, a, b, 0.025, 0.07, 0, 0.025, Q.steel, Q.steel, r, 0.02); }
-    box(sub, -0.27, -0.2, -0.06, 0.06, 0, 0.025, Q.steel, Q.steel, r, 0.02);
-    put(fb, sub.build(), M);
-    box(fb, g.x - 0.18, g.x + 0.18, y, y + 0.05, g.z - 0.1, g.z + 0.12, P.woodDark, P.woodDark, r);
-  }
-  {
     // 釣竿：小木座上插三支往後仰的竿子（握把、捲線器）
     const g = G.rod, y = g.y;
     box(fb, g.x - 0.3, g.x + 0.3, y, y + 0.08, g.z - 0.14, g.z + 0.14, P.woodDark, P.wood, r);
@@ -345,7 +335,7 @@ export function buildShopMarket({ fb, fd, P, box, obox, gableRoof, boatGeo, out,
       cyl(fd, x + 0.06, D + 0.45, z, 0.045, 0.045, 0.045, 8, Q.dark, r, Math.PI / 2);
     }
   }
-  // ---- 東半邊：三座展示台（深色台座、淺色台面），擺引擎和兩艘船的模型 ----
+  // ---- 東半邊：三座展示台（深色台座、淺色台面），擺漁村的裝飾 ----
   I.plinths.forEach((p) => {
     const y = D + p.h;
     box(fb, p.x0 + 0.05, p.x1 - 0.05, D, D + 0.08, p.z0 + 0.05, p.z1 - 0.05, P.woodDark, P.woodDark, r);
@@ -353,33 +343,27 @@ export function buildShopMarket({ fb, fd, P, box, obox, gableRoof, boatGeo, out,
     box(fb, p.x0, p.x1, y - 0.05, y, p.z0, p.z1, P.woodLight, P.woodDark, r);
     box(fb, p.x0 + 0.15, p.x1 - 0.15, D + 0.12, y - 0.12, p.z1 - 0.03, p.z1 + 0.005, P.woodDark, P.woodDark, r);   // 正面的嵌板（價格牌貼在這）
   });
+  // 展示台上的擺設（船務都搬去海上修船屋和大港了，這裡只是漁村的裝飾）：木桶和一捲纜繩、漁網籃、海圖桌
   {
-    // 舷外機：木架子（一根橫木）上夾著一台引擎：上面是引擎罩、中間是傳動軸、下面是螺旋槳
-    const g = G.engine, y = g.y, bx = g.x, bz = g.z;
-    for (const sx of [-1, 1]) box(fb, bx + sx * 0.45 - 0.05, bx + sx * 0.45 + 0.05, y, y + 0.72, bz - 0.2, bz - 0.1, P.woodDark, P.woodDark, r);
-    box(fb, bx - 0.53, bx + 0.53, y + 0.62, y + 0.72, bz - 0.22, bz - 0.08, P.wood, P.wood, r);   // 架子的橫木（引擎夾在上面）
-    box(fb, bx - 0.12, bx + 0.12, y + 0.58, y + 0.8, bz - 0.25, bz - 0.05, Q.dark, Q.dark, r);   // 夾具
-    // 引擎：下半截深色、上面一個圓圓的引擎罩（紅色、白頂）；中間的腳往下接齒輪箱，螺旋槳朝著客人
-    box(fb, bx - 0.2, bx + 0.2, y + 0.78, y + 0.98, bz - 0.05, bz + 0.38, Q.dark, Q.dark, r);
-    const sub = new FaceBuilder();
-    const cg = new THREE.CylinderGeometry(0.21, 0.23, 0.3, 10); cg.scale(1, 1, 1.25);
-    sub.addGeometry(cg, (m, n) => (n.y > 0.5 ? Q.plWhite : m.y > 0.08 ? Q.plWhite : Q.red));
-    put(fb, sub.build(), mat4(bx, y + 1.13, bz + 0.17));
-    box(fb, bx - 0.09, bx + 0.09, y + 0.3, y + 0.78, bz + 0.05, bz + 0.25, Q.dark, Q.dark, r);   // 中間的腳
-    box(fb, bx - 0.07, bx + 0.07, y + 0.13, y + 0.3, bz - 0.02, bz + 0.42, Q.dark, Q.dark, r);   // 齒輪箱
-    box(fb, bx - 0.02, bx + 0.02, y + 0.0, y + 0.13, bz + 0.12, bz + 0.34, Q.dark, Q.dark, r);   // 底下的鰭
-    cyl(fb, bx, y + 0.215, bz + 0.42, 0.04, 0.04, 0.08, 8, Q.brass, r, Math.PI / 2);   // 螺旋槳的軸心
-    for (let i = 0; i < 3; i++) {   // 三片葉片，在朝客人的那一面張開
-      const a = i * Math.PI * 2 / 3 + 0.4;
-      obox(fb, bx + Math.cos(a) * 0.1, y + 0.215 + Math.sin(a) * 0.1, bz + 0.47, 1, 0, 0.15, 0.02, 0.08, Q.brass, Q.brass, r, 0.03, 0.4, a);
-    }
-  }
-  // 船模型：照真的船縮小 1/14，放在兩個 V 形的木托上
-  for (const [id, hull] of [['fisher', P.hullBlue], ['trawler', P.hullRed]]) {
-    const g = G[id], s = 1 / 14, T = { fisher: 13, trawler: 18 }[id];
-    for (const sx of [-0.28, 0.28]) box(fb, g.x + sx * T / 13 - 0.04, g.x + sx * T / 13 + 0.04, g.y, g.y + 0.08, g.z - 0.16, g.z + 0.16, P.woodDark, P.woodDark, r);
-    const draft = id === 'fisher' ? 1.0 : 1.3;
-    put(fb, boatGeo(id, P, hull, id === 'fisher' ? 51 : 61), mat4(g.x, g.y + 0.06 + draft * s * 0.8, g.z, 0, 0, 0, s));
+    const [pa, pb, pc] = I.plinths.map((p) => ({ x: (p.x0 + p.x1) / 2, z: (p.z0 + p.z1) / 2, y: D + p.h }));
+    // 木桶（兩道鐵箍）＋一捲纜繩
+    cyl(fb, pa.x - 0.25, pa.y, pa.z, 0.24, 0.2, 0.55, 10, P.wood, r);
+    for (const h of [0.1, 0.42]) cyl(fb, pa.x - 0.25, pa.y + h, pa.z, 0.245, 0.235, 0.04, 10, Q.dark, r);
+    cyl(fb, pa.x - 0.25, pa.y + 0.55, pa.z, 0.21, 0.24, 0.03, 10, P.woodDark, r);
+    { const g = new THREE.TorusGeometry(0.19, 0.06, 5, 12); g.rotateX(Math.PI / 2); g.translate(pa.x + 0.36, pa.y + 0.06, pa.z + 0.05); fb.addGeometry(g, () => jitter(P.rope, r, 0.05)); }
+    { const g = new THREE.TorusGeometry(0.15, 0.055, 5, 12); g.rotateX(Math.PI / 2); g.translate(pa.x + 0.36, pa.y + 0.16, pa.z + 0.05); fb.addGeometry(g, () => jitter(P.rope, r, 0.05)); }
+    // 漁網籃：竹籃裡堆著漁網，掛兩顆浮球
+    cyl(fb, pb.x, pb.y, pb.z, 0.36, 0.28, 0.34, 10, Q.cork, r);
+    cyl(fb, pb.x, pb.y + 0.3, pb.z, 0.375, 0.365, 0.05, 10, P.woodDark, r);
+    { const g = new THREE.IcosahedronGeometry(0.3, 1); g.scale(1, 0.5, 1); g.translate(pb.x, pb.y + 0.36, pb.z); fb.addGeometry(g, () => jitter(P.net, r, 0.08)); }
+    for (const [dx, dz, c] of [[-0.42, 0.18, P.float], [0.44, -0.08, Q.green]]) { const g = new THREE.IcosahedronGeometry(0.12, 1); g.translate(pb.x + dx, pb.y + 0.12, pb.z + dz); fb.addGeometry(g, () => jitter(c, r, 0.04)); }
+    // 海圖桌：攤開的海圖、兩卷捲起來的圖、黃銅羅盤、墨水瓶
+    box(fb, pc.x - 0.58, pc.x + 0.5, pc.y, pc.y + 0.012, pc.z - 0.34, pc.z + 0.34, Q.chart, Q.chart, r, 0.03);
+    box(fd, pc.x - 0.3, pc.x + 0.05, pc.y + 0.012, pc.y + 0.016, pc.z - 0.2, pc.z + 0.12, Q.plBlue, Q.plBlue, r, 0.05);
+    box(fd, pc.x + 0.1, pc.x + 0.3, pc.y + 0.012, pc.y + 0.016, pc.z - 0.05, pc.z + 0.22, Q.plGreen, Q.plGreen, r, 0.05);
+    for (const dz of [-0.36, -0.28]) cyl(fb, pc.x - 0.55, pc.y + 0.05, pc.z + dz, 0.04, 0.04, 0.9, 6, Q.paper, r, 0, -Math.PI / 2);
+    cyl(fb, pc.x + 0.5, pc.y, pc.z + 0.2, 0.1, 0.1, 0.05, 10, Q.brass, r); cyl(fd, pc.x + 0.5, pc.y + 0.05, pc.z + 0.2, 0.08, 0.08, 0.01, 10, Q.paper, r);
+    cyl(fb, pc.x + 0.55, pc.y, pc.z - 0.2, 0.04, 0.05, 0.09, 6, Q.rodBlack, r);
   }
   // ---- 東半邊後牆：工作台、洞洞板上掛工具、一條掛在牆上的大魚標本 ----
   {
@@ -641,56 +625,16 @@ export function buildShopMarket({ fb, fd, P, box, obox, gableRoof, boatGeo, out,
   // ---- 魚市場新增實體攤位道具（用獨立亂數種子，不影響前面任何擺設的位置）----
   {
     const r2 = rng(8831);
-    if (G.title) {   // 榮譽頭銜木座台（table 與水槽之間空位）
+    if (G.title) {   // 漁會捐款箱：木座台上的紅木金邊箱（模型在 goods3d.js，大港的榜亭也有一座）
       const t = G.title;
-      box(fb, t.x - 0.42, t.x + 0.42, D, D + 0.72, t.z - 0.40, t.z + 0.40, P.woodDark, P.woodDark, r2);
-      box(fb, t.x - 0.46, t.x + 0.46, D + 0.72, t.y, t.z - 0.42, t.z + 0.42, P.wood, P.woodDark, r2);
+      placeGeo(fb, goodGeo('title', { P }), t.x, D, t.z);
       out.solids.push({ x: t.x, z: t.z, r: 0.45 });
-      // 金色榮譽牌匾 / 龍王金杯造型
-      box(fb, t.x - 0.26, t.x + 0.26, t.y, t.y + 0.04, t.z - 0.14, t.z + 0.14, P.woodDark, P.woodDark, r2);
-      box(fb, t.x - 0.22, t.x + 0.22, t.y + 0.04, t.y + 0.36, t.z - 0.03, t.z + 0.03, Q.brass, P.woodDark, r2);
-      cyl(fb, t.x, t.y + 0.36, t.z, 0.14, 0.07, 0.16, 10, Q.brass, r2);
-      cyl(fb, t.x, t.y + 0.52, t.z, 0.04, 0.14, 0.06, 10, Q.plYellow, r2);
     }
-    if (G.chum) {   // 誘魚桶：橘色餌桶裝著魚塊與白浮蓋
-      const g = G.chum;
-      cyl(fb, g.x, g.y, g.z, 0.18, 0.15, 0.30, 10, Q.plOrange, r2);
-      cyl(fb, g.x, g.y + 0.27, g.z, 0.19, 0.19, 0.04, 10, Q.plWhite, r2);
-      for (let i = 0; i < 4; i++) {
-        const a = i * 1.55;
-        box(fd, g.x + Math.cos(a) * 0.07 - 0.04, g.x + Math.cos(a) * 0.07 + 0.04, g.y + 0.31, g.y + 0.36, g.z + Math.sin(a) * 0.07 - 0.03, g.z + Math.sin(a) * 0.07 + 0.03, Q.red, Q.redDark, r2, 0.02);
-      }
+    if (G.mailbox) {   // 漁會意見信箱：靠後牆的綠色郵筒
+      const m = G.mailbox;
+      placeGeo(fb, goodGeo('mailbox', { P }), m.x, D, m.z);
+      out.solids.push({ x: m.x, z: m.z, r: 0.3 });
     }
-    if (G.paint) {   // 船殼塗裝桶：三個彩色油漆罐＋刷子
-      const g = G.paint;
-      const cols = [Q.red, Q.plBlue, Q.plYellow];
-      for (let i = 0; i < 3; i++) {
-        const cx = g.x + (i - 1) * 0.16, cz = g.z + (i === 1 ? -0.09 : 0.07);
-        cyl(fb, cx, g.y, cz, 0.08, 0.08, 0.18, 10, Q.steel, r2);
-        cyl(fb, cx, g.y + 0.17, cz, 0.07, 0.07, 0.02, 10, cols[i], r2);
-      }
-      obox(fd, g.x + 0.18, g.y + 0.24, g.z + 0.08, 1, 0, 0.04, 0.22, 0.03, P.woodLight, Q.dark, r2, 0.02, 0, -0.35);
-    }
-    if (G.mod_sonar) {   // 探魚聲納：深色主機＋綠螢幕＋黃銅天線
-      const g = G.mod_sonar;
-      box(fb, g.x - 0.18, g.x + 0.18, g.y, g.y + 0.04, g.z - 0.14, g.z + 0.14, Q.dark, Q.dark, r2);
-      box(fb, g.x - 0.15, g.x + 0.15, g.y + 0.04, g.y + 0.28, g.z - 0.08, g.z + 0.05, Q.dark, Q.dark, r2);
-      box(fb, g.x - 0.12, g.x + 0.12, g.y + 0.08, g.y + 0.24, g.z + 0.05, g.z + 0.06, Q.plGreen, Q.green, r2, 0.01);
-      cyl(fd, g.x + 0.12, g.y + 0.28, g.z - 0.02, 0.015, 0.025, 0.18, 8, Q.brass, r2);
-    }
-    if (G.mod_hull) {   // 自動抽水龍骨：金屬泵浦＋黃銅管＋底座
-      const g = G.mod_hull;
-      box(fb, g.x - 0.20, g.x + 0.20, g.y, g.y + 0.05, g.z - 0.13, g.z + 0.13, Q.dark, Q.dark, r2);
-      cyl(fb, g.x - 0.05, g.y + 0.05, g.z, 0.09, 0.10, 0.22, 10, Q.steel, r2);
-      cyl(fb, g.x + 0.10, g.y + 0.05, g.z, 0.04, 0.04, 0.28, 8, Q.brass, r2);
-      box(fd, g.x - 0.05, g.x + 0.12, g.y + 0.24, g.y + 0.29, g.z - 0.03, g.z + 0.03, Q.brass, Q.brass, r2);
-    }
-    if (G.mod_lamp) {   // 船首集魚燈：支架＋大型探照燈頭
-      const g = G.mod_lamp;
-      box(fb, g.x - 0.12, g.x + 0.12, g.y, g.y + 0.04, g.z - 0.12, g.z + 0.12, Q.dark, Q.dark, r2);
-      box(fb, g.x - 0.03, g.x + 0.03, g.y + 0.04, g.y + 0.20, g.z - 0.03, g.z + 0.03, Q.dark, Q.dark, r2);
-      cyl(fb, g.x, g.y + 0.24, g.z - 0.08, 0.12, 0.07, 0.20, 10, Q.brass, r2, Math.PI / 2);
-      cyl(fb, g.x, g.y + 0.24, g.z + 0.12, 0.11, 0.11, 0.02, 10, Q.bulb, r2, Math.PI / 2);
-    }
+    if (G.chum) { const g = G.chum; placeGeo(fb, goodGeo('chum', { P }), g.x, g.y, g.z); }   // 誘魚桶：擺在漁具行的櫃台上
   }
 }

@@ -6,9 +6,9 @@ import * as THREE from 'three';
 import { FISHBOX } from './config.js';
 import { SPECIES } from './fishdata.js';
 import { makeFishMesh } from './fish.js';
-import { boxFit, boxUsed, boxSpeed } from './boxdata.js';
+import { BOX_WALL, boxFit, boxUsed, boxSpeed, pickBoxLocal } from './boxdata.js';
 
-const WALL = 0.04;   // 箱壁厚度
+const WALL = BOX_WALL;   // 箱壁厚度
 const wood = new THREE.MeshLambertMaterial({ color: 0xa9824e });
 const woodDark = new THREE.MeshLambertMaterial({ color: 0x7c5a32 });
 const plank = (w, h, d, mat, x, y, z) => {
@@ -43,10 +43,10 @@ export class BoxWorld {
   set(d) {
     let e = this.map.get(d.bid);
     if (!e) {
-      const mesh = crate(), inner = new THREE.Group();
+      const crateMesh = crate(), mesh = new THREE.Group(), inner = new THREE.Group();
       inner.position.y = WALL;
-      mesh.add(inner);
-      e = { d, mesh, inner, key: '' };
+      mesh.add(crateMesh, inner);
+      e = { d, mesh, crate: crateMesh, inner, fishBoxes: [], key: '' };
       this.map.set(d.bid, e);
     }
     e.d = d;
@@ -67,18 +67,24 @@ export class BoxWorld {
   // 箱子裡的魚：一條一條平躺著往上疊（太長的斜著放），高度照已經佔掉的體積算
   _fill(e) {
     for (const c of [...e.inner.children]) c.removeFromParent();
-    const list = e.d.fish;
+    const list = e.d.fish, boxes = [];
     list.forEach((f, i) => {
       const sp = SPECIES[f.id];
       if (!sp) return;
       const m = makeFishMesh(sp, f.len);
+      m.userData.uid = f.uid;
       const k = boxUsed(list.slice(0, i)), slant = f.len > FISHBOX.w * 0.95 ? Math.atan2(FISHBOX.d, FISHBOX.w) : 0;
       const room = Math.max(0, FISHBOX.w - f.len * Math.cos(slant)) / 2;
       const x = ((i * 0.37) % 1 - 0.5) * 2 * room, z = ((i * 0.61) % 1 - 0.5) * Math.max(0, FISHBOX.d - f.len * Math.sin(slant) - 0.15);
       m.position.set(x, f.len * sp.w / 2 + k * FISHBOX.h * 0.9, z);
       m.rotation.set(Math.PI / 2, 0, (i % 2 ? Math.PI : 0) + (i % 2 ? -slant : slant));
+      m.updateMatrix();
+      const b = new THREE.Box3().setFromObject(m);
+      b.min.y += WALL; b.max.y += WALL;
+      boxes.push({ fish: f, name: sp.name, min: [b.min.x, b.min.y, b.min.z], max: [b.max.x, b.max.y, b.max.z] });
       e.inner.add(m);
     });
+    e.fishBoxes = boxes;
   }
 
   // 擺到該在的地方：手上（掛在那個人身上）、甲板上（掛在那艘船上）、地上、海上（每幀照浪高再擺一次）
@@ -132,7 +138,31 @@ export class BoxWorld {
   fit(d, id, len) { return boxFit(d.fish, id, len); }
   // 抱著這個箱子走路的速度倍數
   speed(d) { return boxSpeed(this.kg(d)); }
-  // 箱子在世界的位置（箱底中央）
+  // 準心對準箱子／箱內的魚：回傳每個可及箱子的最佳命中（{ obb: true, kind: 'fbox'|'fpile', box, mesh, fishMesh, fish, name, t, off, r }）
+  pick(origin, dir, reachOrigin, { fp = true, myId = null, tMin = 0, wantOut = false, putOnly = false } = {}) {
+    const out = [];
+    for (const e of this.map.values()) {
+      const d = e.d;
+      if (d.k === 'hand' || !e.mesh.visible) continue;
+      e.mesh.updateMatrixWorld(true);
+      _inv.copy(e.mesh.matrixWorld).invert();
+      _rO.copy(origin).applyMatrix4(_inv);
+      _rD.copy(dir).transformDirection(_inv);
+      _pL.copy(reachOrigin).applyMatrix4(_inv);
+      const hit = pickBoxLocal(
+        { ox: _rO.x, oy: _rO.y, oz: _rO.z, dx: _rD.x, dy: _rD.y, dz: _rD.z, tMin },
+        _pL,
+        d.o === myId ? e.fishBoxes : [],
+        { fp, wantOut, putOnly },
+      );
+      if (hit) {
+        const fishMesh = hit.kind === 'fpile' ? e.inner.children.find((m) => m.userData.uid === hit.fish?.uid) ?? null : null;
+        out.push({ obb: true, ...hit, box: d, mesh: e.crate, inner: e.inner, fishMesh });
+      }
+    }
+    return out;
+  }
+  // 箱子的世界座標（箱底中央）
   worldPos(d, out = new THREE.Vector3()) {
     const e = this.map.get(d.bid);
     if (!e) return out.set(1e9, 0, 1e9);
@@ -183,4 +213,4 @@ export class BoxWorld {
     for (const [bid, el] of this._marks) if (!keep.has(bid)) { el.remove(); this._marks.delete(bid); }
   }
 }
-const _v = new THREE.Vector3(), _p = new THREE.Vector3();
+const _v = new THREE.Vector3(), _p = new THREE.Vector3(), _inv = new THREE.Matrix4(), _rO = new THREE.Vector3(), _rD = new THREE.Vector3(), _pL = new THREE.Vector3();

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { FramePacer, RefreshRateProbe } from '../src/framePacer.js';
+import { FramePacer, DESKTOP_FRAME_LIMITS, RefreshRateProbe, fpsLabel } from '../src/framePacer.js';
 
 test('render caps preserve animation time and independent gameplay updates', () => {
   for (const limit of [30, 45, 60, 90, 120]) {
@@ -65,4 +65,18 @@ test('a missed deadline does not queue catch-up renders, including on a variable
   assert.equal(clock.take(103, 30), 103 - 32.9);
   assert.equal(clock.take(112, 30), null);
   assert.equal(clock.take(134, 30), 31);
+});
+
+test('desktop frame limits include 144Hz and uncapped (0), pacing 144Hz displays accurately', () => {
+  assert.deepEqual(DESKTOP_FRAME_LIMITS, [30, 60, 90, 120, 144, 0]);
+  assert.equal(fpsLabel(144), '144 FPS');
+  assert.equal(fpsLabel(0), '不限');
+  for (const [cap, expectedDraws] of [[0, 1440], [144, 1440], [60, 600], [30, 300]]) {
+    const draw = new FramePacer();
+    let draws = 0;
+    for (let i = 0; i <= 144 * 10; i++) {
+      if (draw.take(i * 1000 / 144, cap) > 0) draws++;
+    }
+    assert.equal(draws, expectedDraws, `desktop cap=${cap} on 144Hz`);
+  }
 });

@@ -30,14 +30,15 @@ export class Rain {
         uniform vec3 uCam, uBox, uOff, uVel;
         uniform vec4 uRoofA[2], uRoofB[2];   // 遮雨的屋頂：A = 中心 xz、方向 ux uz；B = 半寬、半長、屋頂高度（半寬 0 = 沒有）
         varying float vA;
+        float roofCover(vec3 p, vec4 a, vec4 b) {
+          vec2 d = p.xz - a.xy, u = a.zw;
+          return (p.y < b.z && abs(dot(d, u)) < b.x && abs(dot(d, vec2(-u.y, u.x))) < b.y) ? 1.0 : 0.0;
+        }
         void main() {
           float extra = -6.0 * aSeed.y;                                  // 每一滴掉的速度不太一樣
           vec3 w = mod(aSeed.xyz * uBox + uOff + vec3(0.0, extra * uTime, 0.0) - uCam, uBox) - 0.5 * uBox + uCam;
-          float dry = 0.0;   // 這一滴在屋頂底下：不畫（用雨絲的頭來判斷，頭尾兩個頂點才會一致）
-          for (int i = 0; i < 2; i++) {
-            vec2 d = w.xz - uRoofA[i].xy, u = uRoofA[i].zw;
-            if (w.y < uRoofB[i].z && abs(dot(d, u)) < uRoofB[i].x && abs(dot(d, vec2(-u.y, u.x))) < uRoofB[i].y) dry = 1.0;
-          }
+          // 用雨絲的頭判斷遮雨。固定索引避開 Adreno 730 以迴圈索引時的連結錯誤。
+          float dry = max(roofCover(w, uRoofA[0], uRoofB[0]), roofCover(w, uRoofA[1], uRoofB[1]));
           w += aSeed.w * (uVel + vec3(0.0, extra, 0.0)) * 0.042;         // 雨絲順著它掉的方向拉長
           float on = step(fract(aSeed.x * 7.31 + aSeed.z * 3.17), uAmount) * (1.0 - dry);   // 雨越大，畫出來的雨絲越多
           vA = on * (0.3 + 0.35 * fract(aSeed.z * 11.7));
@@ -711,12 +712,12 @@ export class Spout {
     if (!v) { this.touch = 0; return; }
     const u = this.u, left = v.life - v.age;
     u.uFogDen.value = this.fog.density;
-    // 這麼大的東西動作是慢的：半分鐘才從雲底垂到海面，消散也要半分鐘
-    u.uReach.value = smooth(5, 34, v.age) * smooth(3, 22, left);
-    u.uThin.value = 1 - smooth(14, 38, left);
-    u.uFade.value = smooth(0, 10, v.age) * smooth(0, 8, left);
-    this.touch = u.uGrow.value = smooth(0.9, 1, u.uReach.value) * smooth(30, 44, v.age) * smooth(14, 28, left);
-    u.uLean.value.set(v.vx * 30, v.vz * 30);   // 雲走在前面，漏斗的腳拖在後面
+    // 漏斗十秒內疾速垂落觸海，與強力吸扯和風暴圈同步爆發
+    u.uReach.value = smooth(1, 12, v.age) * smooth(2, 16, left);
+    u.uThin.value = 1 - smooth(8, 26, left);
+    u.uFade.value = smooth(0, 5, v.age) * smooth(0, 6, left);
+    this.touch = u.uGrow.value = smooth(0.85, 1, u.uReach.value) * smooth(9, 16, v.age) * smooth(8, 18, left);
+    u.uLean.value.set(v.vx * 24, v.vz * 24);   // 雲走在前面，漏斗的腳拖在後面
     this.group.position.set(v.x, 0, v.z);
     this.ring.visible = this.spray.visible = this.touch > 0.01;
   }

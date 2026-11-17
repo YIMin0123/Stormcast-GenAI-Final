@@ -43,6 +43,11 @@ export const HAVEN = makeFrame({ center: WORLD.haven.center, facingDeg: WORLD.ha
 export const havenToWorld = HAVEN.toWorld;
 export const havenToLocal = HAVEN.toLocal;
 
+// ---- 海上修船屋：原點在 U 形船塢凹槽底的正中央，+z 朝凹槽開口 ----
+export const SEA_YARD = makeFrame({ center: WORLD.seaYard.center, facingDeg: WORLD.seaYard.facingDeg });
+export const seaYardToWorld = SEA_YARD.toWorld;
+export const seaYardToLocal = SEA_YARD.toLocal;
+
 // ---- 海上的礁石群：每一組各一套（原點是那一組的中心）----
 export const REEF_FRAMES = Object.fromEntries(Object.entries(WORLD.reefs).map(([k, v]) => [k, makeFrame(v)]));
 

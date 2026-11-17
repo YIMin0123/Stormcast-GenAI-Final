@@ -22,7 +22,7 @@ export class Extras {
   step(t, dt, phase) {
     this.clock = t;
     let changed = false;
-    if (this.hot && (t > this.hot.until || this.hot.count <= 0)) {
+    if (this.hot && (t > this.hot.until || (!this.hot.unlimited && this.hot.count <= 0))) {
       this.hot = null;
       this.nextHot = rand(HOTSPOT.every);
       changed = true;
@@ -53,9 +53,24 @@ export class Extras {
     return null;
   }
 
-  spawnHotspotNow() {
-    if (!this.hot) this.hot = this.pickHot(this.clock);
-    return !!this.hot;
+  spawnHotspotNow(lifeSec = 0, unlimited = false) {
+    const next = (!this.hot || (unlimited && !this.hot.unlimited)) ? this.pickHot(this.clock) : this.hot;
+    if (!next) return false;
+    this.hot = next;
+    if (lifeSec > 0) this.hot.until = this.clock + lifeSec;
+    if (unlimited) { this.hot.unlimited = true; this.hot.count = null; this.hot.maxCount = null; }
+    return true;
+  }
+
+  // 漩渦／水龍捲消散後在原地湧現短時肥沃魚群（不覆蓋進行中的不限尾數黃金魚群）
+  spawnHotspotAt(x, z, { life = 150, quota = 14 } = {}) {
+    if (this.hot?.unlimited) return false;
+    const spot = -bedAt(x, z) >= HOTSPOT.minDepth
+      ? { x: Math.round(x), z: Math.round(z), r: HOTSPOT.r, until: this.clock + life, count: quota, maxCount: quota, unlimited: false }
+      : this.pickHot(this.clock);
+    if (!spot) return false;
+    this.hot = spot;
+    return true;
   }
 
   spawnChum(x, z, ownerId) {
@@ -68,33 +83,40 @@ export class Extras {
     return c;
   }
 
-  inHot(x, z) {
-    if (this.hot && Math.hypot(x - this.hot.x, z - this.hot.z) < this.hot.r) return true;
+  inNaturalHot(x, z) {
+    return !!(this.hot && Math.hypot(x - this.hot.x, z - this.hot.z) < this.hot.r);
+  }
+
+  inChum(x, z) {
     return this.chums.some((c) => Math.hypot(x - c.x, z - c.z) < c.r);
   }
 
-  consumeHot(x, z) {
-    let changed = false;
-    if (this.hot && Math.hypot(x - this.hot.x, z - this.hot.z) < this.hot.r) {
+  inHot(x, z) {
+    return this.inNaturalHot(x, z) || this.inChum(x, z);
+  }
+
+  consumeHot(x, z, { skipChum = false } = {}) {
+    if (this.inNaturalHot(x, z)) {
+      if (this.hot.unlimited) return false;
       this.hot.count = Math.max(0, this.hot.count - 1);
       if (this.hot.count <= 0) { this.hot = null; this.nextHot = rand(HOTSPOT.every); }
-      changed = true;
+      return true;
     }
+    if (skipChum) return false;
     for (let i = this.chums.length - 1; i >= 0; i--) {
       const c = this.chums[i];
       if (Math.hypot(x - c.x, z - c.z) < c.r) {
         c.count = Math.max(0, c.count - 1);
         if (c.count <= 0) this.chums.splice(i, 1);
-        changed = true;
-        break;
+        return true;
       }
     }
-    return changed;
+    return false;
   }
 
-  spawnChests(t) {
+  spawnChests(t, n = CHESTS.count) {
     const free = CHEST_SPOTS_W.map((s, k) => k).filter((k) => !this.chests.some((c) => c.k === k));
-    for (let i = 0; i < CHESTS.count && free.length; i++) {
+    for (let i = 0; i < n && free.length; i++) {
       const k = free.splice(Math.floor(Math.random() * free.length), 1)[0];
       this.chests.push({ id: this.uid++, k, until: t + CHESTS.life });
     }
@@ -111,7 +133,7 @@ export class Extras {
   // 跟著天氣一起送出去的樣子（時間都換成「還剩幾秒」，每個人的時鐘不一定對得上）
   state() {
     return {
-      hot: this.hot ? { x: this.hot.x, z: this.hot.z, r: this.hot.r, left: Math.max(0, this.hot.until - this.clock), count: this.hot.count, maxCount: this.hot.maxCount } : null,
+      hot: this.hot ? { x: this.hot.x, z: this.hot.z, r: this.hot.r, left: Math.max(0, this.hot.until - this.clock), count: this.hot.unlimited ? null : this.hot.count, maxCount: this.hot.unlimited ? null : this.hot.maxCount, unlimited: !!this.hot.unlimited } : null,
       chums: this.chums.map((c) => ({ id: c.id, x: c.x, z: c.z, r: c.r, left: Math.max(0, c.until - this.clock), count: c.count, maxCount: c.maxCount })),
       chests: this.chests.map((c) => [c.id, c.k]),
     };

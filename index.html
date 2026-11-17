@@ -119,6 +119,12 @@
     .hudRow b { font-weight: 400; }
     .hudRow b.low { color: var(--bad); }
     #hud { top: 12px; right: 12px; z-index: 16; }
+    #hLv { background: linear-gradient(135deg, #ffd86b, #f2a93b); color: #5a3b00; border-radius: 999px; padding: 1px 9px; margin-left: -6px; font-size: 13px; }
+    #hTitle { background: var(--sea-a); color: #fff; border-radius: 999px; padding: 1px 9px; font-size: 13px; }
+    #hTitle.gold { background: linear-gradient(135deg, #2b2418, #4a3b22); color: #ffd86b; }
+    #hTitle:empty { display: none; }
+    #hTitle { max-width: 8em; overflow: hidden; text-overflow: ellipsis; }
+    @media (max-width: 900px) { body.touch #hLv, body.touch #hTitle { display: none; } }   /* 手機畫面窄：右上角放不下，會跟中間的羅盤條疊在一起（平板狀態列、頭上名牌照樣看得到） */
     #hClock { color: var(--ink); }
     #hSky { color: var(--sea); line-height: 0; }
     #hMoneyBox { background: rgba(255, 194, 60, 0.85); color: #5a3b00; border-radius: 999px; padding: 1px 10px 1px 6px; margin-right: -6px; }
@@ -126,6 +132,13 @@
     /* 人在船上時：左上角（設定鈕右邊）多一條船況：耐久、燃油、船速 */
     #hShip { top: 12px; left: 104px; display: none; z-index: 16; }
     #hSpeed { display: none; }
+    /* 頂部水平羅盤條（透明無框 ESWN 方位＋導航與魚群標記） */
+    #compass { position: fixed; left: 50%; top: 10px; transform: translateX(-50%); z-index: 16; display: none;
+      width: clamp(230px, 34vw, 430px); height: 42px; pointer-events: none; overflow: hidden; background: transparent; border: none; }
+    @media (max-width: 1120px) {
+      body:not(.touch) #hShip { top: 52px; left: 12px; }
+    }
+    body:not(.playing) #compass { display: none !important; }
     #fade { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; }
     /* 通知（釣到魚、換餌……）：畫面上方正中間，不跟下面的提示疊在一起 */
     /* 全服公告跑馬燈（伺服器發的，可帶重開倒數；見 main.js 的 showNotice） */
@@ -247,9 +260,10 @@
     #netMsg { margin: 0; color: var(--ink); font-size: 15px; line-height: 1.7; }
     #netRetry { display: none; margin-top: 14px; background: var(--sea-a); border-color: var(--sea); color: #fff; }
     /* 聊天室：左下角。平常只有最近幾則，按 Enter 打開輸入框 */
-    #chat { position: fixed; left: 12px; bottom: 12px; width: min(380px, calc(100vw - 24px)); font-size: 13px; z-index: 20; pointer-events: none; }
-    #chatLog { max-height: 170px; overflow: hidden; display: flex; flex-direction: column; gap: 4px; }
-    #chat.open #chatLog { max-height: 260px; overflow-y: auto; scrollbar-width: thin; pointer-events: auto;
+    #chat { position: fixed; left: 12px; bottom: 12px; width: min(380px, calc(100vw - 24px)); max-height: calc(var(--vv, 100dvh) - 24px);
+      display: flex; flex-direction: column; font-size: 13px; z-index: 20; pointer-events: none; }
+    #chatLog { flex: 0 1 auto; min-height: 0; max-height: min(170px, calc(var(--vv, 100dvh) - 40px)); overflow: hidden; display: flex; flex-direction: column; gap: 4px; }
+    #chat.open #chatLog { flex: 1 1 auto; max-height: min(260px, calc(var(--vv, 100dvh) - 124px)); overflow-y: auto; scrollbar-width: thin; pointer-events: auto;
       background: rgba(191, 232, 248, 0.55); border-radius: 12px; padding: 6px; }
     #chat .msg { align-self: flex-start; max-width: 100%; box-sizing: border-box; padding: 3px 11px; border-radius: 12px; background: rgba(214, 240, 250, 0.9);   /* 聊天要看得清：底比其他小東西更實一點 */
       color: var(--ink); line-height: 1.5; word-break: break-word; transition: opacity 0.6s; box-shadow: 0 1px 4px rgba(10, 30, 50, 0.15); }
@@ -262,12 +276,16 @@
     #chat .msg.sys.warn { color: #c0301f; }
     #chat .msg.old { opacity: 0; }
     #chat.open .msg.old { opacity: 1; }
-    #chatBox { display: none; margin-top: 6px; pointer-events: auto; }
+    #chatBox { display: none; flex: none; margin-top: 6px; pointer-events: auto; }
     #chat.open #chatBox { display: block; }
     #chatPresets { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
     #chatPresets button { padding: 3px 10px; font-size: 13px; }
     #chatInput { width: 100%; box-sizing: border-box; padding: 7px 14px; border-radius: 999px; font: inherit;
       border: 2px solid var(--sea); background: var(--btn); color: var(--ink); outline: none; }
+    @media (max-height: 400px) {
+      #chat.open #chatLog { max-height: max(48px, calc(var(--vv, 100dvh) - 102px)); }
+      #chatPresets { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+    }
     #chatHint { display: none; }
     /* ---- 手機觸控（body 上有 touch 這個 class 才生效；只支援橫放） ---- */
     #touch { display: none; position: fixed; inset: 0; z-index: 15; pointer-events: none; }
@@ -313,14 +331,22 @@
     body.touch #hud { right: calc(12px + env(safe-area-inset-right)); }
     body.touch .hudRow { font-size: 13px; gap: 10px; padding: 4px 12px; }
     body.touch #hShip { left: calc(100px + env(safe-area-inset-left)); }
+    body.touch #compass { top: calc(8px + env(safe-area-inset-top)); height: 34px; width: clamp(160px, 29vw, 260px); }
+    @media (max-width: 780px) {
+      body.touch #hShip { left: calc(92px + env(safe-area-inset-left)); padding: 3px 9px; gap: 7px; font-size: 12px; }
+      body.touch #compass { top: calc(8px + env(safe-area-inset-top)); height: 32px; width: clamp(146px, calc(100vw - 520px), 206px); left: calc(50% + 62px); }
+    }
     body.touch #prompt { bottom: 10px; font-size: 14px; padding: 6px 16px; max-width: 52vw; white-space: normal; text-align: center; }
     body.touch #stam { bottom: 54px; }
     body.touch #toast { top: 108px; font-size: 13px; max-width: 46vw; white-space: normal; text-align: center; }
     body.touch #fishui { bottom: 56px; width: 270px; padding: 8px 12px; }
-    body.touch #chat { top: 52px; bottom: auto; left: calc(12px + env(safe-area-inset-left)); width: min(260px, 34vw); font-size: 12px; }
-    body.touch #chat.open { width: min(440px, 62vw); }
-    body.touch #chatLog { max-height: 92px; }
-    body.touch #chat.open #chatLog { max-height: 110px; }
+    body.touch #chat { top: 52px; bottom: auto; left: calc(12px + env(safe-area-inset-left)); width: min(260px, 34vw); max-height: calc(var(--vv, 100dvh) - 60px); font-size: 12px; }
+    body.touch #chat.open { width: min(440px, calc(100vw - 24px - env(safe-area-inset-left) - env(safe-area-inset-right))); max-height: calc(var(--vv, 100dvh) - 60px); }
+    body.touch #chatLog { max-height: min(92px, calc(var(--vv, 100dvh) - 68px)); }
+    body.touch #chat.open #chatLog { max-height: min(110px, max(44px, calc(var(--vv, 100dvh) - 160px))); }
+    body.touch.kb #chat.open { top: calc(8px + env(safe-area-inset-top)); max-height: calc(var(--vv, 100dvh) - 16px - env(safe-area-inset-top)); z-index: 30; }
+    body.touch.kb #chat.open #chatLog { max-height: max(36px, calc(var(--vv, 100dvh) - 96px - env(safe-area-inset-top))); }
+    body.touch.kb #chatPresets { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; touch-action: pan-x; }
     body.touch #chatInput { font-size: 16px; }   /* 小於 16px 的話 iPhone 點輸入框會自己把畫面放大 */
     body.touch #menu .card { padding: 12px 22px 10px; }
     body.touch #menu h1 { font-size: 25px; }
@@ -355,7 +381,7 @@
       </div>
       <div class="sec" id="frameLimit" hidden><h4>幀率上限</h4>
         <div id="frameChoices" role="group" aria-label="幀率上限"></div>
-        <p class="note">依瀏覽器偵測到的更新頻率顯示。上限越高，視角移動越流暢，也更耗電。</p>
+        <p class="note" id="frameLimitNote">依瀏覽器偵測到的更新頻率顯示。上限越高，視角移動越流暢，也更耗電。</p>
       </div>
       <div class="sec" id="adaptiveGfxRow" hidden>
         <div class="line"><span>動態調整畫質</span><button type="button" id="adaptiveGfx" class="sw" aria-label="動態調整畫質" aria-pressed="false">關</button></div>
@@ -370,7 +396,8 @@
     </div>
     <div class="sec main"><h4>畫面</h4>
       <div class="line"><span>畫質</span><button id="gfxOpen" class="sw"><span id="gfxName"></span> ›</button></div>
-      <p class="note">光影、視野、特效、解析度都在這裡調</p>
+      <div class="line"><span>幀率</span><button type="button" id="fpsOpen" class="sw"><span id="fpsName"></span> ›</button></div>
+      <p class="note">光影、視野、幀率、特效、解析度都在這裡調</p>
       <div class="line" id="fullRow" style="display: none; margin-top: 9px"><span>全螢幕</span><button id="fullBtn" class="sw">關</button></div>
       <p class="note" id="fullNote" style="display: none">想收掉上面的網址列：用 Safari 的「分享 → 加入主畫面」，再從主畫面打開</p>
     </div>
@@ -434,8 +461,9 @@
     </details>
     <div class="sec main leaveSec"><button id="reset">離開房間（回到大廳）</button><p class="note">錢、船、裝備和還沒賣的魚會留著，下次進房從港口出發（定時全服刷新，倒數見主頁）</p></div>
   </details>
-  <div id="hud" class="card hudRow"><span id="hClock"></span><span id="hSky"></span><span id="hMoneyBox" title="金錢"><i data-ic="coin"></i><b id="hMoney">$0</b></span></div>
+  <div id="hud" class="card hudRow"><span id="hLv" title="等級">Lv.1</span><span id="hTitle" title="本週稱號"></span><span id="hClock"></span><span id="hSky"></span><span id="hMoneyBox" title="金錢"><i data-ic="coin"></i><b id="hMoney">$0</b></span></div>
   <div id="hShip" class="card hudRow"><span title="船的耐久"><i data-ic="boat"></i><b id="hHp">100%</b></span><span title="燃油"><i data-ic="fuel"></i><b id="hFuel">0</b></span><span id="hSpeed" title="船速"><i data-ic="speed"></i><b id="hBoat">0.0 節</b></span></div>
+  <div id="compass" aria-hidden="true"></div>
   <div id="fishui" class="card"><div id="fishLabel"></div><div id="bar"><div id="barSafe"></div><div id="barFill"></div><div id="barMark"></div></div><div id="prog"><div id="progFill"></div></div><div id="strain">釣竿負荷<div id="strainBar"><div id="strainFill"></div></div></div><div id="fishHint"></div></div>
   <div id="marquee"><span></span></div>
   <div id="toast" class="card"></div>

@@ -14,7 +14,7 @@ registerHooks({ resolve(specifier, context, nextResolve) {
   if (context.parentURL?.endsWith('/src/player.js') && specifier === './boat.js') return { url: 'data:text/javascript,export const buildFigure = () => ({})', shortCircuit: true };
   if (context.parentURL?.endsWith('/src/player.js') && specifier === './emotes.js') return { url: 'data:text/javascript,export const ACTION_BY_ID = {}; export const MOOD_TIME = 0', shortCircuit: true };
   if (context.parentURL?.endsWith('/src/boat.js') && specifier === './figure.js') return { url: 'data:text/javascript,export const buildFigure = () => globalThis.__testFigure()', shortCircuit: true };
-  if (context.parentURL?.endsWith('/src/fish.js') && specifier === './fishModel.js') return { url: 'data:text/javascript,export const makeFishModel = () => globalThis.__testFish()', shortCircuit: true };
+  if (context.parentURL?.endsWith('/src/fish.js') && specifier === './fishModel.js') return { url: 'data:text/javascript,export const makeFishModel = () => globalThis.__testFish(); export const flexFish = () => {}', shortCircuit: true };
   return nextResolve(specifier, context);
 } });
 globalThis.__testFish = () => new THREE.Group();
@@ -395,3 +395,103 @@ test('人物站在棧板邊緣與指棧轉角時，站地半徑會撐住而不�
   p2.update(1 / 60, ex - ox, ez - oz, false, false, world);
   assert.equal(p2.onWater, true, '水裡游近棧板邊不應直接傳送到棧板上');
 });
+
+function withTestBoatMocks(fn) {
+  globalThis.__testFigure = () => {
+    const f = new THREE.Group();
+    f.userData = { fpHide: [], torso: [], legs: [], fpShow: [] };
+    return f;
+  };
+  globalThis.document = { createElement: () => ({ getContext: () => ({ fillRect() {} }) }) };
+  try { return fn(); } finally { delete globalThis.__testFigure; delete globalThis.document; }
+}
+
+test('所有泊位停靠三種船皆不卡進棧橋，往前駛離順暢，全速倒車不會爬上棧橋或指棧', () => withTestBoatMocks(() => {
+  const pierGround = (wx, wz) => deckY(wx, wz, 0.4) ?? -3.2;
+  const calm = { ground: pierGround, wave: () => 0, limit: 800 };
+
+  for (const type of ['skiff', 'fisher', 'trawler']) {
+    for (let i = 0; i < BERTHS.length; i++) {
+      const p = berthPose(BERTHS[i], type);
+      const b = new Boat(type, p.x, p.z, p.heading);
+      assert.equal(b.hullBlocked(pierGround), false, `${type} 在泊位 #${i} 停靠時就卡進棧橋`);
+    }
+
+    // 從 0 號泊位往前開應順利駛離
+    const p0 = berthPose(BERTHS[0], type);
+    const fwd = new Boat(type, p0.x, p0.z, p0.heading);
+    fwd.keys.w = true;
+    for (let s = 0; s < 180; s++) fwd.update(1 / 60, calm);
+    assert.ok(Math.hypot(fwd.x - p0.x, fwd.z - p0.z) > 6, `${type} 應能正常開出泊位`);
+
+    // 停在泊位全速倒車 + 左右打舵，船尾與船身絕不能爬上棧橋或指棧
+    const rev = new Boat(type, p0.x, p0.z, p0.heading);
+    rev.keys.s = true;
+    rev.keys.d = true;
+    for (let s = 0; s < 240; s++) {
+      rev.update(1 / 60, calm);
+      assert.equal(rev.hullBlocked(pierGround), false, `${type} 倒車時第 ${s} 幀卡進棧橋`);
+      assert.ok(Math.abs(rev.y) < 0.25, `${type} 倒車不應被棧橋頂起來 (y=${rev.y})`);
+    }
+  }
+}));
+
+test('擱淺狀態（!afloat）倒車或轉向撞向棧橋與海岸時不會爬上岸，且仍能往深水脫困，也不會漏過 0.8m 窄指棧', () => withTestBoatMocks(() => {
+  const localEnv = {
+    ground: (wx, wz) => {
+      if (wx >= 4.2 && wx <= 18 && Math.abs(wz) <= 0.4) return DECK_Y;   // 0.8m 窄指棧正對船尾
+      if (wx >= 6 && wx <= 24 && Math.abs(wz) <= 4) return DECK_Y;       // 主棧橋
+      if (wx <= -12) return -3.5;                                        // 深水區（x <= -12）
+      if (wx <= 3.5) return -0.95;                                       // 大片 -0.95m 淺水沙洲（對大漁船為 !afloat）
+      return Math.min(2.5, -0.95 + (wx - 3.5) * 0.4);                    // x > 3.5 起緩步爬升到乾地
+    },
+    wave: () => 0, limit: 500,
+  };
+  const grounded = new Boat('trawler', -6.0, 0, Math.PI);   // 船頭朝 -x 深水、船尾在 x=+2.82（正對 0.8m 窄指棧與岸坡）
+  grounded.keys.s = true;   // 擱淺時倒車直衝窄指棧與岸邊
+  for (let i = 0; i < 300; i++) {
+    grounded.update(1 / 60, localEnv);
+    const prof = grounded.hullProfile(localEnv.ground);
+    assert.equal(prof.hardN, 0, `擱淺倒車第 ${i} 幀竟衝上岸或窄指棧`);
+    assert.ok(prof.max <= -0.12, `擱淺倒車船體侵入過淺陸地 max=${prof.max}`);
+  }
+  assert.equal(grounded.aground, true);
+
+  // 切換前進往 -x 深水處駛離應可順利脫困
+  const stuckX = grounded.x;
+  grounded.keys.s = false;
+  grounded.keys.w = true;
+  for (let i = 0; i < 360; i++) grounded.update(1 / 60, localEnv);
+  assert.ok(grounded.x < stuckX - 5, `擱淺的船應能往深水駛離 (start=${stuckX}, now=${grounded.x})`);
+  assert.equal(grounded.aground, false);
+}));
+
+test('靠岸轉向、斜向倒車與水流側推都不會把船身甩進棧橋，且斜撞會貼牆滑動', () => withTestBoatMocks(() => {
+  // 沿 x 軸有長棧橋 wz <= 0（含 boatGround 0.4 外擴 = wz <= 0.4），外側水深 -3.5m
+  const wallGround = (_wx, wz) => (wz <= 0.4 ? DECK_Y : -3.5);
+  let flowVec = null;
+  const env = { ground: wallGround, wave: () => 0, limit: 500, flow: () => flowVec };
+
+  // 大漁船車頭略朝外側外海（heading = 0.25 rad），倒車時船尾斜切撞向 z <= 0.4 棧橋邊緣並打舵
+  const b = new Boat('trawler', 0, 5.2, 0.25);
+  assert.equal(b.hullBlocked(wallGround), false);
+  b.keys.a = true;
+  b.keys.d = false;
+  b.keys.s = true;
+  const startX = b.x;
+  for (let i = 0; i < 300; i++) {
+    if (i === 150) { b.keys.a = false; b.keys.d = true; }
+    b.update(1 / 60, env);
+    assert.equal(b.hullBlocked(wallGround), false, `第 ${i} 幀斜向倒車或轉向卡進棧橋`);
+  }
+  // 應沿著棧橋邊緣往 -x 滑動而非完全卡死或穿牆
+  assert.ok(b.x < startX - 2, `斜向倒車擦到棧橋應貼邊滑行 (x=${b.x})`);
+
+  // 強勁側向水流把船推向棧橋：船身一樣被擋在水線外
+  flowVec = { x: 0, z: -6, spin: 1.5 };
+  b.keys.s = b.keys.a = b.keys.d = false;
+  for (let i = 0; i < 180; i++) {
+    b.update(1 / 60, env);
+    assert.equal(b.hullBlocked(wallGround), false, `水流側推第 ${i} 幀將船推進棧橋`);
+  }
+}));

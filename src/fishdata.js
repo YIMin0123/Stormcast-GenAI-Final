@@ -87,26 +87,26 @@ export const SPECIES = {
 
   // ---- 雜物：不是魚。賣得到錢，但很少；不算排行榜 ----
   slipper: { name: '拖鞋', kind: 'junk', model: 'slipper', kg: [0.2, 0.5], mult: 0.05, strength: 0.15, color: 0x3a8fd0, h: 0.2, w: 0.2, rarity: 'common', notes: ['只有一隻。另一隻呢？', '還是濕的，主人大概走得很不甘心。'],
-    spots: [{ w: 40, depth: [0, 15], off: [0, 150] }] },
+    spots: [{ w: 40, depth: [0, 15], off: [0, 150] }, { w: 25, where: ['river'] }] },
   tin: { name: '空罐', kind: 'junk', model: 'tin', kg: [0.1, 0.3], mult: 0.05, strength: 0.1, color: 0xb9bec4, h: 0.5, w: 0.5, rarity: 'common', notes: ['裡面連一條魚都沒有。'],
-    spots: [{ w: 40, off: [0, 150] }] },
+    spots: [{ w: 40, off: [0, 150] }, { w: 35, where: ['river', 'cave'] }] },
   bottle: { name: '寶特瓶', kind: 'junk', model: 'bottle', kg: [0.1, 0.3], mult: 0.05, strength: 0.1, color: 0xbfe6f2, h: 0.3, w: 0.3, rarity: 'common', notes: ['請把垃圾帶回家。'],
-    spots: [{ w: 40, off: [0, 250] }] },
+    spots: [{ w: 40, off: [0, 250] }, { w: 35, where: ['river', 'cave'] }] },
   net: { name: '破漁網', kind: 'junk', model: 'net', kg: [0.5, 2], mult: 0.05, strength: 0.4, color: 0x6a8a5a, h: 0.12, w: 0.12, rarity: 'common', notes: ['整團纏在一起，解開的時間比釣魚還久。'],
-    spots: [{ w: 40, where: ['reef'] }, { w: 15, off: [0, 150] }] },
+    spots: [{ w: 40, where: ['reef'] }, { w: 15, off: [0, 150] }, { w: 28, where: ['cave'] }] },
   tire: { name: '舊輪胎', kind: 'junk', model: 'tire', kg: [5, 12], mult: 0.06, strength: 0.5, color: 0x2a2b2e, h: 0.4, w: 0.3, rarity: 'uncommon', notes: ['好重！以為是大魚。'],
-    spots: [{ depth: [0, 15], off: [0, 100] }] },
+    spots: [{ depth: [0, 15], off: [0, 100] }, { w: 14, where: ['river'] }] },
   key: { name: '生鏽鑰匙', kind: 'junk', model: 'key', kg: [0.1, 0.2], mult: 0.5, strength: 0.15, color: 0x8a5a2e, h: 0.15, w: 0.1, rarity: 'uncommon', notes: ['不知道是哪扇門的鑰匙。'],
-    spots: [{ w: 30, where: ['atoll'] }, { w: 5, off: [0, 100] }] },
+    spots: [{ w: 30, where: ['atoll'] }, { w: 5, off: [0, 100] }, { w: 8, where: ['cave', 'river'] }] },
   msgbottle: { name: '漂流瓶', kind: 'junk', model: 'msgbottle', kg: [0.3, 0.6], mult: 0.1, strength: 0.15, color: 0x7ec8a0, h: 0.35, w: 0.35, rarity: 'uncommon', after: 4,
     notes: ['瓶子裡有張紙：「如果你看到這張紙，今天一定會釣到大魚。」', '瓶子裡有張紙：「救命，我被困在公司。」', '瓶子裡有張紙：「這片海的魚，其實比較想釣你。」', '瓶子裡有張紙：「往西北走，不要回頭。」', '瓶子裡有張紙：「第 3 天，我還是沒釣到魚。」'],
-    spots: [{ w: 15 }] },
+    spots: [{ w: 15 }, { w: 20, where: ['cave'] }] },
   duck: { name: '橡皮鴨', kind: 'junk', model: 'duck', kg: [0.1, 0.3], mult: 0.4, strength: 0.1, color: 0xffd83a, h: 0.7, w: 0.7, rarity: 'uncommon', notes: ['呱。它漂了很遠才來到這裡。'],
-    spots: [{ w: 15 }] },
+    spots: [{ w: 15 }, { w: 18, where: ['river'] }] },
   seafloat: { name: '玻璃浮球', kind: 'junk', model: 'float', kg: [1, 2.5], mult: 0.8, strength: 0.3, color: 0x7bd8c0, h: 0.8, w: 0.8, rarity: 'rare', after: 3, notes: ['老漁具的浮球，在陽光下很漂亮。'],
     spots: [{ w: 8, off: [150, INF] }] },
   coins: { name: '海盜金幣袋', kind: 'junk', model: 'coins', kg: [1, 3], mult: 1.2, strength: 0.4, color: 0xd9a82a, h: 0.7, w: 0.7, rarity: 'rare', notes: ['沉甸甸的，裡面叮噹作響！'],
-    spots: [{ w: 25, where: ['atoll'] }, { w: 2, off: [0, 400] }] },
+    spots: [{ w: 25, where: ['atoll'] }, { w: 2, off: [0, 400] }, { w: 4, where: ['cave'] }] },
 };
 
 for (const [id, sp] of Object.entries(SPECIES)) sp.id = id;   // 每一筆記住自己的名字（模型要用）
@@ -148,9 +148,9 @@ function spotWeight(id, sp, spot, c, d) {
   if (bait && sp.kind !== 'junk') w *= bait.luck[sp.rarity] ?? 1;   // 越貴的餌，越容易釣到少見、稀有的魚
   if (sp.kind !== 'junk') {
     const rar = sp.rarity === 'uncommon' || sp.rarity === 'rare';
-    if (c.fatigue > 0 && rar) w *= Math.max(0.5, 1 - 0.10 * Math.min(5, c.fatigue));
     if (c.blessing && rar) w *= 2.0;
-    if (c.night && c.lamp && (id === 'glowsquid' || id === 'lanternfish' || id === 'swordfish' || id === 'hairtail' || id === 'squid')) w *= 1.8;
+    if (c.vortex && rar) w *= 1.6;
+    if (c.night && c.lamp && (id === 'glowsquid' || id === 'lanternfish' || id === 'swordfish' || id === 'hairtail' || id === 'squid')) w *= typeof c.lamp === 'number' ? c.lamp : 1.8;   // 集魚燈的倍率看船型（boatdata.js 的 lampMul）
   }
   return w;
 }
@@ -170,10 +170,9 @@ function pickFrom(c, junk) {
   return table[table.length - 1][0];
 }
 
-// 釣到雜物的機率：港口附近的淺水垃圾多，風暴過後漂來更多；小河、洞穴的深潭裡沒有
+// 釣到雜物的機率：港口與秘境淺水垃圾較多，風暴過後還會沖來更多
 export const JUNK = { p: 0.07, near: 1.6, nearOff: 100, after: 3 };
-function junkChance(c) {
-  if (c.zone === 'river' || c.zone === 'cave') return 0;
+export function junkChance(c) {
   return JUNK.p * (c.off < JUNK.nearOff ? JUNK.near : 1) * (c.storm === 'after' ? JUNK.after : 1);
 }
 
@@ -181,7 +180,7 @@ function junkChance(c) {
 // off：離最近的陸地幾公尺；zone：特別的釣場（'river'、'cave'、'arch'、'atoll'、'beacon'）；
 // hour：現在幾點；storm：'before' 風暴快來了、'after' 風暴剛過、其餘 null；bait：掛的餌（'' 是基本餌）
 export function pickSpecies(depth, island, off, night = false, zone = null, rain = 0, hour = night ? 23 : 12, storm = null, bait = '', extra = null) {
-  const c = { depth, island, off, night, zone, rain, hour, storm, bait, fatigue: extra?.fatigue || 0, blessing: !!extra?.blessing, lamp: !!extra?.lamp };
+  const c = { depth, island, off, night, zone, rain, hour, storm, bait, blessing: !!extra?.blessing, lamp: extra?.lamp || 0, vortex: !!extra?.vortex };
   if (Math.random() < junkChance(c)) { const j = pickFrom(c, true); if (j) return j; }
   return pickFrom(c, false) ?? 'mackerel';
 }
@@ -207,12 +206,12 @@ export function fishValue(id, kg) {
 // 這個位置會釣到什麼。where：{ depth 水深, island 最近的島, off 離岸幾公尺, night 是不是晚上, hour 幾點, storm 風暴前後, rough 浪有多大（0–1）, zone 特別的釣場, rain 雨勢, hot 是不是在魚群熱點裡 }
 // 離岸越遠：魚種越好（鰹魚、鮪魚、旗魚）、個頭越大；浪大的日子，外海的魚個頭更大。
 // 越值錢的魚越難釣：同一種魚個頭越大掙扎越兇，身價越高（二十塊以下不算、八百塊以上到頂）再往上加
-export function rollCatch({ depth, island, off, night, rough, zone = null, rain = 0, hot = false, hour, storm = null, bait = '', fatigue = 0, blessing = false, lamp = false }) {
+export function rollCatch({ depth, island, off, night, rough, zone = null, rain = 0, hot = false, hour, storm = null, bait = '', blessing = false, lamp = false, vortex = false }) {
   const far = clamp((off - 60) / 380, 0, 1), special = zone === 'river' || zone === 'cave';
-  const id = pickSpecies(depth, island, off, night, zone, rain, hour ?? (night ? 23 : 12), storm, bait, { fatigue, blessing, lamp });
-  // 雜物不看離岸距離變大；魚群熱點裡的魚個頭大一截；小河和洞穴的魚不照離岸距離變大
+  const id = pickSpecies(depth, island, off, night, zone, rain, hour ?? (night ? 23 : 12), storm, bait, { blessing, lamp, vortex });
+  // 雜物不看離岸距離變大；魚群熱點與渦流外圍裡的魚個頭更大一截；小河和洞穴的魚不照離岸距離變大
   const flat = special || isJunk(id);
-  const f = rollFish(id, flat ? 0 : clamp(0.7 * far + 0.5 * (off >= 120 ? rough : 0) + (hot ? 0.45 : 0), 0, 1), flat ? 0 : clamp((off - 250) / 300, 0, 1)), [a, b] = SPECIES[id].kg;
+  const f = rollFish(id, flat ? 0 : clamp(0.7 * far + 0.5 * (off >= 120 ? rough : 0) + (hot ? 0.45 : 0) + (vortex ? 0.35 : 0), 0, 1.15), flat ? 0 : clamp((off - 250) / 300, 0, 1)), [a, b] = SPECIES[id].kg;
   const value = fishValue(id, f.kg);
   const tough = clamp(Math.log(value / 20) / Math.log(40), 0, 1);
   return { id, ...f, value, strength: SPECIES[id].strength * (0.85 + 0.3 * clamp((f.kg - a) / (b - a), 0, 1.6)) * (0.8 + 0.55 * tough) };
@@ -220,15 +219,14 @@ export function rollCatch({ depth, island, off, night, rough, zone = null, rain 
 
 // 這條魚最快幾秒拉得上來（收線小遊戲的進度從三成開始，一直對在區間裡的速度）；伺服器用來擋「太快釣起來」
 export const minFightTime = (strength) => 0.7 / (0.2 / (0.7 + 0.5 * strength));
-// 等魚咬的時間（秒）：升級釣竿不再縮短等待；大魚/稀有魚更謹慎，過度捕撈會拉長等待，保底至少 2.5 秒
-export function biteDelay({ rain = 0, hot = false, caveRain = false, fish = null, fatigue = 0 } = {}) {
+// 等魚咬的時間（秒）：升級釣竿不再縮短等待；大魚/稀有魚更謹慎，保底至少 2.5 秒
+export function biteDelay({ rain = 0, hot = false, caveRain = false, fish = null } = {}) {
   let t = 4.5 + Math.random() * 8.0;
   t *= 1 - 0.28 * clamp(rain / 0.5, 0, 1);
   if (hot) t *= 0.58;
   if (caveRain) t *= 0.65;
   const sp = fish ? SPECIES[fish.id] : null;
   if (sp && (sp.rarity === 'rare' || fish.kg > sp.kg[1])) t *= 1.35 + Math.random() * 0.25;
-  if (fatigue > 0) t *= 1 + 0.12 * Math.min(5, fatigue);
   return Math.max(2.5, t);
 }
 // 拋竿最遠拋多遠（公尺）

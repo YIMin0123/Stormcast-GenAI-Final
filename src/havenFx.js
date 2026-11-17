@@ -4,6 +4,7 @@
 // 什麼時候有、在哪裡，照伺服器送來的狀態（見 server/extras.js 的 state）
 //   瀑布的水花——每道瀑布落水的地方、小河沖進透天洞穴深潭的地方，一直濺著水花（鏡頭夠近才噴）
 import * as THREE from 'three';
+import { makeChumMesh } from './fish.js';
 import { CHEST_SPOTS_W, CHESTS } from './extrasPlan.js';
 import { riverHits } from './lowpoly/havenShape.js';
 import { RIVER } from './lowpoly/havenPlan.js';
@@ -19,25 +20,46 @@ export function makeHavenFx({ scene, shade, splash, mist, flood, waterY, groundA
   const lam = (c) => new THREE.MeshLambertMaterial({ color: c, flatShading: true });
   const now = () => performance.now() / 1000;
 
-  // ---- 魚群熱點：海鳥 ＋ 誘魚桶人工魚群 ----
-  let hot = null, chums = [], foamAcc = 0, chumAcc = 0;
+  // ---- 魚群熱點：海鳥 ＋ 黃金魚潮光環／光柱 ＋ 誘魚桶人工魚群 ----
+  let hot = null, chums = [], foamAcc = 0, chumAcc = 0, goldSparkAcc = 0, isGoldBirds = false;
+  const barrels = [];   // 漂在海面上的誘魚桶（一個人工魚群一桶）：{ m 桶子, school 底下的魚影 }
+  const shadowGeo = new THREE.BufferGeometry();
+  shadowGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0.42, 0.13, 0, 0, -0.13, 0, 0, 0.13, 0, 0, 0, 0, -0.2, -0.13, 0, 0, 0, 0, -0.2, 0.12, 0, -0.42, -0.12, 0, -0.42], 3));
+  shadowGeo.computeVertexNormals();
+  const shadowMat = new THREE.MeshBasicMaterial({ color: 0x0f3550, side: THREE.DoubleSide });
   const birds = [], flock = new THREE.Group();
   flock.visible = false;
   group.add(flock);
+  const whiteMat = lam(0xf4f4ee), greyMat = new THREE.MeshLambertMaterial({ color: 0xb9c0c8, side: THREE.DoubleSide, flatShading: true });
+  const goldBodyMat = new THREE.MeshBasicMaterial({ color: 0xffe670 }), goldWingMat = new THREE.MeshBasicMaterial({ color: 0xffb830, side: THREE.DoubleSide });
   {
     const wing = new THREE.BufferGeometry();
     wing.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, -0.14, 0, 0, 0.14, 0.62, 0, 0.02], 3));
     wing.computeVertexNormals();
-    const body = new THREE.BoxGeometry(0.13, 0.1, 0.46), white = lam(0xf4f4ee), grey = new THREE.MeshLambertMaterial({ color: 0xb9c0c8, side: THREE.DoubleSide, flatShading: true });
+    const body = new THREE.BoxGeometry(0.13, 0.1, 0.46);
     for (let i = 0; i < 8; i++) {
-      const g = new THREE.Group(), wl = new THREE.Mesh(wing, grey), wr = new THREE.Mesh(wing, grey);
+      const g = new THREE.Group(), bm = new THREE.Mesh(body, whiteMat), wl = new THREE.Mesh(wing, greyMat), wr = new THREE.Mesh(wing, greyMat);
       wr.scale.x = -1;
-      g.add(new THREE.Mesh(body, white), wl, wr);
+      g.add(bm, wl, wr);
       flock.add(g);
-      birds.push({ g, wl, wr, ang: Math.random() * 6.28, rad: 7 + Math.random() * 12, h: 8 + Math.random() * 7, sp: (0.35 + Math.random() * 0.35) * (i % 2 ? 1 : -1), ph: Math.random() * 6.28 });
+      birds.push({ g, bm, wl, wr, ang: Math.random() * 6.28, rad: 7 + Math.random() * 12, h: 8 + Math.random() * 7, sp: (0.35 + Math.random() * 0.35) * (i % 2 ? 1 : -1), ph: Math.random() * 6.28 });
     }
     shade(flock);
   }
+  const goldFx = new THREE.Group();
+  goldFx.visible = false;
+  goldFx.userData.noAimOcc = true;
+  const goldMatOuter = new THREE.MeshBasicMaterial({ color: 0xffd54a, transparent: true, opacity: 0.68, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false });
+  const goldMatInner = new THREE.MeshBasicMaterial({ color: 0xfff099, transparent: true, opacity: 0.50, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false });
+  const goldMatBeam = new THREE.MeshBasicMaterial({ color: 0xffcf40, transparent: true, opacity: 0.15, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false });
+  const goldRing = new THREE.Mesh(new THREE.RingGeometry(0.84, 1.0, 48), goldMatOuter);
+  goldRing.rotation.x = -Math.PI / 2;
+  const goldInner = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.56, 36), goldMatInner);
+  goldInner.rotation.x = -Math.PI / 2;
+  const goldBeam = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.68, 36, 24, 1, true), goldMatBeam);
+  goldBeam.position.y = 18;
+  goldFx.add(goldRing, goldInner, goldBeam);
+  group.add(goldFx);
 
   // ---- 瀑布落水的地方 ----
   const hits = riverHits().map((h) => { const [x, z] = HAVEN.toWorld(h.x, h.z); return { x, y: h.y, z, big: h.big, acc: 0 }; });
@@ -68,7 +90,7 @@ export function makeHavenFx({ scene, shade, splash, mist, flood, waterY, groundA
       const t = now();
       if (st.hot) {
         const fresh = !hot || Math.hypot(hot.x - st.hot.x, hot.z - st.hot.z) > 1;
-        hot = { x: st.hot.x, z: st.hot.z, r: st.hot.r, until: t + st.hot.left, count: st.hot.count, maxCount: st.hot.maxCount };
+        hot = { x: st.hot.x, z: st.hot.z, r: st.hot.r, until: t + st.hot.left, count: st.hot.count, maxCount: st.hot.maxCount, unlimited: !!st.hot.unlimited };
         if (fresh && onHot) onHot(hot);
       } else hot = null;
       chums = Array.isArray(st.chums) ? st.chums.map((c) => ({ ...c, until: t + c.left })) : [];
@@ -80,20 +102,66 @@ export function makeHavenFx({ scene, shade, splash, mist, flood, waterY, groundA
       const t = now();
       if (hot && t > hot.until) hot = null;
       chums = chums.filter((c) => t <= c.until && c.count > 0);
+      // 每個人工魚群中間漂著一個桶子：半沉在水裡、跟著浪上下、慢慢搖
+      while (barrels.length < chums.length) {
+        const m = makeChumMesh();
+        shade(m);
+        // 水面下繞著桶子游的魚影（手機少畫兩條）
+        const school = new THREE.Group(), n = TOUCH ? 3 : 5;
+        for (let k = 0; k < n; k++) { const s = new THREE.Mesh(shadowGeo, shadowMat); s.userData = { a: k / n * 6.28, r: 1.6 + (k % 3) * 0.9, sp: 0.7 + (k % 2) * 0.35 }; school.add(s); }
+        group.add(m, school);
+        barrels.push({ m, school });
+      }
+      barrels.forEach(({ m, school }, i) => {
+        const c = chums[i];
+        m.visible = school.visible = !!c && (cam.x - c.x) ** 2 + (cam.z - c.z) ** 2 < 400 * 400;
+        if (!m.visible) return;
+        const wy = waterY(c.x, c.z);
+        m.position.set(c.x, wy - 0.06, c.z);
+        m.rotation.set(Math.sin(time * 1.1 + i) * 0.22, time * 0.2 + i, Math.cos(time * 0.9 + i * 2) * 0.22);
+        school.position.set(c.x, wy - 0.35, c.z);
+        for (const s of school.children) {
+          const u = s.userData, a = u.a + time * u.sp;
+          s.position.set(Math.cos(a) * u.r, 0, Math.sin(a) * u.r);
+          s.rotation.y = -a - Math.PI / 2 + Math.sin(time * 7 + u.a) * 0.25;   // 一邊游一邊擺尾
+        }
+      });
       flock.visible = !!hot;
+      const gold = !!(hot && hot.unlimited);
+      goldFx.visible = gold;
+      if (gold !== isGoldBirds) {
+        isGoldBirds = gold;
+        const bm = gold ? goldBodyMat : whiteMat, wm = gold ? goldWingMat : greyMat;
+        for (const b of birds) { b.bm.material = bm; b.wl.material = wm; b.wr.material = wm; }
+      }
       if (hot) {
         for (const b of birds) {
-          b.ang += b.sp * dt;
-          b.g.position.set(hot.x + Math.cos(b.ang) * b.rad, b.h, hot.z + Math.sin(b.ang) * b.rad);
+          b.ang += b.sp * (gold ? 1.25 : 1) * dt;
+          b.g.position.set(hot.x + Math.cos(b.ang) * b.rad, b.h + (gold ? 2 : 0), hot.z + Math.sin(b.ang) * b.rad);
           b.g.rotation.y = -b.ang + (b.sp < 0 ? Math.PI : 0);
           const f = Math.sin(time * 9 + b.ph) * 0.6;
           b.wl.rotation.z = f; b.wr.rotation.z = -f;
+        }
+        if (gold) {
+          const wy = waterY(hot.x, hot.z) + 0.18, pulse = 1 + 0.05 * Math.sin(time * 2.6);
+          goldFx.position.set(hot.x, wy, hot.z);
+          goldFx.scale.set(hot.r * pulse, 1, hot.r * pulse);
+          goldBeam.rotation.y = time * 0.35;
+          goldMatOuter.opacity = 0.56 + 0.16 * Math.sin(time * 3.1);
+          goldMatInner.opacity = 0.42 + 0.16 * Math.cos(time * 4.0);
+          goldMatBeam.opacity = 0.12 + 0.05 * Math.sin(time * 2.1);
+          if ((cam.x - hot.x) ** 2 + (cam.z - hot.z) ** 2 < 360 * 360 && (goldSparkAcc += dt) > 0.14) {
+            goldSparkAcc = 0;
+            const a = Math.random() * 6.28, d = (0.35 + 0.65 * Math.sqrt(Math.random())) * hot.r;
+            const x = hot.x + Math.cos(a) * d, z = hot.z + Math.sin(a) * d;
+            mist(x, waterY(x, z) + 0.25, z, 0, 2.4 + Math.random() * 2.2, 0, 0.9 + Math.random() * 0.7, 0.38);
+          }
         }
         // 水面翻白沫（鏡頭夠近才噴）
         if ((cam.x - hot.x) ** 2 + (cam.z - hot.z) ** 2 < 260 * 260 && (foamAcc += dt) > 0.1) {
           foamAcc = 0;
           const a = Math.random() * 6.28, d = Math.sqrt(Math.random()) * hot.r * 0.8, x = hot.x + Math.cos(a) * d, z = hot.z + Math.sin(a) * d;
-          splash(x, waterY(x, z), z, 5);
+          splash(x, waterY(x, z), z, gold ? 7 : 5);
         }
       }
       if (chums.length && (chumAcc += dt) > 0.18) {
@@ -118,9 +186,9 @@ export function makeHavenFx({ scene, shade, splash, mist, flood, waterY, groundA
     },
     hot: () => hot,
     chums: () => chums,
-    // 人站在哪個寶箱旁邊：回傳 { id, pos }；沒有就 null
+    // 人站在哪個寶箱旁邊：回傳 { id, mesh, pos }；沒有就 null
     chestNear(x, y, z) {
-      for (const [id, c] of chests) if (Math.hypot(x - c.x, z - c.z) < CHESTS.reach && Math.abs(y - c.g.position.y) < 3) return { id, pos: c.g.position.clone().setY(c.g.position.y + 0.4) };
+      for (const [id, c] of chests) if (Math.hypot(x - c.x, z - c.z) < CHESTS.reach && Math.abs(y - c.g.position.y) < 3) return { id, mesh: c.g, pos: c.g.position.clone().setY(c.g.position.y + 0.4) };
       return null;
     },
   };
