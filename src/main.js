@@ -106,7 +106,7 @@ renderer.domElement.addEventListener('webglcontextlost', (e) => {
 });
 // 畫質設定記在瀏覽器裡（?test 分頁只記在那個分頁）。手機開啟動態畫質後會暫時減少特效。
 //   解析度：沒調過的話，電腦跟著螢幕的縮放比例走（筆電常見 1.25、1.5 倍，畫面才不會被放大而糊掉）；
-//           手機預設 1.6 倍，可手動選 1.0 到 2.0 倍。
+//           手機預設 1.5 倍，可手動選 1.0 到 2.0 倍。
 //   畫質等級：低／中／高，管陰影的細緻度、草的數量、角落的暗影（AO）、濕地板的倒影、光暈和陽光光束。
 //           電腦預設高、手機預設中。沒調過畫質的電腦第一次進房會量幀率，太慢就降一檔。
 //           手機的畫面幀率獨立設定，預設上限 60 FPS；低畫質減少的是陰影與特效。
@@ -124,7 +124,7 @@ let qualityReduction = 0;
 const desktopRatio = () => Math.round(clamp(window.devicePixelRatio || 1, 1, 1.5) * 10) / 10;
 const RATIO_MIN = TOUCH ? 1 : 0.5;
 const RATIO_MAX = TOUCH ? 2 : Math.round(clamp(window.devicePixelRatio || 1, 1.5, 2) * 10) / 10;
-let baseRatio = TOUCH ? 1.6 : desktopRatio();
+let baseRatio = TOUCH ? 1.5 : desktopRatio();
 const savedRatio = Number(getPref('stormcast.res'));
 let ratioSaved = Number.isFinite(savedRatio) && savedRatio >= 0.5;
 let pixelRatio = ratioSaved ? clamp(savedRatio, RATIO_MIN, RATIO_MAX) : baseRatio;
@@ -844,6 +844,18 @@ THREE.ShaderChunk.shadowmap_pars_fragment = THREE.ShaderChunk.shadowmap_pars_fra
 // 每盞的 shadow.intensity 拿來傳比例：[0] 整體深淺、[1] 舊方向佔幾成、[2] 近處開不開
 THREE.ShaderChunk.shadowmap_pars_fragment += `
 #if defined( USE_SHADOWMAP ) && ( NUM_DIR_LIGHT_SHADOWS == 4 || NUM_DIR_LIGHT_SHADOWS == 2 )
+#if NUM_DIR_LIGHT_SHADOWS == 2
+// 只有遠的那張（手機、電腦陰影「低」而且沒開近處陰影）：四個點各錯開半格、靠硬體的雙線性比較抹平，
+// 不轉角度、不加雜訊。內建的取法每個像素轉一個亂數角度，貼圖格子大時影子邊緣是一片沙沙的雜點，人一走動還會跟著閃
+float sunFarPCF( sampler2DShadow map, vec4 coord, vec2 size, float bias ) {
+	vec3 c = coord.xyz / coord.w;
+	if ( c.x < 0.0 || c.x > 1.0 || c.y < 0.0 || c.y > 1.0 || c.z > 1.0 ) return 1.0;
+	c.z += bias;
+	vec2 h = 0.5 / size;
+	return ( texture( map, vec3( c.xy + h, c.z ) ) + texture( map, vec3( c.xy - h, c.z ) )
+		+ texture( map, vec3( c.xy + vec2( h.x, -h.y ), c.z ) ) + texture( map, vec3( c.xy + vec2( -h.x, h.y ), c.z ) ) ) * 0.25;
+}
+#endif
 #if NUM_DIR_LIGHT_SHADOWS == 4
 // 近處那張的取樣：3×3 格、中間重四周輕（每一格又是硬體的雙線性比較），不轉角度、不加雜訊、不再拉陡。
 // 內建的取法每個像素轉一個亂數角度再拉陡邊緣，格子細的時候反而把邊緣弄成一坨一坨鋸齒
@@ -862,8 +874,13 @@ float sunNearPCF( sampler2DShadow map, vec4 coord, vec2 size, float bias ) {
 float sunShadowPlus() {
 	DirectionalLightShadow s0 = directionalLightShadows[ 0 ], s1 = directionalLightShadows[ 1 ];
 	float wOld = s1.shadowIntensity;
+#if NUM_DIR_LIGHT_SHADOWS == 2
+	float sh = sunFarPCF( directionalShadowMap[ 0 ], vDirectionalShadowCoord[ 0 ], s0.shadowMapSize, s0.shadowBias );
+	if ( wOld > 0.001 ) sh = mix( sh, sunFarPCF( directionalShadowMap[ 1 ], vDirectionalShadowCoord[ 1 ], s1.shadowMapSize, s1.shadowBias ), wOld );
+#else
 	float sh = getShadow( directionalShadowMap[ 0 ], s0.shadowMapSize, 1.0, s0.shadowBias, s0.shadowRadius, vDirectionalShadowCoord[ 0 ] );
 	if ( wOld > 0.001 ) sh = mix( sh, getShadow( directionalShadowMap[ 1 ], s1.shadowMapSize, 1.0, s1.shadowBias, s1.shadowRadius, vDirectionalShadowCoord[ 1 ] ), wOld );
+#endif
 #if NUM_DIR_LIGHT_SHADOWS == 4
 	DirectionalLightShadow s2 = directionalLightShadows[ 2 ], s3 = directionalLightShadows[ 3 ];
 	if ( s2.shadowIntensity > 0.5 ) {
@@ -898,6 +915,7 @@ float sunShadowPlus() {
 shared.uShadowMat.value = sun.shadow.matrix;
 shared.uShadowTexel.value = 1 / SHADOW_SIZE;
 const _sr = new THREE.Vector3(), _su = new THREE.Vector3(), _sc = new THREE.Vector3();
+const _shLast = new THREE.Vector3(1e9, 0, 0);   // 上一次畫陰影時的注視點（手機：動了就每一幀重畫）
 // 投影用的太陽方向：每一幀都跟著太陽走（以前是每走 0.35 度才跟一次，影子每隔一兩秒就跳一下，使用者不要）。
 // 陰影貼圖的格子方向用固定的參考軸（世界的 +Z，太陽的路徑大致繞著它轉）算，太陽移動時格子幾乎不轉，
 // 影子的邊緣只會跟著平順地滑動，不會一格一格地蠕動
@@ -1230,10 +1248,45 @@ scene.add(player.mesh);
 shade(player.mesh);
 addOutline(player.mesh);
 // 人物腳下貼地的暗影：站在岸壁、船上時是一片貼在腳下的圓；站在島上時由地形的著色器畫（斜坡上才不會穿幫）
-const blob = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 1.3).rotateX(-Math.PI / 2),
-  new THREE.MeshBasicMaterial({ map: softDisc(), color: 0x121a30, transparent: true, opacity: 0.45, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
-blob.position.y = 0.03;
-player.mesh.add(blob);
+// 陰影全關時（沒有任何影子）：不管站在哪裡，自己和別人腳下都畫這一圈（地形那邊不畫，免得疊兩層），跳起來留在地上、變淡，斜坡上貼著坡面
+const footBlob = (mesh) => {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 1.3).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ map: softDisc(), color: 0x121a30, transparent: true, opacity: 0.45, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+  m.position.y = 0.03;
+  m.castShadow = m.receiveShadow = false;
+  m.userData.noHull = true;
+  mesh.add(m);
+  return m;
+};
+const blob = footBlob(player.mesh);
+// 陰影全關時用的圓影：比貼地暗影（softDisc，很淡、邊緣拉得很開）實一點，一眼看得出是一圈影子，邊緣仍是柔的
+const FOOT_DISC = (() => {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  [[0, 1], [0.6, 0.95], [0.8, 0.6], [0.94, 0.14], [1, 0]].forEach(([t, a]) => gr.addColorStop(t, `rgba(255,255,255,${a})`));
+  g.fillStyle = gr;
+  g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+})();
+const SOFT_DISC = blob.material.map;
+const BLOB_UP = new THREE.Vector3(0, 1, 0), _bn = new THREE.Vector3(), _bq = new THREE.Quaternion();
+// 陰影全關時擺一個人腳下的圓影：h 離地多高；onBoat 在船上（甲板是平的，不必貼坡）
+function placeFootBlob(m, mesh, x, z, h, onBoat) {
+  const lift = clamp(1 - h / 1.2, 0, 1);
+  m.visible = lift > 0.02;
+  m.position.y = 0.03 - h;
+  m.material.opacity = 0.75 * lift;
+  m.material.map = FOOT_DISC;
+  m.scale.setScalar(0.72);   // 一圈約 90 公分：比肩膀寬一點
+  m.quaternion.identity();
+  if (onBoat) return;
+  // 斜坡：照腳下左右前後的地面高低把圓片斜過去（落差太大是牆、棧板邊，就不斜）
+  const gx = (walkGround(x + 0.3, z) - walkGround(x - 0.3, z)) / 0.6, gz = (walkGround(x, z + 0.3) - walkGround(x, z - 0.3)) / 0.6;
+  if (!(Math.abs(gx) < 1.2 && Math.abs(gz) < 1.2)) return;
+  _bn.set(-gx, 1, -gz).normalize();
+  m.quaternion.setFromUnitVectors(BLOB_UP, _bn).premultiply(_bq.copy(mesh.quaternion).invert());
+}
 
 const spray = new Spray(3000, shared);
 // 雨點打在地上的小皇冠和積水上的漣漪：只有電腦有（手機只有細水滴）。掛在 spray 底下，畫倒影時跟著一起藏
@@ -3115,10 +3168,11 @@ function applyLite() {
   scene.traverse((o) => {
     const m = o.material;
     if (!m || !m.isShaderMaterial || !m.fragmentShader.includes('sunShadow(')) return;
-    const plus = wantShPlus();
-    if (!!m.defines.LITE === gfx.lite && !!m.defines.SH_PLUS === !!plus) return;
+    const plus = wantShPlus(), tent = plus === 1;
+    if (!!m.defines.LITE === gfx.lite && !!m.defines.SH_PLUS === !!plus && !!m.defines.SH_TENT === tent) return;
     if (gfx.lite) m.defines.LITE = 1; else delete m.defines.LITE;
     if (plus) m.defines.SH_PLUS = 1; else delete m.defines.SH_PLUS;
+    if (tent) m.defines.SH_TENT = 1; else delete m.defines.SH_TENT;
     m.needsUpdate = true;
   });
 }
@@ -6014,7 +6068,10 @@ function drawFrame(dt, ms = performance.now()) {
   if (gfx.shadowOn) {
     shadowElapsed += dt;
     const shadowHz = !inGame ? 10 : gfx.lite ? 15 : 30;
-    const redraw = TOUCH ? mobileShadowClock.take(ms, shadowHz) !== null : !gfx.lite || !even;
+    // 手機：注視點（人、船）在動就每一幀重畫，影子才會黏著人走；站著不動才照上限省著畫（大廳一樣省）
+    const shMoved = TOUCH && inGame && _shLast.distanceToSquared(target) > 1e-5;
+    const redraw = TOUCH ? (shMoved ? (mobileShadowClock.take(ms, 0), true) : mobileShadowClock.take(ms, shadowHz) !== null) : !gfx.lite || !even;
+    if (redraw) _shLast.copy(target);
     if (redraw) {
       // 淡入淡出的新舊貼圖按實際更新次數輪流畫，並用累積時間推進。
       const shadowEven = TOUCH || gfx.lite ? (shadowDraws++ & 1) === 0 : even;
@@ -6030,8 +6087,24 @@ function drawFrame(dt, ms = performance.now()) {
   rays.strength = under ? 0 : RAYS * clamp((camera.getWorldDirection(_rf).dot(sunDir) - 0.15) / 0.35, 0, 1) * (1 - 0.8 * gloom);
   // 腳下的暗影
   const onFloor = !!player.boat || onDeck(player.x, player.z, PIER_PLANK_PAD + 0.18), lift = clamp(1 - (player.h || 0) / 1.2, 0, 1);
-  blob.visible = onFloor && !player.swim;
-  shared.uBlob.value.set(player.x, player.z, onFloor || player.swim ? 0 : lift);
+  if (gfx.shadowOn) {
+    blob.visible = onFloor && !player.swim;
+    blob.position.y = 0.03; blob.material.opacity = 0.45; blob.quaternion.identity();
+    blob.material.map = SOFT_DISC; blob.scale.setScalar(1);
+    shared.uBlob.value.set(player.x, player.z, onFloor || player.swim ? 0 : lift);
+  } else {
+    // 陰影全關：沒有別的影子，到處都畫圓影（自己、別人）；地形那邊不另外畫
+    placeFootBlob(blob, player.mesh, player.x, player.z, player.h || 0, !!player.boat);
+    if (player.swim || drown || mode !== 'walk') blob.visible = false;
+    shared.uBlob.value.set(player.x, player.z, 0);
+  }
+  for (const o of others.map.values()) {
+    const f = o.fig, st = o.st;
+    if (!f || !st) continue;
+    const fb = f.footBlob ??= footBlob(f.mesh);
+    if (gfx.shadowOn || !f.mesh.visible || f.swim) { fb.visible = false; continue; }
+    placeFootBlob(fb, f.mesh, f.x, f.z, Math.max(0, f.h || 0), !!st[8]);
+  }
   aoPass.enabled = !under && gfx.ao;   // 水裡一片混濁，不需要；畫質「低」也省掉
   waterFlag.visible = aoPass.enabled;    // 海面的記號只有角落暗影要用：沒開就不必再把整片海面的網格畫一次
   rays.enabled = gfx.rays; bloom.enabled = gfx.bloom;   // 設定裡可以各自關掉

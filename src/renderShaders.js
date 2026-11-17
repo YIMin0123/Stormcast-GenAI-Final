@@ -745,6 +745,15 @@ float shOne(sampler2DShadow map, mat4 M, vec3 wp, float texel, float ang, out fl
   edge = 0.0;
   if (p.x <= 0.0 || p.x >= 1.0 || p.y <= 0.0 || p.y >= 1.0 || p.z >= 1.0) return 1.0;
   p.z -= 0.00015;
+  vec2 e = min(p.xy, 1.0 - p.xy);
+  edge = smoothstep(0.0, 0.07, min(e.x, e.y));   // 陰影範圍的邊緣漸漸淡出
+#ifdef SH_TENT
+  // 只有遠的那張（手機、電腦陰影「低」沒開近處）：四個點各錯開半格、靠硬體的雙線性比較抹平，不轉角度、不加雜訊
+  //（轉角度的取法在格子大的時候，影子邊緣是一片沙沙的雜點；跟 main.js 的 sunFarPCF 同一套）
+  vec2 hh = vec2(0.5 * texel);
+  return (texture(map, vec3(p.xy + hh, p.z)) + texture(map, vec3(p.xy - hh, p.z))
+        + texture(map, vec3(p.xy + vec2(hh.x, -hh.y), p.z)) + texture(map, vec3(p.xy + vec2(-hh.x, hh.y), p.z))) * 0.25;
+#else
   // 繞著一圈取幾個點平均（每個位置轉一個不同的角度）：範圍只有一格左右，蓋掉貼圖的鋸齒就好，影子的邊緣是利落的
   float sh = 0.0;
   // 畫質「手機」（LITE）：取樣點減半
@@ -758,9 +767,8 @@ float shOne(sampler2DShadow map, mat4 M, vec3 wp, float texel, float ang, out fl
     float t = float(i) * 2.39996323 + ang;
     sh += texture(map, vec3(p.xy + r * vec2(cos(t), sin(t)), p.z));
   }
-  vec2 e = min(p.xy, 1.0 - p.xy);
-  edge = smoothstep(0.0, 0.07, min(e.x, e.y));   // 陰影範圍的邊緣漸漸淡出
   return smoothstep(0.22, 0.78, sh / float(SH_N));
+#endif
 }
 
 #ifdef SH_PLUS
