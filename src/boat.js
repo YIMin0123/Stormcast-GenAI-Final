@@ -245,7 +245,7 @@ function buildCabinBoat(S, g, blocks) {
   // 方向盤中心在人物胸口的高度（肩膀 0.92），舵台跟艙壁一樣高
   const wheelPos = new THREE.Vector3(x1 - 0.82, D + 0.8, 0);
   g.add(box(0.55, 0.72, hw * 2 - 1.0, wood, x1 - 0.4, D + 0.36, 0));
-  g.add(box(0.06, 0.24, 0.34, brass, x1 - 0.65, D + 0.84, -0.45)); // 羅盤座
+  g.add(box(0.06, 0.24, 0.34, brass, x1 - 0.65, D + 0.84, 0.45)); // 羅盤座（右邊；左邊放聲納）
   const wheel = new THREE.Group();
   wheel.position.copy(wheelPos);
   const rim = new THREE.Mesh(new THREE.TorusGeometry(WHEEL_R, 0.03, 8, 28), darkWood);
@@ -276,20 +276,13 @@ function buildCabinBoat(S, g, blocks) {
   lantern.position.set(cx - 0.8, roofY + 2.5, 0);
   g.add(mast, lantern, box(0.9, 0.05, 0.05, wood, cx - 0.8, roofY + 1.9, 0));
 
-  // ---- 船尾：引擎箱、排氣管、插著的釣竿 ----
+  // ---- 船尾：引擎箱、排氣管 ----
   const ex = x0 - 1.25;
   g.add(box(1.1, 0.75, 1.4, wood, ex, D + 0.375, 0));
   blocks.push([ex - 0.65, ex + 0.6, -0.8, 0.8]);
   const stack = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 2.3, 8), iron);
   stack.position.set(ex - 0.05, D + 1.6, 0.4);
   g.add(stack);
-  const rodMat = lambert(0x3b2a1a), rx = x0 - 1.7, rw = halfBeam(S, (rx + S.len / 2) / S.len) - 0.28;
-  for (const [rz, lean] of [[-rw, -0.35], [rw, 0.35], [-rw * 0.65, -0.2]]) {
-    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.03, 3.6, 6), rodMat);
-    rod.position.set(rx, D + 1.9, rz + lean * 1.2);
-    rod.rotation.set(lean, 0, 0.5);
-    g.add(rod);
-  }
 
   // ---- 前甲板：艙蓋、靠牆的木箱、木桶、繩圈、浮球 ----
   g.add(box(S.hatch.s, 0.28, S.hatch.s, darkWood, S.hatch.x, D + 0.14, 0));
@@ -305,9 +298,9 @@ function buildCabinBoat(S, g, blocks) {
   rope.position.set(S.barrel.x + 0.9, D + 0.1, 0.3);
   g.add(barrel, rope);
   const buoy = lambert(0xf07a1a);
-  for (const [bx, bz] of [[S.barrel.x + 1.2, -0.3], [x0 - 0.4, -hw - 0.2]]) {
+  {
     const b = new THREE.Mesh(new THREE.SphereGeometry(0.24, 10, 8), buoy);
-    b.position.set(bx, D + 0.24, bz);
+    b.position.set(S.barrel.x + 1.2, D + 0.24, -0.3);
     g.add(b);
   }
 
@@ -460,9 +453,10 @@ function buildCabinBoat(S, g, blocks) {
     seats.push({ x: sx, z: sz2, h: 0.45, yaw: Math.PI / 2, out: [0, -0.6], mesh: seat2 });
   }
 
-  // ---- 探魚聲納（改裝，買了才出現）：方向盤右前方舵台上的一台小機器，螢幕朝著舵手 ----
+  // ---- 探魚聲納（改裝，買了才出現）：方向盤左邊舵台上的一台小機器，螢幕斜斜轉向舵手（放在右前方會被方向盤擋住） ----
   const sonar = new THREE.Group();
-  sonar.position.set(x1 - 0.56, D + 0.72, 0.34);
+  sonar.position.set(x1 - 0.56, D + 0.72, -0.62);
+  sonar.rotation.y = Math.atan2(0.62, (x1 - 0.56) - (wheelPos.x - FP_GAP + 0.08));
   sonar.add(box(0.2, 0.05, 0.28, iron, 0, 0.025, 0), box(0.1, 0.24, 0.28, iron, 0.02, 0.17, 0), box(0.02, 0.2, 0.012, brass, 0.06, 0.32, 0.1));
   let sonarCtx = null, sonarTex = null;
   {
@@ -489,7 +483,8 @@ function buildCabinBoat(S, g, blocks) {
   const lampLens = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.03, 10), new THREE.MeshBasicMaterial({ color: 0x4a4636 }));
   lampLens.rotation.z = Math.PI / 2 + 0.55;
   lampLens.position.set(0.26, 0.535, 0);
-  bowLamp.add(box(0.07, 0.6, 0.07, iron, 0, 0.3, 0), box(0.22, 0.05, 0.3, iron, 0, 0.03, 0), lampHead, lampLens);
+  const lampRise = bly - D;   // 燈頭跟船舷一樣高，燈柱從甲板一路立上來
+  bowLamp.add(box(0.07, 0.6 + lampRise, 0.07, iron, 0, (0.6 - lampRise) / 2, 0), box(0.22, 0.05, 0.3, iron, 0, 0.025 - lampRise, 0), lampHead, lampLens);
   for (const pz of [-0.19, 0.19]) bowLamp.add(box(0.04, 0.2, 0.03, brass, 0.06, 0.56, pz));
   // 照在海面上的那一圈光：只加亮、不動畫面的 alpha（alpha 是「是不是天空」的記號）
   //   中間亮、往外三圈淡到沒有（頂點色）：整片一樣亮的話邊緣很硬，晚上看像一塊板子躺在海上
