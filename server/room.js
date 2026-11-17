@@ -102,6 +102,7 @@ export function newPlayer(id, ws, token, name, look = 'girl') {
     fishing: null,                              // 正在釣：{ x, z, state, fish, biteAt, biteUntil, fightAt }
     chatAt: [], msgAt: 0, msgN: 0,
     gone: 0, left: false, suspect: 0,
+    actAt: 0,                                   // 客戶端最後一次回報「有在操作」的時間（0 = 沒回報過的舊版客戶端，不判閒置）；見 index.js 的 idleKick
     owner: true,                                // 進度由這個物件存回檔案（按了離開、被收走之後就不是了，免得蓋掉新進度）
     resetMsg: null,                             // 斷線時遇到定時刷新：接回來時要補講的話
     passengerReturn: null,                      // 斷線期間搭的船被收回：重連時套用回港位置
@@ -432,6 +433,7 @@ export class Room {
     if (onBoxMsg(this, p, m, now)) return;   // 魚箱、送東西（fishBoxes.js）
     if (onPartyMsg(this, p, m, now)) return;   // 船隊、拖船、副駕（party.js）
     switch (m.t) {
+      case 'act': p.actAt = now; return;   // 客戶端有人在操作：重新計閒置時間
       case 'p': {
         const s = m.s;
         if (!Array.isArray(s) || s.length !== 13 || !nums(s.slice(0, 11), 11)) return;

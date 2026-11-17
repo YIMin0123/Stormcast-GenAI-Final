@@ -157,7 +157,7 @@ export class Activity {
     a.money = money;
   }
 
-  // 這一場結束了：why = leave 按了離開 / expire 斷線太久被收走 / restart 伺服器重開
+  // 這一場結束了：why = leave 按了離開 / expire 斷線太久被收走 / idle 閒置太久被請出 / restart 伺服器重開
   end(p, why) {
     const a = p.act;
     if (!a) return;

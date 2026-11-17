@@ -33,7 +33,8 @@ const HOST = process.env.HOST || '127.0.0.1';   // 正式機在 Caddy 後面，�
 const DATA = process.env.DATA_DIR || join(dirname(fileURLToPath(import.meta.url)), 'data');
 const ORIGINS = (process.env.ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);   // 只收這些網站連進來（沒設定就都收）
 const MERGE_AFTER = +(process.env.MERGE_AFTER_SEC || 600) * 1000;   // 兩間房都少於 MERGE_BELOW 人多久之後合併
-const MERGE_COUNT = +(process.env.MERGE_COUNT_SEC || 60);           // 合併前倒數幾秒（客戶端用跑馬燈顯示即時倒數）
+const IDLE_MS = +(process.env.IDLE_SEC || SERVER.idleKickSec) * 1000;   // 連著線卻沒操作多久就請回大廳（0 = 不踢）
+const MERGE_COUNT =+(process.env.MERGE_COUNT_SEC || 60);           // 合併前倒數幾秒（客戶端用跑馬燈顯示即時倒數）
 const MERGE_BELOW = 5;
 const SAVE_EVERY = 10;   // 進度幾秒存一次（有變才寫檔）
 const MAX_TOTAL = Math.max(1, +(process.env.MAX_TOTAL_PLAYERS || SERVER.maxPlayers));   // 全服人數上限（SERVER.maxPlayers；環境變數只給測試用）
@@ -268,6 +269,7 @@ wss.on('connection', (ws, req) => {
     if (old.ws) { send(old.ws, { t: 'kicked', msg: '你在另一個視窗進入了遊戲' }); const w = old.ws; old.ws = null; w.close(); old.room.all({ t: 'leave', id: old.id }); }
     me = old;
     me.ws = ws; me.gone = 0; me.name = name; me.look = look;   // 重新整理後可能換了角色
+    if (me.actAt) me.actAt = now;                              // 斷線接回來：閒置時間重算
     hub.lobby.delete(ws);
     const r = me.room;
     r.send(me, { t: 'joined', resume: r.resumeData(me), ...r.snapshot(me) });
@@ -366,13 +368,28 @@ wss.on('connection', (ws, req) => {
   });
 });
 
+// ---- 閒置 -------------------------------------------------------------------
+// 連著線、客戶端也回報過操作，但 IDLE_MS 沒再收到：照「按了離開」處理（進度存檔、船位收走），畫面跳出說明
+function idleKick(p) {
+  const r = p.room, ws = p.ws;
+  console.log(`[idle] ${p.name} 閒置超過 ${Math.round(IDLE_MS / 1000)} 秒，請回大廳（${r.name}）`);
+  send(ws, { t: 'kicked', msg: `你已經超過 ${Math.round(IDLE_MS / 60000)} 分鐘沒有操作，先請你離開房間（錢、船、裝備和魚都存著，重新進房就好）` });
+  r.quit(p);
+  hub.activity.end(p, 'idle');
+  ws.close();
+  tidyRooms();
+}
+
 // ---- 時鐘 -------------------------------------------------------------------
 let n = 0;
 setInterval(() => {
   const now = Date.now();
   n++;
   for (const r of hub.rooms.values()) r.step(now);
-  if (n % 10 === 0) { mergeStep(now); tidyRooms(); }
+  if (n % 10 === 0) {
+    mergeStep(now); tidyRooms();
+    if (IDLE_MS > 0) hub.eachRoom((r) => { for (const p of [...r.players.values()]) if (p.ws && p.actAt && !p.left && now - p.actAt > IDLE_MS) idleKick(p); });
+  }
   if (n % 20 === 0 && hub.lobby.size) { const raw = JSON.stringify(lobbyList()); for (const ws of hub.lobby) sendRaw(ws, raw); }
   if (n % 300 === 0) for (const ws of wss.clients) {
     if (ws.readyState !== 1) continue;

@@ -46,7 +46,7 @@ const full=(ms)=>{const d=tw(ms);return (d.getUTCMonth()+1)+'/'+d.getUTCDate()+'
 const dur=(s)=>s<60?s+' 秒':s<3600?Math.round(s/60)+' 分':(s/3600).toFixed(1)+' 時';
 const money=(n)=>'$'+Math.round(n).toLocaleString();
 const devTag=(t)=>el('span',t==='mobile'?'手機':'電腦','tag '+(t==='mobile'?'mobile':'pc'));
-const WHY={leave:'按了離開',expire:'斷線太久被收走',restart:'伺服器重開',crash:'異常結束（伺服器非正常關閉）'};
+const WHY={leave:'按了離開',expire:'斷線太久被收走',idle:'閒置太久被請出',restart:'伺服器重開',crash:'異常結束（伺服器非正常關閉）'};
 const NAME={};for(const p of R.people)NAME[p.pid]=p.names.length?p.names[p.names.length-1].name:p.pid;
 function table(node,head,rows,numCols=[]){node.replaceChildren();const th=el('thead'),tr=el('tr');head.forEach((h,i)=>tr.append(el('th',h,numCols.includes(i)?'n':'')));th.append(tr);const tb=el('tbody');rows.forEach((r)=>tb.append(r));node.append(th,tb);return tb}
 function row(cells,numCols=[]){const tr=el('tr');cells.forEach((c,i)=>{const td=el('td');if(numCols.includes(i))td.className='n';if(c instanceof Node)td.append(c);else td.textContent=c;tr.append(td)});return tr}

@@ -9,7 +9,7 @@ import { ShallowWater, SWE } from './shallow.js';
 import { makeSwimFx } from './swimfx.js';
 import { makeSurfaceProbe } from './swimProbe.js';
 import { makeHarbor, worldizeHarborLists, PILES, SOLIDS, WALLS, DECKS, HARBOR_ROCKS, EXTRA_LAMPS, POOLS, GLOW, DECK_Y, SELL, setBoard, BOLLARDS, MoorLine, SHELF, setTag, drawTag, LAMPS, UNLIT, WET, ROOM_LIGHTS, ROOM_LAMPS, setRoomLights, GLOW_KEEP, lightBulbs, updateFlags, updateScale, PORCHES, HOME_LAND } from './harbor.js';
-import { WORLD, THROW, DEVMODE, SHORE_WIND, CLOUDS, FISHBOX, TABLET, GUILD, LEVEL, PARTY, TOW, BOATHIT, FEEDBACK, levelOf, LOD } from './config.js';
+import { WORLD, THROW, DEVMODE, SHORE_WIND, CLOUDS, FISHBOX, TABLET, GUILD, LEVEL, PARTY, TOW, BOATHIT, FEEDBACK, SERVER, levelOf, LOD } from './config.js';
 import { Tablet } from './tablet.js';
 import { makeApps } from './tabletApps.js';
 import { unreadCount } from './updates.js';
@@ -5568,6 +5568,17 @@ net.on('merged', (m) => {
   mergeMarq(`已經合併到${room.name}${m.repark ? '，你的船移到港口另一個船位（畫面上標出來了）' : ''}`, 0, 10);   // 跑馬燈，不進聊天室
 });
 
+// ---- 閒置回報 ----
+// 有人在操作（按鍵、滑鼠、觸控）就每隔 SERVER.actEverySec 秒跟伺服器說一聲；伺服器 SERVER.idleKickSec 沒聽到就請回大廳
+let lastAct = 0;
+function noteAct(force) {
+  const t = performance.now();
+  if (!inGame || !net.online || (!force && t - lastAct < SERVER.actEverySec * 1000)) return;
+  lastAct = t;
+  net.send({ t: 'act' });
+}
+for (const ev of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart', 'touchmove']) window.addEventListener(ev, () => noteAct(false), { capture: true, passive: true });
+
 // ---- 連線狀態 ----
 net.on('status', (st) => {
   const box = $('net'), msg = $('netMsg'), btn = $('netRetry');
@@ -5684,6 +5695,7 @@ function enterRoom(j) {
   chat.sys(back ? (pos ? `回到${room.name}了` : `歡迎回到${room.name}，錢、船和還沒賣的魚都還在`) : touchText(`歡迎來到${room.name}。按 Enter 可以聊天`), 'info');
   $('net').style.display = 'none';
   inGame = true;
+  noteAct(true);   // 進房那一刻就算有操作：伺服器從這裡開始算閒置
   document.body.classList.add('playing');   // 設定搬進平板（左上角的設定鈕收起來）
   tablet.update(true);
   syncOwnTabletTex(true);
