@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { makeTerrain, computeShelter, computeShoreDist, ISLANDS } from './terrain.js';
-import { waterVert, waterFrag, liteWaterVert, liteWaterFrag, terrainVert, terrainFrag, grassVert, grassFrag, skyVert, skyFrag, diagVert, diagFrag, diagPtFrag, HAZE, RAIN_HAZE } from './renderShaders.js';
+import { hullCutGlsl, waterVert, waterFrag, liteWaterVert, liteWaterFrag, terrainVert, terrainFrag, grassVert, grassFrag, skyVert, skyFrag, diagVert, diagFrag, diagPtFrag, HAZE, RAIN_HAZE } from './renderShaders.js';
 import { FftOcean, makeFoamTexture } from './ocean.js';
-import { Boat, BOAT_TYPES } from './boat.js';
+import { Boat, BOAT_TYPES, hullCutDims } from './boat.js';
 import { BOAT_ORDER, CAN, CHUM_SPEC, BOAT_MODS, BOAT_PAINTS, BLESSINGS, HONOR_TITLES, PRICE, newKit, shopItem, baitCount, repairCost } from './boatdata.js';
 import { Player } from './player.js';
 import { ShallowWater, SWE } from './shallow.js';
@@ -600,6 +600,7 @@ WIND.dir.value.set(Math.cos(WAVE_ANGLE), Math.sin(WAVE_ANGLE));   // 樹被風�
 const groundDetail = makeGroundDetail();
 for (const t of [groundDetail.detail, groundDetail.normal]) t.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
 const TIME_U = { value: 0 };
+const CUT_N = 6;   // 海面著色器最多同時把幾艘船的船艙挖掉（離鏡頭最近的幾艘；跟 renderShaders.js 的 CUT_N 一樣）
 const shared = {
   uBed: { value: bedTex }, uShelter: { value: shelterTex }, uShore: { value: shoreTex }, uN: { value: NF }, uL: { value: L },
   uSunDir: { value: sunDir }, uTime: TIME_U, uSwellT: TIME_U,
@@ -628,6 +629,7 @@ const shared = {
   uQuay: { value: Array.from({ length: 3 }, () => new THREE.Vector4(1e6, 1e6, 1e6, 1e6)) },
   uHull: { value: Array.from({ length: 3 }, () => new THREE.Vector4(1e6, 1e6, 1, 0)) },
   uHullSize: { value: Array.from({ length: 3 }, () => new THREE.Vector3(1, 1, 0)) },
+  uCutM: { value: Array.from({ length: CUT_N }, () => new THREE.Matrix4()) }, uCutA: { value: Array.from({ length: CUT_N }, () => new THREE.Vector4()) }, uCutB: { value: Array.from({ length: CUT_N }, () => new THREE.Vector4()) },
   uDanger: { value: dangerTex }, uTsuK: { value: tsuKTex }, uStorm: { value: 0 }, uTsu: { value: new THREE.Vector4(0, 1, 0, 0) }, uTsu2: { value: new THREE.Vector2() }, uGloom: { value: 0 },
   uSunCol: { value: new THREE.Vector3(1, 0.93, 0.8) }, uAmbient: { value: new THREE.Vector3(1, 1, 1) },
   uDay: { value: 1 }, uDusk: { value: 0 }, uFog: { value: 0 }, uHazeK: { value: 1 }, uFlash: { value: 0 }, uFlashDir: { value: new THREE.Vector3(0, 1, 0) }, uRain: { value: 0 }, uCloudMap: { value: null }, uPaint: { value: new THREE.Vector4(0, 0, CLOUDS.H, 0) }, uPaintOff: { value: new THREE.Vector4() }, uDeck: { value: new THREE.Vector4(0, 0, 1, 0) }, uSwell: { value: 0 }, uSurge: { value: 0 }, uFlood: { value: 0 },
@@ -686,7 +688,10 @@ water.renderOrder = 2;
 // 海面的記號：海面畫完之後，同一張網格再畫一次，只把畫面的 alpha 寫成 3（顏色不動、只蓋在看得到海面的像素上）。
 // 環境光遮蔽靠這個記號跳過海面：它是從深度反推表面的，貼著海面往遠處看時會誤判，在海上壓出一塊塊有直線邊的暗影
 const waterFlag = new THREE.Mesh(water.geometry, new THREE.ShaderMaterial({
-  vertexShader: LITE_SEA ? liteWaterVert : waterVert, fragmentShader: 'void main() { gl_FragColor = vec4(0.0, 0.0, 0.0, 3.0); }', uniforms: shared, transparent: true,
+  vertexShader: LITE_SEA ? liteWaterVert : waterVert, uniforms: shared, transparent: true,
+  fragmentShader: `${hullCutGlsl}
+varying vec3 vWorld;
+void main() { if (inHull(vWorld)) discard; gl_FragColor = vec4(0.0, 0.0, 0.0, 3.0); }`,   // 船艙裡跟海面一樣不畫
   blending: THREE.CustomBlending, blendSrc: THREE.ZeroFactor, blendDst: THREE.OneFactor, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.ZeroFactor,
   depthWrite: false, depthFunc: THREE.LessEqualDepth, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2, side: THREE.DoubleSide,
 }));
@@ -1179,7 +1184,6 @@ function addBoat(type, pose) {
   scene.add(b.mesh);
   shade(b.mesh);
   addOutline(b.mesh);
-  b.mesh.add(b.waterMask);   // 描邊、陰影設好之後才掛上去（它是看不見的遮罩，不該被描邊或投影）
   return b;
 }
 // 把一艘船從世界裡拿掉（別人的船被收走、換掉、沉完了）：上面自己的東西沒了，站在上面的人掉下來
@@ -1523,6 +1527,23 @@ function updateBoatShadow() {
     const b = near[i], on = !!b;
     shared.uHullSize.value[i].set(on ? b.spec.len * HULL_WL[0] : 1, on ? b.spec.beam * HULL_WL[1] : 1, on ? 1 : 0);
     if (on) shared.uHull.value[i].set(b.x, b.z, Math.cos(b.heading), Math.sin(b.heading));
+  }
+}
+
+// 船艙裡不畫海面（renderShaders.js 的 hullCutGlsl）：離鏡頭最近的 CUT_N 艘還沒進水的船，交出「世界 → 船」的矩陣和船殼尺寸。
+// 用船這一幀的位置、姿態現算（不等場景更新矩陣），船開得快時挖掉的範圍才不會落後一幀
+const _cutQ = [];
+function syncHullCut() {
+  _cutQ.length = 0;
+  const cp = camera.position;
+  for (const b of boats) if (b.dry && b.mesh.parent && b.mesh.visible) _cutQ.push(b);
+  if (_cutQ.length > CUT_N) _cutQ.sort((p, q) => p.mesh.position.distanceToSquared(cp) - q.mesh.position.distanceToSquared(cp));
+  const M = shared.uCutM.value, A = shared.uCutA.value, B = shared.uCutB.value;
+  for (let i = 0; i < CUT_N; i++) {
+    const b = _cutQ[i];
+    if (!b) { A[i].set(0, 0, 0, 0); continue; }
+    M[i].compose(b.mesh.position, b.mesh.quaternion, b.mesh.scale).invert();
+    hullCutDims(b.spec, A[i], B[i]);
   }
 }
 
@@ -1916,8 +1937,7 @@ function orbit(yaw, pitch, dist) {
 let debugCam = null;   // 測試用：把鏡頭釘在指定的位置 [x, y, z, 看向 x, y, z]
 let menuYaw = 0;
 // 鏡頭多近的東西開始被裁掉：第一人稱 0.25（applyViewSettings 也是這個數字），第三人稱 1（鏡頭被牆擠近時 0.3）。
-// 第一人稱不能用 1：船艙口那片擋海水用的隱形蓋子（boat.js 的 buildWaterMask）就在眼睛下方不到一公尺，
-// 往下看時它靠近鏡頭的那一段會被裁掉，切口在深度上是一道落差，環境光遮蔽會把它當成一面牆，把切口以下的船板壓黑
+// 第一人稱不能用 1：近處的船板、欄杆會被裁掉（以前船艙口還有一片只寫深度的隱形蓋子，2026-11-17 起改成海面著色器自己挖掉船艙，見 hullCutGlsl）
 function setNear(n) {
   if (camera.near !== n) { camera.near = n; camera.updateProjectionMatrix(); }
 }
@@ -6165,6 +6185,7 @@ function drawFrame(dt, ms = performance.now()) {
   } else SIGHT.r.value.set(0, 0);
   syncWaterTsu();
   fitWater(under);
+  syncHullCut();
   const aim = inGame && mode === 'walk' && !debugCam && !tabOpen() && !chat.isOpen && !wheel.isOpen && !$('panel').open ? aimTarget() : null;
   const outline = aimOutlineTargets(aim);
   aimOutline.setTargets(outline?.objs, outline?.ignore);

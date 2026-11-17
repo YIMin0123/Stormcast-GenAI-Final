@@ -675,22 +675,12 @@ export function buildBoatMesh(S, blocks = []) {
 // 船底取樣的九個點（船長方向、船寬方向，各以取樣半徑為 1）：船頭、船尾、兩舷、四個角、正中央
 const HULL_PTS = [[1, 0], [-1, 0], [0, 1], [0, -1], [0.6, 0.8], [0.6, -0.8], [-0.6, 0.8], [-0.6, -0.8], [0, 0]];
 
-// 船艙口的「蓋子」：一片看不見、只寫深度的面，蓋在舷緣的高度上。海面畫到這裡就被擋掉，
-// 浪高過甲板但還沒高過舷緣的時候，水才不會出現在船裡面（真的高過舷緣灌進來的水照樣看得到）
-function buildWaterMask(S) {
-  const NS = 24, pos = [], idx = [];
-  for (let s = 0; s <= NS; s++) {
-    const t = s / NS, x = (t - 0.5) * S.len, half = halfBeam(S, t);
-    const y = S.deck + S.bul + S.rise * Math.pow(t, 2.6) + 0.43 * S.bul * (1 - t) * (1 - t) - 0.03;
-    pos.push(x, y, -half, x, y, half);
-    if (s < NS) { const a = s * 2; idx.push(a, a + 1, a + 2, a + 2, a + 1, a + 3); }
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setIndex(idx);
-  const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true, transparent: true, side: THREE.DoubleSide, forceSinglePass: true }));
-  m.renderOrder = 1;   // 在不透明的船身之後、海面（renderOrder 2）之前畫
-  return m;
+// 船艙裡的海面不畫：海面著色器自己判斷那一點在不在船殼裡（renderShaders.js 的 hullCutGlsl）。
+// 浪高過甲板但還沒高過舷緣的時候，水才不會出現在船裡面（真的高過舷緣灌進來的水照樣看得到）。
+// 這裡給著色器船殼的尺寸：(船長, 半寬, 舷緣高 − 0.03, 船頭翹起)、(船尾舷牆加高, 吃水)，形狀跟 halfBeam、railRise、hullSection 同一套
+export function hullCutDims(S, A, B) {
+  A.set(S.len, S.beam / 2, S.deck + S.bul - 0.03, S.rise);
+  B.set(0.43 * S.bul, S.draft, 0, 0);
 }
 
 export class Boat {
@@ -726,7 +716,7 @@ export class Boat {
     this._d = new THREE.Vector3();
     this._nS = new THREE.Vector3(0, 1, 0);         // 只看長浪的姿態（算船受不受得了用）
     this._vp = 0; this._vr = 0; this._wp = 0; this._wr = 0;   // 畫面上的縱搖、橫搖（斜率）與它們變化的速度
-    this.waterMask = buildWaterMask(S);            // 擋住船艙裡的海面（由外面在描邊、陰影設好之後再掛到船上）
+    this.dry = true;                               // 船艙裡不畫海面（main.js 把船殼交給海面著色器）；進水了就不擋
     this.setManned(false);
     this.mesh.position.set(x, 0, z);
     this.mesh.rotation.y = -heading;
@@ -819,7 +809,7 @@ export class Boat {
     this._side = side;
     this._lean = Math.atan(Math.abs(this.roll));
     this.speed = 0; this.throttle = 0;
-    this.waterMask.visible = false;   // 船進水了：艙裡的海面不再擋掉
+    this.dry = false;   // 船進水了：艙裡的海面不再擋掉
     this.setManned(false);
   }
 

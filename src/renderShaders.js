@@ -824,8 +824,38 @@ float shadowRange(vec3 wp, float w) {
 }
 `;
 
+// 船艙裡不畫海面：海面上的這一點落在哪艘船的船殼裡面（舷緣以下、船底以上）就不畫。
+// 以前是在舷緣高度蓋一片只寫深度的隱形蓋子擋海面，但那片蓋子把甲板的深度換成了舷緣的高度，
+// 環境光遮蔽（只吃深度）就在那片假的平面上算暗角，甲板上出現一塊塊直線邊、會跟著視角變的暗影。
+// 船殼的形狀跟 boat.js 的 halfBeam、railRise、hullSection 同一套（uCutA：(船長, 半寬, 甲板＋舷牆高 − 0.03, 船頭翹起)，uCutB：(船尾舷牆加高, 吃水)）
+export const hullCutGlsl = /* glsl */ `
+#ifndef CUT_N
+  #define CUT_N 6
+#endif
+uniform mat4 uCutM[CUT_N];   // 世界座標 → 船的座標
+uniform vec4 uCutA[CUT_N];   // 船長 0 = 這一格沒有船（後面的也沒有）
+uniform vec4 uCutB[CUT_N];
+bool inHull(vec3 w) {
+  for (int i = 0; i < CUT_N; i++) {
+    vec4 A = uCutA[i];
+    if (A.x <= 0.0) break;
+    vec3 p = (uCutM[i] * vec4(w, 1.0)).xyz;
+    float t = p.x / A.x + 0.5;
+    if (t <= 0.0 || t >= 1.0) continue;
+    float hb = A.y * 1.03 * (t < 0.38 ? 0.74 + 0.26 * sin(t / 0.38 * 1.5707963) : pow(max(cos((t - 0.38) / 0.62 * 1.5707963), 0.0), 0.52));
+    float u = abs(p.z) / max(hb, 1e-3);
+    if (u >= 1.0) continue;
+    float top = A.z + A.w * pow(t, 2.6) + uCutB[i].x * (1.0 - t) * (1.0 - t);
+    float bot = -uCutB[i].y * (1.0 - pow(t, 5.0)) * (1.0 - 0.88 * u * u);
+    if (p.y < top && p.y > bot) return true;
+  }
+  return false;
+}
+`;
+
 export const waterFrag = /* glsl */ `
 ${common}
+${hullCutGlsl}
 ${bed}
 ${waveDecl}
 ${shore}
@@ -945,6 +975,7 @@ vec3 underSurface(vec3 N, vec3 V, float foam) {
 }
 
 void main() {
+  if (inHull(vWorld)) discard;   // 船艙裡（見 hullCutGlsl）
   float bedH = bedAt(vWorld.xz);
   float shel = shelterAt(vWorld.xz);
   float ph = shorePhase(vWorld.xz, uTime) + shoreTilt(vWorld.xz), expo = shoreExpo(shel, SHORE_SEA) * shoreFace(vWorld.xz, shoreDist(vWorld.xz));
@@ -1840,6 +1871,7 @@ ${probeOut}
 
 export const liteWaterFrag = /* glsl */ `
 ${common}
+${hullCutGlsl}
 ${bed}
 ${waveDecl}
 ${shore}
@@ -1873,6 +1905,7 @@ varying vec4 vInfo;
 varying vec3 vBig;
 varying vec2 vFx;
 void main() {
+  if (inHull(vWorld)) discard;   // 船艙裡（見 hullCutGlsl）
   float bedH = bedLite(vWorld.xz);
   float sd = shoreDist(vWorld.xz);
   float shel = vInfo.w, amp = vInfo.x, ws = vInfo.y;
