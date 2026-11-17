@@ -140,6 +140,21 @@
     }
     body:not(.playing) #compass { display: none !important; }
     #fade { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; }
+    /* 開場載入畫面：網頁一打開就有（程式還沒跑），main.js 畫出第一幀才淡掉（見 main.js 的 hideBoot）。
+       載入時主執行緒會整段忙著蓋地圖、編著色器，動畫只用 transform（交給合成執行緒跑），才不會跟著卡住 */
+    #boot { position: fixed; inset: 0; z-index: 200; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: radial-gradient(ellipse at 50% 42%, #1d6f9f 0%, #124a6d 45%, #0e3550 80%); color: #e8f6fd; font-family: var(--font);
+      transition: opacity 0.5s; user-select: none; }
+    #boot.gone { opacity: 0; pointer-events: none; }
+    #boot .bootTitle { font-size: clamp(34px, 7vw, 60px); letter-spacing: 0.06em; text-shadow: 0 3px 0 rgba(0, 0, 0, 0.18); }
+    #boot .bootSea { position: relative; width: 180px; height: 64px; margin: 14px 0 8px; overflow: hidden; }
+    #boot .bootBoat { position: absolute; left: 64px; top: 4px; width: 52px; height: 44px; animation: bootBob 1.8s ease-in-out infinite; will-change: transform; }
+    #boot .bootWave { position: absolute; left: 0; bottom: 0; width: 240px; height: 24px; will-change: transform; animation: bootWave 2.2s linear infinite;
+      background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='24'%3E%3Cpath d='M0 10 Q15 3 30 10 T60 10 V24 H0Z' fill='%232c8fc9'/%3E%3C/svg%3E") repeat-x;
+      background-size: 60px 24px; }
+    #boot .bootTip { font-size: 15px; color: rgba(232, 246, 253, 0.78); }
+    @keyframes bootBob { 0%, 100% { transform: translateY(0) rotate(-5deg); } 50% { transform: translateY(6px) rotate(5deg); } }
+    @keyframes bootWave { from { transform: translateX(0); } to { transform: translateX(-60px); } }
     /* 通知（釣到魚、換餌……）：畫面上方正中間，不跟下面的提示疊在一起 */
     /* 全服公告跑馬燈（伺服器發的，可帶重開倒數；見 main.js 的 showNotice） */
     #marquee { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); z-index: 70; width: min(92vw, 760px); overflow: hidden; display: none;
@@ -380,6 +395,14 @@
   </style>
 </head>
 <body>
+  <div id="boot" role="status">
+    <div class="bootTitle">Stormcast</div>
+    <div class="bootSea">
+      <svg class="bootBoat" viewBox="0 0 52 44" aria-hidden="true"><path d="M25 4 L25 30 L8 30 Z" fill="#fdf6e8"/><path d="M28 10 L28 30 L42 30 Z" fill="#ffc23c"/><rect x="25" y="3" width="2.5" height="29" fill="#5a3d28"/><path d="M4 31 H48 L41 41 H11 Z" fill="#ff7f5c"/></svg>
+      <div class="bootWave"></div>
+    </div>
+    <div class="bootTip">正在準備海面…</div>
+  </div>
   <div id="fade"></div>
   <details id="panel" class="card">
     <summary><span class="gear">⚙</span>設定<span class="x">收起 ✕</span></summary>

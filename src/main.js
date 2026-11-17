@@ -86,6 +86,7 @@ const r2 = (v) => Math.round(v * 100) / 100;
 
 function fail(msg) {
   const el = $('err');
+  $('boot')?.remove();   // 開場畫面蓋在錯誤訊息上面，先拿掉
   el.style.display = 'flex';
   el.textContent = msg;
   throw new Error(msg);
@@ -6298,6 +6299,7 @@ function animate(ms) {
   if (simMs > 0) advance(Math.min(simMs / 1000, 0.05));
   if (drawMs === null) return;
   if (diag) diag(ms);
+  if (bootEl) hideBoot();
   if (probe && !frameLimit) probeGfx(ms, drawMs);
   drawFrame(Math.min(drawMs / 1000, TOUCH && !inGame ? 0.075 : 0.05), ms);
   if (adaptiveEnabled || !adaptiveAsked) checkAdaptiveQuality(ms);
@@ -6317,10 +6319,41 @@ function syncAnimation() {
   shadowElapsed = 0;
   if (probe) { probe.t0 = 0; probe.n = 0; probe.sum = 0; }
   fpsN = 0; fpsT = performance.now();
-  renderer.setAnimationLoop(document.hidden ? null : animate);
+  renderer.setAnimationLoop(document.hidden || !booted ? null : animate);
 }
 document.addEventListener('visibilitychange', syncAnimation);
-syncAnimation();
+// 開場：第一幀之前先在背景把場景裡所有材質的著色器編好（KHR_parallel_shader_compile：顯示卡自己編，不卡住網頁，
+// 開場畫面的動畫照跑），編好才開始畫。以前是第一幀才當場編，整個網頁停住好幾秒。
+// 編的時候要用跟真的畫的時候一樣的輸出設定（場景先畫到後製的緩衝區：線性色彩、不做色調映射），不然第一幀照樣要重編。
+// 不支援、出錯或 20 秒還沒編完就不等了，照舊開始畫
+let booted = false, bootEl = $('boot');
+function warmUp() {
+  const prev = renderer.getRenderTarget();
+  let p = Promise.resolve();
+  try {
+    renderer.setRenderTarget(composer.readBuffer);
+    p = renderer.compileAsync(scene, camera);
+  } catch (e) {
+    console.warn('[boot] 預先編譯著色器失敗，照舊開始畫', e);
+  } finally {
+    renderer.setRenderTarget(prev);
+  }
+  return Promise.race([p, new Promise((r) => setTimeout(r, 20000))]).catch(() => {});
+}
+// 第一幀畫好了：開場畫面淡掉
+function hideBoot() {
+  const el = bootEl;
+  bootEl = null;
+  if (/[?&]test/.test(location.search)) console.info(`[boot] 第一幀 ${Math.round(performance.now())} ms（從網頁開始載入算）`);
+  el.classList.add('gone');
+  setTimeout(() => el.remove(), 600);
+}
+const bootT0 = performance.now();
+warmUp().then(() => {
+  if (/[?&]test/.test(location.search)) console.info(`[boot] 著色器預先編譯 ${Math.round(performance.now() - bootT0)} ms`);
+  booted = true;
+  syncAnimation();
+});
 
 // 供除錯與測試使用
 window.__sim = {
