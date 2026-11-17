@@ -5256,40 +5256,6 @@ net.on('pilot', (m) => {
   toast(`${piloted.name} 在幫你開船（你握方向盤就收回來）`);
 });
 net.on('feedbackOk', () => { feedbackDone(true); toast('感謝投遞！漁會已收到你的寶貴意見 📮'); });
-// 畫面上指向同隊隊友：離超過 PARTY.markFar 公尺時標出他在哪、多遠（看不到就貼在畫面邊上）
-const mateMarks = [];
-const _mm = new THREE.Vector3();
-function markParty() {
-  let n = 0;
-  if (inGame && party.ids.size && !tabOpen() && mode !== 'sink') {
-    const me = meAt();
-    for (const o of others.list()) {
-      if (!party.has(o.id) || !o.here) continue;
-      const d = Math.hypot(o.x - me.x, o.z - me.z);
-      if (d < PARTY.markFar) continue;
-      let el = mateMarks[n];
-      if (!el) {
-        el = mateMarks[n] = document.createElement('div');
-        el.style.cssText = 'position:fixed;z-index:6;pointer-events:none;transform:translate(-50%,-50%);padding:2px 9px;border-radius:12px;display:none;'
-          + 'font:600 12.5px var(--font);white-space:nowrap;background:rgba(206,246,214,.94);color:#156b3a;border:2px solid #27a05a;box-shadow:0 2px 6px rgba(0,0,0,.25)';
-        document.body.appendChild(el);
-      }
-      n++;
-      const fig = others.map.get(o.id)?.fig;
-      _mm.set(o.x, (o.helm && o.boat ? o.boat.y + 3 : (fig?.y ?? 0) + 2.6), o.z).project(camera);
-      const behind = _mm.z > 1;
-      let sx = behind ? -_mm.x : _mm.x, sy = behind ? -_mm.y : _mm.y;
-      const edge = Math.max(Math.abs(sx), Math.abs(sy));
-      if (behind || edge > 0.88) { const k = 0.88 / Math.max(edge, 1e-3); sx *= k; sy *= k; }
-      el.style.left = `${(sx * 0.5 + 0.5) * window.innerWidth}px`;
-      el.style.top = `${(-sy * 0.5 + 0.5) * window.innerHeight}px`;
-      const t = `★ ${o.name}・${d < 100 ? Math.round(d) : Math.round(d / 10) * 10}m`;
-      if (el.textContent !== t) el.textContent = t;
-      el.style.display = 'block';
-    }
-  }
-  for (let i = n; i < mateMarks.length; i++) mateMarks[i].style.display = 'none';
-}
 net.on('chumOk', () => { audio.play('plop'); toast(`已施放誘魚桶！吸引方圓 ${CHUM_SPEC.radius}m 魚群，持續 ${CHUM_SPEC.life} 秒`); });
 net.on('chat', (m) => chat.say(m.name, m.text, m.id === net.id, { lv: m.lv, title: m.title || '', gold: !!m.gold }, m.ch));
 net.on('sys', (m) => { if (m.kind === 'merge') mergeMarq(m.text, 0, 8); else chat.sys(m.text, m.kind, m.ch); });   // 合併相關的提示走跑馬燈，不進聊天室
@@ -5809,7 +5775,6 @@ function drawFrame(dt, ms = performance.now()) {
   updateCamera(dt);
   boxes.marks(camera, meAt(), net.id, inGame && !tabOpen());   // 開船時用船的位置量距離
   markMyBoat();
-  markParty();
   markWaypoint();
   updateCompass();
   updateSonar(dt);
