@@ -629,7 +629,7 @@ const shared = {
   uQuay: { value: Array.from({ length: 3 }, () => new THREE.Vector4(1e6, 1e6, 1e6, 1e6)) },
   uHull: { value: Array.from({ length: 3 }, () => new THREE.Vector4(1e6, 1e6, 1, 0)) },
   uHullSize: { value: Array.from({ length: 3 }, () => new THREE.Vector3(1, 1, 0)) },
-  uCutM: { value: Array.from({ length: CUT_N }, () => new THREE.Matrix4()) }, uCutA: { value: Array.from({ length: CUT_N }, () => new THREE.Vector4()) }, uCutB: { value: Array.from({ length: CUT_N }, () => new THREE.Vector4()) },
+  uCutM: { value: Array.from({ length: CUT_N }, () => new THREE.Matrix4()) }, uCutA: { value: Array.from({ length: CUT_N }, () => new THREE.Vector4()) }, uCutB: { value: Array.from({ length: CUT_N }, () => new THREE.Vector4()) }, uCutC: { value: Array.from({ length: CUT_N }, () => new THREE.Vector3()) },
   uDanger: { value: dangerTex }, uTsuK: { value: tsuKTex }, uStorm: { value: 0 }, uTsu: { value: new THREE.Vector4(0, 1, 0, 0) }, uTsu2: { value: new THREE.Vector2() }, uGloom: { value: 0 },
   uSunCol: { value: new THREE.Vector3(1, 0.93, 0.8) }, uAmbient: { value: new THREE.Vector3(1, 1, 1) },
   uDay: { value: 1 }, uDusk: { value: 0 }, uFog: { value: 0 }, uHazeK: { value: 1 }, uFlash: { value: 0 }, uFlashDir: { value: new THREE.Vector3(0, 1, 0) }, uRain: { value: 0 }, uCloudMap: { value: null }, uPaint: { value: new THREE.Vector4(0, 0, CLOUDS.H, 0) }, uPaintOff: { value: new THREE.Vector4() }, uDeck: { value: new THREE.Vector4(0, 0, 1, 0) }, uSwell: { value: 0 }, uSurge: { value: 0 }, uFlood: { value: 0 },
@@ -1538,11 +1538,12 @@ function syncHullCut() {
   const cp = camera.position;
   for (const b of boats) if (b.dry && b.mesh.parent && b.mesh.visible) _cutQ.push(b);
   if (_cutQ.length > CUT_N) _cutQ.sort((p, q) => p.mesh.position.distanceToSquared(cp) - q.mesh.position.distanceToSquared(cp));
-  const M = shared.uCutM.value, A = shared.uCutA.value, B = shared.uCutB.value;
+  const M = shared.uCutM.value, A = shared.uCutA.value, B = shared.uCutB.value, C = shared.uCutC.value;
   for (let i = 0; i < CUT_N; i++) {
     const b = _cutQ[i];
     if (!b) { A[i].set(0, 0, 0, 0); continue; }
     M[i].compose(b.mesh.position, b.mesh.quaternion, b.mesh.scale).invert();
+    C[i].copy(cp).applyMatrix4(M[i]);   // 鏡頭在船的座標裡：隔著船艙口看到的海也不畫
     hullCutDims(b.spec, A[i], B[i]);
   }
 }

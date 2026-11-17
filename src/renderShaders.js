@@ -835,19 +835,43 @@ export const hullCutGlsl = /* glsl */ `
 uniform mat4 uCutM[CUT_N];   // 世界座標 → 船的座標
 uniform vec4 uCutA[CUT_N];   // 船長 0 = 這一格沒有船（後面的也沒有）
 uniform vec4 uCutB[CUT_N];
+uniform vec3 uCutC[CUT_N];   // 鏡頭在這艘船的座標裡的位置
+float cutHalf(vec4 A, float t) {   // 舷緣那一圈的半寬
+  return A.y * 1.03 * (t < 0.38 ? 0.74 + 0.26 * sin(t / 0.38 * 1.5707963) : pow(max(cos((t - 0.38) / 0.62 * 1.5707963), 0.0), 0.52));
+}
+float cutTop(vec4 A, vec4 B, float t) {   // 舷緣的高度
+  return A.z + A.w * pow(t, 2.6) + B.x * (1.0 - t) * (1.0 - t);
+}
+// 兩種情況都不畫：
+// 1. 這一點在船殼裡面（舷緣以下、船底以上）
+// 2. 從鏡頭看過來，先穿過了船艙口（舷緣那一圈圍起來的面）才到這一點：等於以前那片蓋子擋住的東西。
+//    船殼模型從裡面看有縫（甲板邊和船舷之間、船殼內側沒畫的地方），靠這個才不會從縫裡看到外面的海
 bool inHull(vec3 w) {
   for (int i = 0; i < CUT_N; i++) {
-    vec4 A = uCutA[i];
+    vec4 A = uCutA[i], B = uCutB[i];
     if (A.x <= 0.0) break;
     vec3 p = (uCutM[i] * vec4(w, 1.0)).xyz;
     float t = p.x / A.x + 0.5;
-    if (t <= 0.0 || t >= 1.0) continue;
-    float hb = A.y * 1.03 * (t < 0.38 ? 0.74 + 0.26 * sin(t / 0.38 * 1.5707963) : pow(max(cos((t - 0.38) / 0.62 * 1.5707963), 0.0), 0.52));
-    float u = abs(p.z) / max(hb, 1e-3);
-    if (u >= 1.0) continue;
-    float top = A.z + A.w * pow(t, 2.6) + uCutB[i].x * (1.0 - t) * (1.0 - t);
-    float bot = -uCutB[i].y * (1.0 - pow(t, 5.0)) * (1.0 - 0.88 * u * u);
-    if (p.y < top && p.y > bot) return true;
+    if (t > 0.0 && t < 1.0) {
+      float u = abs(p.z) / max(cutHalf(A, t), 1e-3);
+      if (u < 1.0) {
+        float bot = -B.y * (1.0 - pow(t, 5.0)) * (1.0 - 0.88 * u * u);
+        if (p.y < cutTop(A, B, t) && p.y > bot) return true;
+      }
+    }
+    vec3 c = uCutC[i], d = p - c;
+    if (abs(d.y) < 1e-4) continue;
+    // 視線和舷緣那一面的交點：舷緣高度沿船長方向會變，先用船中間的高度、再照交點的位置修兩次
+    float Y = A.z, s = 0.0;
+    for (int k = 0; k < 3; k++) {
+      s = (Y - c.y) / d.y;
+      Y = cutTop(A, B, clamp((c.x + d.x * s) / A.x + 0.5, 0.0, 1.0));
+    }
+    s = (Y - c.y) / d.y;
+    if (s <= 0.0 || s >= 1.0) continue;
+    vec3 q = c + d * s;
+    float tq = q.x / A.x + 0.5;
+    if (tq > 0.0 && tq < 1.0 && abs(q.z) < cutHalf(A, tq)) return true;
   }
   return false;
 }
