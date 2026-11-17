@@ -4460,8 +4460,9 @@ function boatBlock() {
   if (onMyBoat()) return '先下船才能叫船、換船';
   return '';
 }
+// 魚艙（有 h 的那個箱子）固定在船上、不算甲板上的魚箱（跟伺服器 swap 的判斷一樣）；艙裡有魚由伺服器另外擋
 const deckLoaded = () => fish.items.some((it) => it.boat === myBoat && it.uid)
-  || boxes.all().some((b) => b.k === 'd' && b.b === net.id);
+  || boxes.all().some((b) => b.k === 'd' && b.b === net.id && !('h' in b));
 const boatWarn = () => !!myBoat.sinking || myBoat.fuel < myBoat.spec.tank * TABLET.lowFuel || myBoat.hp < myBoat.spec.hp * TABLET.lowHp;
 // 魚箱在哪
 function boxWhere(d) {
