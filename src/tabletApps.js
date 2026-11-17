@@ -217,6 +217,38 @@ export function svgBoatPaintPreview(paintId, boatType = 'skiff') {
     <path d="M0,121 Q20,116 40,121 T80,121 T120,121 T160,121 T200,121 T240,121 T280,121 T320,121" fill="none" stroke="#fff" stroke-width="1.5" opacity="0.5"/></svg>`;
 }
 
+// 用滑鼠按住拖曳捲動（像手機用手指滑）：sel 是 el 裡面的捲動區（整頁重畫換掉也照樣有效）。
+// 拖超過幾個像素才算拖曳，放開時那一下點擊就不算（不會拖完順手選到一條魚）；手指本來就能滑，只管滑鼠
+function dragScroll(el, sel) {
+  let drag = null;
+  el.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'mouse' || e.button !== 0) return;
+    const box = e.target.closest(sel);
+    if (!box || !el.contains(box) || box.scrollHeight <= box.clientHeight) return;
+    // 平板可能整台縮放過（CSS transform）：畫面上移動幾個像素換算成捲動區自己的像素
+    const k = box.offsetHeight ? box.getBoundingClientRect().height / box.offsetHeight : 1;
+    drag = { box, y: e.clientY, top: box.scrollTop, k: k || 1, moved: false, id: e.pointerId };
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const dy = (e.clientY - drag.y) / drag.k;
+    if (!drag.moved && Math.abs(dy) < 5) return;
+    if (!drag.moved) { drag.moved = true; drag.box.setPointerCapture?.(e.pointerId); drag.box.style.cursor = 'grabbing'; }
+    drag.box.scrollTop = drag.top - dy;
+    e.preventDefault();
+  });
+  const end = (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    drag.box.style.cursor = '';
+    if (drag.moved) el._dragged = performance.now();
+    drag = null;
+  };
+  el.addEventListener('pointerup', end);
+  el.addEventListener('pointercancel', end);
+  // 拖完放開的那一下點擊吞掉
+  el.addEventListener('click', (e) => { if (el._dragged && performance.now() - el._dragged < 250) { el._dragged = 0; e.stopPropagation(); e.preventDefault(); } }, true);
+}
+
 function htmlApp(base, render, env) {
   return {
     ...base,
@@ -233,7 +265,14 @@ function htmlApp(base, render, env) {
     },
     update(el, tab = this._tab) {
       const h = render.call(this, tab);
-      if (h !== el._h) { el._h = h; el.innerHTML = h; for (const i of el.querySelectorAll('[data-bind]')) i.value = this[i.dataset.bind] ?? ''; }
+      if (h !== el._h) {
+        // 整頁換掉時，標了 data-keep 的捲動區記住捲到哪（例如圖鑑點一條魚，左邊清單不會跳回最上面）
+        const keep = {};
+        for (const k of el.querySelectorAll('[data-keep]')) keep[k.dataset.keep] = k.scrollTop;
+        el._h = h; el.innerHTML = h;
+        for (const i of el.querySelectorAll('[data-bind]')) i.value = this[i.dataset.bind] ?? '';
+        for (const k of el.querySelectorAll('[data-keep]')) if (keep[k.dataset.keep]) k.scrollTop = keep[k.dataset.keep];
+      }
     },
   };
 }
@@ -515,13 +554,13 @@ export function makeApps(env, { noStyle = false } = {}) {
     return `<div class="tbDexLayout">
       <div class="tbDexFilter">${chips}</div>
       <div class="tbDexSplit">
-        <div class="tbDexLeft"><div class="tbDex">${shown.map(cell).join('')}</div></div>
+        <div class="tbDexLeft" data-keep="dex-${this.filt}"><div class="tbDex">${shown.map(cell).join('')}</div></div>
         <div class="tbDexRight">${rightCard}</div>
       </div>
     </div>`;
   }, env);
   const dexMount = dex.mount;
-  dex.mount = function (el, tab) { el.style.overflow = 'hidden'; dexMount.call(this, el, tab); };
+  dex.mount = function (el, tab) { el.style.overflow = 'hidden'; dexMount.call(this, el, tab); dragScroll(el, '.tbDexLeft'); };
 
   // ---- 5. 天氣（Desktop 1）：風向羅盤、海浪、SVG 24h 即時潮汐曲線圖、預報與徵兆 ----
   const weather = htmlApp({ id: 'weather', name: '天氣', icon: 'cloud', color: '#5fb3dd' }, function (tab) {
