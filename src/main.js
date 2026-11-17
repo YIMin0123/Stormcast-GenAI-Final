@@ -38,6 +38,7 @@ import { BERTHS, berthPose, deckY, ladderY, onDeck, inWall, inHarbor, SWITCHES_W
 import { fishLabel, FishWorld, makeCanMesh, makeChumMesh } from './fish.js';
 import { money as cash, rarityOf, BAITS, SPECIES, castRange } from './fishdata.js';
 import { Fishing } from './fishing.js';
+import { REEL_PROTOCOL } from './fishFight.js';
 import { EmoteWheel } from './emotes.js';
 import { TOUCH, TouchUI, touchText, touchSet, canFullscreen, isFullscreen, setFullscreen } from './touch.js';
 import { FramePacer, MOBILE_FRAME_LIMITS, DESKTOP_FRAME_LIMITS, RefreshRateProbe, fpsLabel } from './framePacer.js';
@@ -1339,7 +1340,6 @@ scene.add(rain.lines, bolt.mesh, spindrift.mesh,...spouts.map((s) => s.group), w
 // ---- 釣魚與魚 ---------------------------------------------------------------
 let money = 0;
 let inGame = false;   // 已經進到房間裡（還在主選單、大廳時不能操作）
-let landing = false;  // 剛把魚拉上來，等伺服器承認
 const toastState = { until: 0 };
 function toast(text) {
   touchSet($('toast'), text);
@@ -1484,13 +1484,14 @@ const fishing = new Fishing({
   player, scene, isWater, surfaceY: (x, z) => { const r = riverLevel(x, z); return r === null ? waterY(x, z) : r + RIVER.flood.rise * flood; }, splash, toast,
   net: {
     cast: (x, z) => net.send({ t: 'cast', x: r2(x), z: r2(z) }),
-    hook: () => net.send({ t: 'hook' }),
+    hook: () => net.send({ t: 'hook', v: REEL_PROTOCOL }),
     earlyPull: () => net.send({ t: 'earlyPull' }),
     miss: () => net.send({ t: 'miss' }),
-    land: () => { if (net.online) { landing = true; net.send({ t: 'land' }); } else toast('連線中斷，這條魚沒算到'); },
+    reel: (id, n, held) => net.send({ t: 'reel', id, n, held }),
+    rtt: () => net.ping,
     lose: (why) => net.send({ t: 'lose', why }),
   },
-  canFish: () => inGame && net.online && !landing && mode === 'walk' && !fish.held && !heldBox() && !player.swim,
+  canFish: () => inGame && net.online && mode === 'walk' && !fish.held && !heldBox() && !player.swim,
   rodLv: () => rodLv,
   broken: () => rodBroken,
   sound: (name, vol) => audio.play(name, vol, name === 'plop' || name === 'bite' || name === 'hook' || name === 'land' ? fishing.bob.position : null),   // 水花聲從浮標那裡傳過來
@@ -4027,7 +4028,6 @@ function rescue(text, landing = SPAWN_W) {
 function returnPassenger(destination) {
   fishing.cancel(null);
   throwCancel();
-  landing = false;
   drown = null;
   if (wreck?.mine) wreck.aboard = false;
   else wreck = null;
@@ -5449,12 +5449,12 @@ net.on('no', (m) => { buying = false; if (m.msg) toast(m.msg); syncChums(); feed
 // ---- 釣魚：咬了、試探假咬、是哪條魚、算不算釣起來，都是伺服器說了算 ----
 net.on('nibble', () => fishing.serverNibble());
 net.on('bite', () => fishing.serverBite());
-net.on('fight', (m) => fishing.serverFight(m.fish));
-net.on('fishNo', (m) => {
-  if (landing) { landing = false; if (m.msg) toast(m.msg); } else fishing.serverNo(m.msg);
-});
+net.on('fight', (m) => fishing.serverFight(m));
+net.on('reelState', (m) => fishing.serverReel(m));
+net.on('fightEnd', (m) => fishing.serverEnd(m.id, m.result));
+net.on('fishNo', (m) => fishing.serverNo(m.msg));
 net.on('caught', (m) => {
-  landing = false;
+  fishing.serverEnd(m.fightId, 'caught');
   const f = m.fish;
   const isNew = noteDex(m.dex);   // 圖鑑：第一次釣到這種的話，平板的「圖鑑」亮角標
   if (fish.held) return fish.stowDeck(myBoat, 0, 0, f.id, f.kg, f.len, f.uid, f.value);   // 手上有東西（只有測試指令會這樣）：放到船上
@@ -5557,7 +5557,7 @@ net.on('swapped', (m) => {
 // 定時刷新（時間見 config.js 的 SERVER.refresh）：家當變回新玩家的樣子（錢、船、裝備、魚都清掉），人送回港口
 net.on('reset', (m) => {
   fishing.cancel(null);
-  landing = buying = false;
+  buying = false;
   wreck = drown = null;
   stamina = 1;
   myBoat._lost = true;   // 舊的船不收進倉庫，直接換一艘新的小舢舨
@@ -5593,7 +5593,6 @@ net.on('merged', (m) => {
   mergeAt = 0;
   room = m.room;
   fishing.cancel(null);
-  landing = false;
   others.sync(m.players);
   berth = m.berth;
   if (m.stored) storedInfo = m.stored;
@@ -5628,7 +5627,6 @@ net.on('status', (st) => {
   const box = $('net'), msg = $('netMsg'), btn = $('netRetry');
   if (st === 'online') { box.style.display = 'none'; return; }
   if (!inGame) return;   // 還在大廳：選單自己會處理
-  landing = false;
   fishing.cancel(null);
   if (st === 'offline') { msg.textContent = `連線中斷，正在接回去…（最多等 ${net.reconnectSec} 秒，進度都還在）`; btn.style.display = 'none'; }
   else {
@@ -5898,7 +5896,7 @@ function advance(dt) {
   // （抱著魚箱也能游：比較慢、比較累（player.carry 讓體力掉得快），騰不出手放下，要上岸或爬上船才能放）
   boxes.update(time);
   throwTick(dt);
-  fishing.reel = keys.f || keys.mouse;
+  fishing.setReel(!!(keys.f || keys.mouse));
   fishing.update(dt);
   sendState(dt);
 
@@ -6313,6 +6311,7 @@ function animate(ms) {
   }
 }
 function syncAnimation() {
+  if (document.hidden) { keys.f = keys.mouse = false; fishing.setReel(false); }
   simClock.reset(); drawClock.reset(); hudClock.reset(); mobileShadowClock.reset();
   mobileRefresh?.reset();
   qualityTiming.reset();

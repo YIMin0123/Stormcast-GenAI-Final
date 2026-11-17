@@ -2,7 +2,7 @@
 //   時間、天氣、海上事件（用遊戲本身的 weather.js 跑）
 //   每個人的位置、船（轉送給同房的其他人）
 //   每個人的家當：錢、釣竿、買了哪些船（瀏覽器說了不算，買賣、修船都在這裡算）
-//   釣魚：上鉤什麼魚、多大、值多少由這裡擲；收線太快、離落水點太遠、站在陸地卻說拋進深海，一律不認
+//   釣魚：魚種、大小、烈度及收線結果在這裡決定，瀏覽器回報收線按鍵
 //   本房紀錄（看板）與聊天
 import { Sea, Climate, HOUR } from '../src/weather.js';
 import { BERTHS, HOME_BERTHS, berthPose, berthFits, SELL_W, SELL_REACH, ALL_SHELF_W, SITES, SPAWN_W, SWITCHES_W, LIGHT_ZONES, HAVEN_SELL_W, passengerLanding } from '../src/layout.js';
@@ -10,7 +10,8 @@ import { PORT } from '../src/lowpoly/havenPlan.js';
 import { HOTSPOT, CHESTS } from '../src/extrasPlan.js';
 import { Extras } from './extras.js';
 import { BOAT_TYPES, BOAT_ORDER, BOAT_MODS, BOAT_PAINTS, HONOR_TITLES, CHUM_SPEC, BLESSINGS, newKit, shopItem, baitCount, repairCost } from '../src/boatdata.js';
-import { SPECIES, BAITS, isJunk, rollCatch, minFightTime, biteDelay, castRange, money } from '../src/fishdata.js';
+import { SPECIES, BAITS, isJunk, rollCatch, biteDelay, castRange, money } from '../src/fishdata.js';
+import { REEL_PROTOCOL, newFishFight, stepFishFight } from '../src/fishFight.js';
 import { dangerAt, isWater, fishingSpot } from './world.js';
 import { mask } from './words.js';
 import { SERVER, SHARE, WORLD, FISHBOX, GUILD, LEVEL, PARTY, FEEDBACK } from '../src/config.js';
@@ -27,6 +28,9 @@ export const TICK = 0.1;                 // 世界每 0.1 秒算一次
 const graceSec = Number(process.env.GRACE_SEC);
 export const GRACE = (Number.isFinite(graceSec) && graceSec > 0 ? graceSec : SERVER.reconnectSec) * 1000;
 const WORLD_EVERY = 5;                   // 每 5 次（0.5 秒）把天氣送一次
+const REEL_START_MS = 4000;
+const FIGHT_LIMIT_MS = 120000;
+let nextFightId = 1;
 const CLIMATE_KEYS = ['hour', 'day', 'wind', 'windGoal', 'cloud', 'cloudGoal', 'rain', 'rainAmt', 'rainFrom', 'rainTo', 'fog', 'fogAmt', 'veer', 'veerGoal'];
 export const DEV = process.env.STORMCAST_DEV === '1';  // 開發用：允許測試指令（引發海上事件、快轉、加錢）
 const PAINT_IDS = new Set(BOAT_PAINTS.map((p) => p.id));
@@ -99,7 +103,7 @@ export function newPlayer(id, ws, token, name, look = 'girl') {
     hold: null,                                 // 手上拿著什麼（給別人看的）：[魚種或 'can', 身長]
     tab: null,                                  // 手上平板目前顯示的精簡狀態（給旁人畫完整平板畫面用）
     line: null,                                 // 釣線另一頭的浮標在哪（給別人看的）：[x, y, z, 狀態]
-    fishing: null,                              // 正在釣：{ x, z, state, fish, biteAt, biteUntil, fightAt }
+    fishing: null,                              // 拋竿位置、咬鉤與搏魚狀態
     chatAt: [], msgAt: 0, msgN: 0,
     gone: 0, left: false, suspect: 0,
     actAt: 0,                                   // 客戶端最後一次回報「有在操作」的時間（0 = 沒回報過的舊版客戶端，不判閒置）；見 index.js 的 idleKick
@@ -409,10 +413,16 @@ export class Room {
     if (worldDirty) this.all(this.worldState(now));
     if (this.tick % 10 === 0) { this.expireLoose(now); expireOffers(this, now); expireAsks(this, now); stepTows(this); }   // 熱點冒出來、寶箱漂來：馬上告訴大家
 
-    // 魚咬了（含假咬試探 nibble）
+    // 魚咬了（含假咬試探 nibble）或正在搏魚。
     for (const p of this.players.values()) {
       const f = p.fishing;
-      if (!f || f.state !== 'wait') continue;
+      if (!p.ws || !f) continue;
+      if (f.state === 'fight') {
+        this.advanceFishing(p, f, now);
+        if (p.fishing === f && f.n) this.send(p, { t: 'reelState', ...this.reelState(f) });
+        continue;
+      }
+      if (f.state !== 'wait') continue;
       if (f.nibbles?.length && now >= f.nibbles[0]) { f.nibbles.shift(); this.send(p, { t: 'nibble' }); }
       if (now >= f.biteAt) { f.state = 'bite'; f.biteUntil = now + 1300 + 1200; this.send(p, { t: 'bite' }); }
     }
@@ -460,7 +470,11 @@ export class Room {
           if (d / dt > 30 && d > 15 && dist(s[0], s[2], SPAWN_W.x, SPAWN_W.z) > 4) p.suspect = now + 8000;
         }
         p.pos = s; p.posAt = now; p.posDirty = true;
-        if (p.fishing && dist(s[0], s[2], p.fishing.x, p.fishing.z) > 75) p.fishing = null;
+        const f = p.fishing;
+        if (f && dist(s[0], s[2], f.x, f.z) > 75) {
+          if (f.state === 'fight') this.finishFishing(p, f, 'escape', now);
+          else p.fishing = null;
+        }
         return;
       }
       case 'b': {
@@ -563,9 +577,24 @@ export class Room {
       }
       case 'hook': {
         const f = p.fishing;
+        if (f?.state === 'fight') return;
         if (!f || f.state !== 'bite' || now > f.biteUntil) { p.fishing = null; return this.send(p, { t: 'fishNo' }); }
-        f.state = 'fight'; f.fightAt = now;
-        return this.send(p, { t: 'fight', fish: f.fish });
+        if (m.v !== REEL_PROTOCOL) { p.fishing = null; return this.send(p, { t: 'fishNo', msg: '釣魚系統已更新，請重新整理網頁' }); }
+        Object.assign(f, {
+          state: 'fight', id: nextFightId++, started: now, lastAt: now, n: 0, held: false,
+          fight: newFishFight(f.fish.strength, kit.rodLv),
+        });
+        return this.send(p, { t: 'fight', fish: f.fish, v: REEL_PROTOCOL, ...this.reelState(f) });
+      }
+      case 'reel': {
+        const f = p.fishing;
+        if (f?.state !== 'fight' || m.id !== f.id || m.n !== f.n + 1 || typeof m.held !== 'boolean') return;
+        this.advanceFishing(p, f, now);
+        if (p.fishing !== f) return;
+        f.lastAt = Math.max(f.lastAt, now);
+        f.n = m.n;
+        f.held = m.held;
+        return;
       }
       case 'earlyPull': {   // 還沒真正咬鉤就提早拉竿：取消這竿（消耗掉的餌不退還）
         if (p.fishing && p.fishing.state === 'wait') p.fishing = null;
@@ -576,26 +605,7 @@ export class Room {
         if (f && f.state === 'bite') { f.state = 'wait'; this.bait(p, now); }
         return;
       }
-      case 'land': {
-        const f = p.fishing;
-        p.fishing = null;
-        const ok = f && f.state === 'fight' && now - f.fightAt >= 850 * minFightTime(f.fish.strength)
-          && p.pos && dist(p.pos[0], p.pos[2], f.x, f.z) < 75 && p.fish.size < 200;
-        if (!ok) return this.send(p, { t: 'fishNo', msg: '魚掙脫跑掉了' });
-        const { id, kg, len, value } = f.fish, uid = nextUid++;
-        p.fish.set(uid, { id, kg, len, value, by: { pid: p.id, key: p.token, name: p.name } });   // by：釣到的人（值錢的魚，紀錄算他的）
-        if (this.extras.consumeHot(f.x, f.z, { skipChum: now < this.blessingUntil })) this.all(this.worldState());
-        const dex = recordDex(p, f.fish, f.at);
-        this.send(p, { t: 'caught', fish: { uid, id, kg, len, value }, dex });   // 紀錄等賣掉才算（見 sell）；圖鑑現在就記
-        gainExp(this, p, (isJunk(id) ? LEVEL.junk : Math.min(LEVEL.catchMax, LEVEL.catch + value * LEVEL.catchValue)) + (dex.isNew ? LEVEL.dexNew : 0));
-        return;
-      }
-      case 'lose': {   // 魚跑了、自己收線、爆桿
-        const f = p.fishing;
-        p.fishing = null;
-        if (m.why === 'snap' && f && f.state === 'fight' && !kit.rodBroken) { kit.rodBroken = true; this.send(p, { t: 'kit', kit }); }
-        return;
-      }
+      case 'lose': p.fishing = null; return;   // 玩家主動收竿
       case 'fishGone': {   // 魚掉回海裡、跟著船沉了
         if (!Array.isArray(m.uids)) return;
         const del = [];
@@ -929,6 +939,43 @@ export class Room {
   }
   // 斷開跟 p 的船有關的拖纜（換船、買船、叫船時）
   towCut(p, why) { return towCut(this, p, why); }
+
+  reelState(f) {
+    const { force, zone, target, width, speed, dash, progress, strain } = f.fight;
+    return { id: f.id, n: f.n, held: f.held, force, zone, target, width, speed: speed * dash, progress, strain };
+  }
+
+  advanceFishing(p, f, now) {
+    if (!p.pos || p.kit.rodBroken || dist(p.pos[0], p.pos[2], f.x, f.z) >= 75
+      || now - f.started >= (f.n ? FIGHT_LIMIT_MS : REEL_START_MS)) return this.finishFishing(p, f, 'escape', now);
+    if (!f.n) return;   // 從第一組按鍵狀態開始模擬，留出上鉤通知往返的時間。
+    // 用伺服器經過的時間，切小步處理快速的張力變化。主迴圈短暫卡住時限制補算。
+    let seconds = Math.min(0.25, (now - f.lastAt) / 1000);
+    f.lastAt = Math.max(f.lastAt, now);
+    while (seconds > 0 && !f.fight.result) {
+      const dt = Math.min(seconds, 0.02);
+      stepFishFight(f.fight, f.held, dt);
+      seconds -= dt;
+    }
+    if (f.fight.result) this.finishFishing(p, f, f.fight.result, now);
+  }
+
+  finishFishing(p, f, result, now) {
+    p.fishing = null;
+    if (result === 'caught' && p.fish.size >= 200) result = 'full';
+    if (result === 'snap') {
+      p.kit.rodBroken = true;
+      this.send(p, { t: 'kit', kit: p.kit });
+    }
+    if (result !== 'caught') return this.send(p, { t: 'fightEnd', id: f.id, result });
+
+    const { id, kg, len, value } = f.fish, uid = nextUid++;
+    p.fish.set(uid, { id, kg, len, value, by: { pid: p.id, key: p.token, name: p.name } });
+    if (this.extras.consumeHot(f.x, f.z, { skipChum: now < this.blessingUntil })) this.all(this.worldState());
+    const dex = recordDex(p, f.fish, f.at);
+    this.send(p, { t: 'caught', fightId: f.id, fish: { uid, id, kg, len, value }, dex });
+    gainExp(this, p, (isJunk(id) ? LEVEL.junk : Math.min(LEVEL.catchMax, LEVEL.catch + value * LEVEL.catchValue)) + (dex.isNew ? LEVEL.dexNew : 0));
+  }
 
   // 掛上餌：先決定這次會是哪條魚、幾秒後咬（含試探假咬 nibble）
   bait(p, now) {

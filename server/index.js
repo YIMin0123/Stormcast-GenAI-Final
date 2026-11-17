@@ -269,6 +269,7 @@ wss.on('connection', (ws, req) => {
     if (old.ws) { send(old.ws, { t: 'kicked', msg: '你在另一個視窗進入了遊戲' }); const w = old.ws; old.ws = null; w.close(); old.room.all({ t: 'leave', id: old.id }); }
     me = old;
     me.ws = ws; me.gone = 0; me.name = name; me.look = look;   // 重新整理後可能換了角色
+    me.fishing = me.line = null;                            // 新分頁沒有上一個連線的收線輸入
     if (me.actAt) me.actAt = now;                              // 斷線接回來：閒置時間重算
     hub.lobby.delete(ws);
     const r = me.room;

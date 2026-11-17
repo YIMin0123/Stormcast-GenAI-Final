@@ -4,6 +4,7 @@
 // 爆桿：魚的力氣比釣竿受得了的大時，用力過頭（指標在區間的右邊）釣竿的負荷會一直往上加，
 // 加滿就斷——魚跑掉，釣竿要拿回商店修。小魚怎麼拉都不會斷；越大越值錢的魚越容易斷，釣竿越好越撐得住。
 import * as THREE from 'three';
+import { REEL_PROTOCOL, newFishFight, stepFishFight, moveFightZone, predictReelForce } from './fishFight.js';
 
 const ROD_LEN = 2.7;
 const GRIP = 0.14;       // 竿尾到握的地方多長
@@ -22,13 +23,14 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 //   broken()：釣竿是不是斷的（斷了就不能釣）；onSnap(fish)：爆桿了
 //   sound(name)：播一個音效（拋竿、落水、咬鉤、斷竿……），沒有就不播
 //   biteK()：等魚咬的時間倍率（下雨時魚咬得比較快）
-//   net：多人模式下跟伺服器講話用的 { cast(x, z), hook(), miss(), land(), lose(why) }。
-//        有它的時候，魚什麼時候咬、是哪條魚、算不算釣起來都由伺服器決定（serverBite / serverFight / serverNo），這裡只管手感和畫面
+//   net：多人釣魚時回報拋竿、拉竿、收線按鍵與收竿。搏魚狀態由伺服器回傳。
 export class Fishing {
   constructor(env) {
     this.env = env;
     this.state = 'idle';     // idle | charge | fly | wait | bite | hooking（按了，等伺服器說是哪條魚）| fight | snap（竿子剛斷，愣在那裡的一兩秒）
-    this.reel = false;       // 收線鍵有沒有按著（每幀由外面設定）
+    this.reel = false;       // 收線鍵有沒有按著（用 setReel 更新）
+    this.onlineFight = null;
+    this.localFight = null;
     this.power = 0;          // 拋竿力道 0–1
     this.force = 0;          // 收線時玩家的力道 0–1
     this.zone = 0.5;         // 目標區間的中心 0–1
@@ -105,7 +107,39 @@ export class Fishing {
     this.env.splash(this.bob.position.x, 0.1, this.bob.position.z);
     this._sound('bite');
   }
-  serverFight(fish) { if (this.state === 'hooking') this._hook(fish); }
+  serverFight(m) {
+    if (this.state !== 'hooking') return;
+    if (m.v !== REEL_PROTOCOL) return this.serverNo('釣魚系統版本不同，請重新整理網頁');
+    this._hook(m.fish);
+    this.onlineFight = { id: m.id, n: 0, inputs: [], sample: { ...m, at: performance.now() } };
+  }
+
+  setReel(held) {
+    this.reel = held;
+    const f = this.onlineFight;
+    if (!f || f.inputs.at(-1)?.held === held) return;
+    const input = { n: ++f.n, held, at: performance.now() };
+    f.inputs.push(input);
+    this.env.net.reel(f.id, input.n, held);
+  }
+
+  serverReel(m) {
+    const f = this.onlineFight;
+    if (!f || m.id !== f.id || m.n < f.sample.n) return;
+    f.sample = { ...m, at: performance.now() };
+    while (f.inputs.length > 1 && f.inputs[1].n <= m.n) f.inputs.shift();
+  }
+
+  serverEnd(id, result) {
+    if (!this.onlineFight || this.onlineFight.id !== id) return;
+    if (result === 'caught') this._land();
+    else if (result === 'snap') this._snap();
+    else {
+      this.env.toast(result === 'full' ? '漁獲已滿，先處理手上的漁獲' : '魚掙脫跑掉了');
+      this.cancel(null);
+    }
+  }
+
   // 伺服器不認（拋到釣不到的地方、按太慢）
   serverNo(msg) {
     if (this.state === 'idle' || this.state === 'fight' || this.state === 'snap') return;
@@ -129,6 +163,7 @@ export class Fishing {
   cancel(why = 'cancel') {
     if (why && this.env.net && this.state !== 'idle' && this.state !== 'charge' && this.state !== 'fly') this.env.net.lose(why);
     this.nibbleT = 0;
+    this.onlineFight = this.localFight = null;
     this.state = 'idle'; this.rodTop.rotation.z = 0;
   }
 
@@ -141,20 +176,57 @@ export class Fishing {
     const p = this.env.player;
     this.state = 'fight';
     this.dist0 = this.dist = Math.max(4, Math.hypot(this.land.x - p.x, this.land.z - p.z));
-    // 越兇的魚（越大、越值錢）：區間越窄、跑得越快、越常變向
-    const lv = this.env.rodLv();
-    this.zoneW = clamp(0.42 - 0.10 * f.strength, 0.17, 0.40) + 0.022 * lv;
-    this.zoneSpeed = Math.min(0.18 + 0.30 * f.strength, 0.72);
-    // 這條魚的力氣是這支竿受得了的幾倍：六成以下怎麼拉都不會斷，超過越多、用力過頭時負荷加得越快
-    this.risk = clamp((f.strength / (1.0 + 0.38 * lv) - 0.6) / 0.8, 0, 1.3);
-    this.strain = 0;
+    const state = newFishFight(f.strength, this.env.rodLv());
+    this.localFight = this.env.net ? null : state;
+    this.risk = state.risk;
+    this.zoneW = state.width;
+    this._showFight(state);
     if (this.risk > 0.25) this.env.toast(this.risk > 0.8 ? '好重！是個大傢伙——千萬別硬拉，釣竿會斷' : '手感很沉，別拉得太用力，釣竿會斷');
     this._sound('hook');
-    this.zone = 0.45; this.zoneTarget = 0.45; this.zoneT = 0.8;
-    this.force = 0.35;
-    this.progress = 0.3;
-    this.grace = 1.0;        // 剛上鉤的頭一秒不扣進度，讓人反應
-    this.inZone = true;
+  }
+
+  _showFight({ force, zone, progress, strain, inZone }) {
+    this.force = force;
+    this.zone = zone;
+    this.progress = progress;
+    this.strain = strain;
+    this.inZone = inZone;
+  }
+
+  _updateFight(dt) {
+    const f = this.onlineFight;
+    if (!f) {
+      stepFishFight(this.localFight, this.reel, dt);
+      this._showFight(this.localFight);
+      return this.localFight.result;
+    }
+    const now = performance.now(), s = f.sample;
+    if (now - s.at > 5000) return 'timeout';
+    const rtt = clamp(this.env.net.rtt() ?? 100, 0, 450);
+    this.force = predictReelForce(s, f.inputs, now, rtt);
+    this.zone = moveFightZone(s.zone, s.target, s.speed, Math.min(0.45, (now - s.at + rtt) / 1000));
+    this.zoneW = s.width;
+    const blend = 1 - Math.exp(-dt * 20);
+    this.progress += (s.progress - this.progress) * blend;
+    this.strain += (s.strain - this.strain) * blend;
+    this.inZone = Math.abs(this.force - this.zone) <= this.zoneW / 2;
+    return null;
+  }
+
+  _snap() {
+    this.onlineFight = this.localFight = null;
+    this.state = 'snap'; this.t = 0; this.strain = 0;
+    const b = this.bob.position;
+    this.env.splash(b.x, 0.2, b.z);
+    this._sound('snap');
+    this.env.onSnap(this.fish);
+  }
+
+  _land() {
+    const b = this.bob.position;
+    this.env.splash(b.x, 0.2, b.z);
+    this._sound('land');
+    this.cancel(null);
   }
 
   // 竿子握在右手：照現在的角度擺好，握把的位置對到右手手心（竿尾比手低一小截）
@@ -232,33 +304,10 @@ export class Fishing {
         break;
 
       case 'fight': {
-        const f = this.fish, half = this.zoneW / 2;
-        // 區間隨機亂跑：每隔一小段時間換一個目標位置，偶爾猛衝
-        if ((this.zoneT -= dt) <= 0) {
-          this.zoneTarget = rand(half, 1 - half);
-          this.zoneT = rand(0.5, 1.7) / (0.7 + 0.5 * Math.min(f.strength, 1.6));
-          this.dash = Math.random() < 0.25 ? 1.6 : 1;
-        }
-        const step = this.zoneSpeed * (this.dash ?? 1) * dt;
-        this.zone += clamp(this.zoneTarget - this.zone, -step, step);
-
-        // 玩家的力道：按住上升、放開下降
-        this.force = clamp(this.force + (this.reel ? 0.85 : -0.7) * dt, 0, 1);
-        this.inZone = Math.abs(this.force - this.zone) <= half;
-        this.grace -= dt;
-        if (this.inZone) this.progress += dt * 0.2 / (0.7 + 0.5 * f.strength);
-        else if (this.grace <= 0) this.progress -= dt * (0.10 + 0.04 * f.strength);
+        const result = this._updateFight(dt);
         this.dist = this.dist0 * (1 - this.progress) / 0.7;
-        // 釣竿的負荷：用力過頭（指標在區間右邊）就往上加，超出越多加得越快；鬆手讓魚跑一下就慢慢退掉
-        const over = this.force - (this.zone + half);
-        if (over > 0 && this.risk > 0 && this.grace <= 0) this.strain += dt * this.risk * (0.5 + 2.5 * over);
-        else this.strain = Math.max(0, this.strain - dt * 0.4);
-        if (this.strain >= 1) {
-          if (env.net) env.net.lose('snap');
-          this.state = 'snap'; this.t = 0; this.strain = 0;
-          env.splash(b.x, 0.2, b.z);
-          this._sound('snap');
-          env.onSnap(f);
+        if (result === 'snap') {
+          this._snap();
           break;
         }
 
@@ -273,11 +322,12 @@ export class Fishing {
         if (!this.inZone && Math.random() < dt * 6) env.splash(x, 0.1, z);
         angle = 0.25 + 0.5 * (1 - this.force) - 0.12 * this.strain * Math.sin(this.t * 55); sag = 0.5 * (1 - this.force);   // 快斷的時候竿子抖
 
-        if (this.progress <= 0) { env.toast('魚掙脫跑掉了'); this.cancel('escape'); } else if (this.progress >= 1) {
-          env.splash(b.x, 0.2, b.z);
-          this.cancel(null);
-          this._sound('land');
-          if (env.net) env.net.land(); else env.onCatch(f);   // 多人：伺服器認了才真的拿到魚
+        if (result === 'escape' || result === 'timeout') {
+          env.toast(result === 'timeout' ? '收線同步逾時，請重新拋竿' : '魚掙脫跑掉了');
+          this.cancel();
+        } else if (result === 'caught') {
+          this._land();
+          env.onCatch(this.fish);
         }
         break;
       }

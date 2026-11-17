@@ -217,8 +217,6 @@ export function rollCatch({ depth, island, off, night, rough, zone = null, rain 
   return { id, ...f, value, strength: SPECIES[id].strength * (0.85 + 0.3 * clamp((f.kg - a) / (b - a), 0, 1.6)) * (0.8 + 0.55 * tough) };
 }
 
-// 這條魚最快幾秒拉得上來（收線小遊戲的進度從三成開始，一直對在區間裡的速度）；伺服器用來擋「太快釣起來」
-export const minFightTime = (strength) => 0.7 / (0.2 / (0.7 + 0.5 * strength));
 // 等魚咬的時間（秒）：升級釣竿不再縮短等待；大魚/稀有魚更謹慎，保底至少 2.5 秒
 export function biteDelay({ rain = 0, hot = false, caveRain = false, fish = null } = {}) {
   let t = 4.5 + Math.random() * 8.0;
