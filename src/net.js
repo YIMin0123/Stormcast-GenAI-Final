@@ -84,7 +84,10 @@ export class Net {
     let ws;
     try { ws = new WebSocket(this.url); } catch { this._fail('連不上伺服器'); return; }
     this.ws = ws;
-    ws.onopen = () => ws.send(JSON.stringify({ t: 'hello', name: this.name, look: myLook(), token: this.token }));
+    // 連線卡在「連線中」不回應（伺服器正在重開、網路半斷）：瀏覽器自己要等很久才放棄，那段時間不會重試。6 秒還沒連上就關掉重來
+    const connectTimer = setTimeout(() => { if (ws.readyState === 0) ws.close(); }, 6000);
+    ws.onopen = () => clearTimeout(connectTimer);
+    ws.addEventListener('open', () => ws.send(JSON.stringify({ t: 'hello', name: this.name, look: myLook(), token: this.token })));
     ws.onmessage = (ev) => {
       let m;
       try { m = JSON.parse(ev.data); } catch { return; }
@@ -125,11 +128,16 @@ export class Net {
         case 'pong':
           if (typeof m.k === 'number') { this.ping = Math.max(1, Math.round(performance.now() - m.k)); this._pongAt = performance.now(); }
           return;
+        case 'merged':   // 被併到另一間房：之後伺服器重開要回的是這一間，不是原本那間（已經關了）
+          if (m.room?.id) this.roomId = m.room.id;
+          this.emit(m.t, m);
+          return;
         default:
           this.emit(m.t, m);
       }
     };
     ws.onclose = () => {
+      clearTimeout(connectTimer);
       if (this.ws !== ws) return;
       const was = this.online;
       this.online = false;
