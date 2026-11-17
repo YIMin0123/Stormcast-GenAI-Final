@@ -62,10 +62,11 @@ const lobbyList = () => ({
 });
 
 // 常駐房一直開著；隨時保留至少一間沒滿的房：常駐房都滿了才開臨時房，沒人的臨時房關掉（都滿了的話留一間空的）
+// 「沒滿」= 人數低於 SERVER.openNextAt（20）：一間房到 20 人就先開下一間備用，原本那間還能擠到 MAX_PLAYERS（30）
 function tidyRooms() {
   for (let k = 1; k <= SERVER.fixedRooms; k++) if (!hub.rooms.has(k)) hub.rooms.set(k, new Room(k, hub));
   const rooms = [...hub.rooms.values()].sort((a, b) => a.id - b.id);
-  let spare = rooms.some((r) => (r.fixed || r.players.size) && r.count < MAX_PLAYERS);   // 常駐房、或有人的臨時房還沒滿
+  let spare = rooms.some((r) => (r.fixed || r.players.size) && r.count < SERVER.openNextAt);   // 常駐房、或有人的臨時房還沒滿（到 openNextAt 人就算滿）
   for (const r of rooms) {
     if (r.fixed || r.players.size || (hub.merge && (hub.merge.from === r || hub.merge.to === r)) || r.devKeep > Date.now()) continue;
     if (spare) hub.rooms.delete(r.id); else spare = true;
