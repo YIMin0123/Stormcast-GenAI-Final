@@ -504,6 +504,18 @@ function mergedParts(key, make) {
   }
   return geo;
 }
+// ---- 合畫（實例化）用：每個零件標上「哪一種魚的第幾個零件」和一份大家共用、不會擺動的材質 ----
+// 躺著不動的魚由 fishBatch.js 把同一種魚的同一個零件收在一起，一次畫完；special[i]：第 i 個零件的共用材質怎麼做（要擺動的身體、鰭），沒給就複製一份
+const instMats = new Map();
+function tagParts(g, id, special = {}) {
+  g.children.forEach((c, i) => {
+    const key = `${id}|${i}`;
+    let m = instMats.get(key);
+    if (!m) { m = special[i] ? special[i]() : c.material.clone(); instMats.set(key, m); }
+    c.userData.inst = { key, mat: m };
+  });
+  g.userData.inst = true;
+}
 const Q0 = new THREE.Quaternion();
 const S1 = (k = 1) => new V3(k, k, k);
 
@@ -563,19 +575,25 @@ function build(sp, len) {
   const U = { uAmp: { value: 0 }, uPhase: { value: Math.random() * TAU }, uFlap: { value: 0 }, uPivot: { value: L.pivot }, uWave: { value: L.wave } };
   const rim = new THREE.Color(0.8, 0.9, 1).multiplyScalar(0.5 * L.shine);
 
-  const body = new THREE.MeshPhongMaterial({ map: paintTexture(id, L, back, hh, ww), specular: new THREE.Color(1, 1, 1).multiplyScalar(0.03 + 0.11 * L.shine), shininess: 14 + 26 * L.shine,
-    ...(L.glow ? { emissive: back.clone().multiplyScalar(0.35) } : {}) });
-  addFlex(body, U, rim, false);
-  g.add(new THREE.Mesh(geo.body, body));
-  if (geo.fins) {
-    const fins = new THREE.MeshLambertMaterial({ map: finTexture(), vertexColors: true, side: THREE.DoubleSide, transparent: true, forceSinglePass: true,
+  const bodyMat = (u) => {
+    const m = new THREE.MeshPhongMaterial({ map: paintTexture(id, L, back, hh, ww), specular: new THREE.Color(1, 1, 1).multiplyScalar(0.03 + 0.11 * L.shine), shininess: 14 + 26 * L.shine,
+      ...(L.glow ? { emissive: back.clone().multiplyScalar(0.35) } : {}) });
+    addFlex(m, u, rim, false);
+    return m;
+  };
+  const finMat = (u) => {
+    const m = new THREE.MeshLambertMaterial({ map: finTexture(), vertexColors: true, side: THREE.DoubleSide, transparent: true, forceSinglePass: true,
       ...(L.glow ? { emissive: new THREE.Color(L.fin ?? '#a8ecff').multiplyScalar(0.3) } : {}) });
-    addFlex(fins, U, rim.clone().multiplyScalar(0.5), true);
-    g.add(new THREE.Mesh(geo.fins, fins));
-  }
+    addFlex(m, u, rim.clone().multiplyScalar(0.5), true);
+    return m;
+  };
+  // 合畫用的共用材質：不擺動（uAmp 一直是 0）
+  const still = () => ({ uAmp: { value: 0 }, uPhase: { value: 0 }, uFlap: { value: 0 }, uPivot: { value: L.pivot }, uWave: { value: L.wave } });
+  g.add(new THREE.Mesh(geo.body, bodyMat(U)));
+  if (geo.fins) g.add(new THREE.Mesh(geo.fins, finMat(U)));
   // 劍
   if (L.bill) {
-    const bill = new THREE.Mesh(new THREE.ConeGeometry(0.018, L.bill, 6), new THREE.MeshLambertMaterial({ color: shade(back, 0.9) }));
+    const bill = new THREE.Mesh(mergedParts(`bill|${id}`, () => [[new THREE.ConeGeometry(0.018, L.bill, 6), new V3(), Q0, S1()]]), new THREE.MeshLambertMaterial({ color: shade(back, 0.9) }));
     bill.rotation.z = -Math.PI / 2; bill.position.set(X1 + L.bill / 2 - 0.02, cOff(1, L, hh) * 0.6, 0); g.add(bill);
   }
   // 河豚的刺（只長在不太會擺的前半身）
@@ -593,6 +611,7 @@ function build(sp, len) {
   addEyes(g, L, hh, ww, L.tube ? 0.9 : et, id);
 
   g.userData.flex = { U, amp: 0, k: L.flex };
+  tagParts(g, id, { 0: () => bodyMat(still()), ...(geo.fins ? { 1: () => finMat(still()) } : {}) });
   g.scale.setScalar(len);
   return g;
 }
@@ -629,6 +648,7 @@ function buildOctopus(sp, len) {
     }
     return out;
   }), mat));
+  tagParts(g, sp.id);
   g.scale.setScalar(len * 1.2);
   return g;
 }
@@ -659,6 +679,7 @@ function buildSquid(sp, len, glow) {
     for (let i = 0; i < 18; i++) { const a = r() * TAU; out.push([new THREE.SphereGeometry(0.012, 4, 3), new V3(-0.3 + r() * 0.65, Math.cos(a) * 0.1, Math.sin(a) * 0.1), Q0, S1()]); }
     return out;
   }), dm));
+  tagParts(g, sp.id);
   g.scale.setScalar(len * 0.95);
   return g;
 }

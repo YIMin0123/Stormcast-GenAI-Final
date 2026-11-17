@@ -51,6 +51,7 @@ import { OceanAudio } from './audio.js';
 import { Sea, Climate, computeDanger, computeOffshore, computeTsuK, TSU, SWELL, swellAt, WAVE_LOOP, windWave, seaLevel, seaOpen, shoreSea, openOf, windSpeed, tideAt, tsuHK, TSU_H } from './weather.js';
 import { Rain, Bolt, Spindrift, Spout, WaveSpray } from './skyfx.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { FishBatch } from './fishBatch.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
@@ -2629,7 +2630,7 @@ function aimTarget() {
             c.rayMesh.updateMatrixWorld(true);
             _aimHits.length = 0;
             _aimRay.intersectObject(c.rayMesh, true, _aimHits);
-            hit = _aimHits.find((h) => h.object.visible && !h.object.userData?.hull && !h.object.userData?.camProxy) ?? null;
+            hit = _aimHits.find((h) => (h.object.visible || h.object.userData?.batched) && !h.object.userData?.hull && !h.object.userData?.camProxy) ?? null;
           }
           direct = !!hit;
           hitT = hit ? hit.distance : Infinity;
@@ -5777,7 +5778,7 @@ let shadowElapsed = 0, shadowDraws = 0;
 const _lodP = new THREE.Vector3();
 function farLod() {
   const cp = camera.position, fish2 = LOD.fishFar ** 2, hull2 = LOD.figHullFar ** 2, fig2 = LOD.figFar ** 2;
-  const d2 = (m) => _lodP.setFromMatrixPosition(m.matrixWorld).distanceToSquared(cp);
+  const d2 = (m) => { m.updateWorldMatrix(true, false); return _lodP.setFromMatrixPosition(m.matrixWorld).distanceToSquared(cp); };   // 先更新：剛擺出來的東西矩陣還是原點
   for (const it of fish.items) it.mesh.visible = d2(it.mesh) < fish2;
   for (const e of boxes.map.values()) e.inner.visible = d2(e.mesh) < fish2;
   for (const o of others.map.values()) {
@@ -5788,6 +5789,37 @@ function farLod() {
     const hull = d < hull2;
     if (f._hullOn !== hull) { f._hullOn = hull; f.mesh.traverse((m) => { if (m.userData.hull) m.visible = hull; }); }
   }
+}
+// 魚的合畫：甲板上、地上、魚箱裡躺著不動（沒在擺）而且看得到的魚，交給 fishBatch 同種一起畫，本身的零件藏起來；
+// 正在擺、正被準心對著（要畫綠色描邊）的照原本一條一條畫。零件藏起來時標 userData.batched，瞄準照樣打得到
+const fishBatch = new FishBatch(scene);
+let batchedNow = new Set(), batchedNext = new Set();   // 這一幀、上一幀被收去合畫的魚（離開的要把零件放回來，例如被撿到手上）
+function shownInScene(o) {
+  for (; o; o = o.parent) { if (!o.visible) return false; if (o === scene) return true; }
+  return false;
+}
+function showParts(root, on) {
+  for (const c of root.children) if (c.userData.inst) { c.userData.batched = on; c.visible = !on; }
+}
+function batchFish(aim) {
+  const skip = aim?.kind === 'item' ? aim.item?.mesh : aim?.kind === 'fpile' ? aim.fishMesh : null;
+  const take = (root) => {
+    if (!root.userData.inst) return;
+    const flex = root.userData.flex;
+    const on = (!flex || flex.amp < 0.003) && root !== skip && shownInScene(root);
+    showParts(root, on);
+    if (!on) return;
+    batchedNext.add(root);
+    root.updateWorldMatrix(true, true);
+    for (const c of root.children) if (c.userData.inst) fishBatch.add(c);
+  };
+  fishBatch.begin();
+  for (const it of fish.items) take(it.mesh);
+  for (const e of boxes.map.values()) for (const m of e.inner.children) take(m);
+  fishBatch.end();
+  for (const r of batchedNow) if (!batchedNext.has(r)) showParts(r, false);
+  [batchedNow, batchedNext] = [batchedNext, batchedNow];
+  batchedNext.clear();
 }
 function drawFrame(dt, ms = performance.now()) {
   updateCamera(dt);
@@ -5968,6 +6000,7 @@ function drawFrame(dt, ms = performance.now()) {
   const aim = inGame && mode === 'walk' && !debugCam && !tabOpen() && !chat.isOpen && !wheel.isOpen && !$('panel').open ? aimTarget() : null;
   const outline = aimOutlineTargets(aim);
   aimOutline.setTargets(outline?.objs, outline?.ignore);
+  batchFish(aim);
   composer.render();
   checkWater();
 }
