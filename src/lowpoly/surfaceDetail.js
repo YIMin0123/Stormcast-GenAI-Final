@@ -91,10 +91,15 @@ const FRAG = /* glsl */`
 			vec4 a = SD_UV(0.04, 0.25, vec2(0.0)), b = SD_UV(0.2, 1.2, vec2(0.37));
 			float q = v * 9.0 + (a.r - 0.5) * 6.0 + (a.g - 0.5) * 1.5;
 			float line = smoothstep(0.05, 0.5, abs(fract(q) - 0.5) * 2.0);
-			float aa = sdAA(vW * 9.0);
+			// 一個像素裡 q 變了多少：除了 v 方向的 9 條／公尺，雜訊把線推彎也會讓線變密（最多快一倍），斜著看時沿長邊的彎曲也算進去。
+			// 只算 v 的話，中距離線已經細到一個像素以下還在畫，深色的細線就斷成一串黑點
+			float qW = vW * 18.0 + uW * 1.5;
+			float aa = sdAA(qW);
+			// 凹凸更早收掉：凹凸用的是 2×2 像素一組的螢幕導數，紋路一細就變成一格一格的黑點
+			float aaB = 1.0 - smoothstep(0.08, 0.25, qW);
 			m = mix(0.95, mix(0.88, 1.04, line), aa) * (0.95 + 0.1 * b.g);
 			m *= 1.0 - 0.12 * smoothstep(0.78, 0.92, b.a);
-			h = line * aa * 0.4 + b.g * 0.3; bump = 0.5;
+			h = line * aaB * 0.4 + b.g * 0.3; bump = 0.5;
 		} else if (kind == 2) {
 			// 石砌：一排一排錯開的石塊、深色的灰縫、每塊石頭深淺不同、表面粗糙
 			vec3 hz = abs(N.y) > 0.7 ? vec3(1.0, 0.0, 0.0) : sdNorm(vec3(-N.z, 0.0, N.x), vec3(1.0, 0.0, 0.0));

@@ -403,9 +403,9 @@ export function buildHarbor({ P, r, place, mat, group, templates, game = false, 
       // 四個角有沒有伸到前面那幾塊上
       let over = false;
       for (const a of [-w / 2, w / 2]) for (const b of [-len / 2, len / 2]) if (prev.some((Q) => inRect(cx + R.ux * a + wx * b, cz + R.uz * a + wz * b, Q))) over = true;
-      // 木板之間不留縫、側面跟板面同色系（只暗一點）：細細的深色縫在遠處比一個像素還細，會變成一閃一閃的鋸齒線。
+      // 木板之間不留縫（寬度剛好 w，連幾公釐都不留）、側面跟板面同色系（只暗一點）：縫在遠處比一個像素還細，會斷成一串黑點、一閃一閃的鋸齒線。
       // 一片一片靠每片木板深淺不同分出來
-      obox(fb, cx, D - TH / 2 + (over ? 0.012 : jy), cz, wx, wz, len, w - 0.006, TH, col, col.clone().multiplyScalar(0.82), r, 0.05, over ? 0 : roll, over ? 0 : pitch);
+      obox(fb, cx, D - TH / 2 + (over ? 0.012 : jy), cz, wx, wz, len, w, TH, col, col.clone().multiplyScalar(0.82), r, 0.05, over ? 0 : roll, over ? 0 : pitch);
     }
     // 縱樑
     const rows = R.hw > 2.5 ? [-(R.hw - 0.35), 0, R.hw - 0.35] : [-(R.hw - 0.3), R.hw - 0.3];
