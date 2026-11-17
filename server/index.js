@@ -331,9 +331,9 @@ wss.on('connection', (ws, req) => {
     if (m.t === 'join') {
       if (!name) return send(ws, { t: 'denied', msg: '請先填好名字' });
       const r = hub.rooms.get(m.room);
-      if (!r) return send(ws, { t: 'full', msg: '這間房已經關了，挑別間吧', ...lobbyList() });
-      if (r.count >= MAX_PLAYERS) return send(ws, { t: 'full', msg: '這間房滿了，挑別間吧', ...lobbyList() });
-      if (hub.merge && hub.merge.from === r) return send(ws, { t: 'full', msg: '這間房正要合併到別間，挑別間吧', ...lobbyList() });
+      if (!r) return send(ws, { ...lobbyList(), t: 'full', msg: '這間房已經關了，挑別間吧' });
+      if (r.count >= MAX_PLAYERS) return send(ws, { ...lobbyList(), t: 'full', msg: '這間房滿了，挑別間吧' });
+      if (hub.merge && hub.merge.from === r) return send(ws, { ...lobbyList(), t: 'full', msg: '這間房正要合併到別間，挑別間吧' });
       if (resume(now)) return;   // 同一台裝置在別的視窗已經在房裡了：接過來
       if (totalPlayers() >= MAX_TOTAL) return send(ws, { t: 'denied', msg: '伺服器人數已滿，請稍後再試' });   // 全服上限：新玩家擋在大廳，已在房裡的人不受影響
       if (!hub.profiles.raw.has(token) && !hub.dexbook.raw.has(token)) {
