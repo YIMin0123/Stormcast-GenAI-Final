@@ -165,19 +165,30 @@
     body.touch #marquee { top: 58px; font-size: 13px; }
     #toast { left: 50%; top: 62px; transform: translateX(-50%); padding: 7px 18px; font-size: 14px; color: var(--sea-d);
       display: none; white-space: nowrap; max-width: calc(100vw - 40px); overflow: hidden; text-overflow: ellipsis; z-index: 27; }   /* 比平板（26）高：拿著平板時通知也看得到 */
-    #fishui { left: 50%; bottom: 176px; transform: translateX(-50%); padding: 10px 16px; width: 320px;
-      display: none; text-align: center; font-size: 14px; }
-    #bar { position: relative; height: 16px; margin: 8px 0 6px; border-radius: 999px; overflow: hidden; background: rgba(35, 57, 77, 0.14); }
-    #barSafe { position: absolute; left: 0; width: 30%; top: 0; bottom: 0; background: rgba(61, 187, 122, 0.6); border-radius: 999px; }
-    #barMark { position: absolute; top: -1px; bottom: -1px; width: 6px; margin-left: -3px; background: var(--ink); border-radius: 3px;
-      box-shadow: 0 0 0 1.5px var(--btn); }
-    #prog { height: 6px; margin: 0 0 6px; border-radius: 999px; overflow: hidden; background: rgba(35, 57, 77, 0.14); }
-    #progFill { height: 100%; width: 0; background: var(--sea); }
-    #barFill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--good); border-radius: 999px; }
-    #fishHint { color: var(--ink-2); font-size: 13px; }
-    #strain { display: none; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 12px; color: var(--coral-d); white-space: nowrap; }
-    #strainBar { flex: 1; height: 6px; border-radius: 999px; overflow: hidden; background: rgba(35, 57, 77, 0.14); }
-    #strainFill { height: 100%; width: 0; background: var(--bad); }
+    /* 拋竿、搏魚的介面：底下的甲板、沙灘、海面都很亮，這塊改成深海藍底、白字白框（其他卡片照舊水藍），一眼看得清楚。
+       竿子的負荷不另外一條：外框從白色漸漸變紅，過半整框閃紅（main.js 的 updateFishUi） */
+    #fishui { left: 50%; bottom: 176px; transform: translateX(-50%); padding: 10px 14px 9px; width: 320px;
+      display: none; font-size: 14px; color: #fff; background: rgba(14, 53, 80, 0.86); border-color: #fff; }
+    #fishui.danger { animation: fuDanger 0.45s ease-in-out infinite alternate; }
+    @keyframes fuDanger { from { border-color: #fff; } to { border-color: var(--bad); box-shadow: 0 0 0 3px rgba(239, 91, 72, 0.55), var(--shadow); } }
+    #fishui .fuHead { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+    #fishLabel { font-size: 15px; }
+    #fishVal { font-size: 13px; color: #d6f1fb; white-space: nowrap; }
+    #fishVal b { font-weight: normal; font-size: 19px; color: #fff; margin: 0 3px; }
+    #fishVal b.pow { color: var(--sun); }
+    #bar { position: relative; height: 18px; margin: 9px 0 8px; border-radius: 999px; background: #08263b; border: 2px solid var(--sea); }
+    #bar.ticks { background: #08263b repeating-linear-gradient(90deg, transparent 0 calc(25% - 1px), rgba(255, 255, 255, 0.35) calc(25% - 1px) 25%); }
+    #barSafe { position: absolute; left: 0; width: 30%; top: -2px; bottom: -2px; background: var(--good); border: 2px solid #fff; border-radius: 999px; box-sizing: border-box; }
+    #barMark { position: absolute; top: -8px; bottom: -8px; width: 8px; margin-left: -4px; background: var(--coral); border: 2px solid #fff; border-radius: 4px; box-sizing: border-box; }
+    #prog { height: 6px; margin: 0 0 8px; border-radius: 999px; overflow: hidden; background: #08263b; }
+    #progFill { height: 100%; width: 0; background: #5cc2f2; border-radius: 999px; }
+    #barFill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--sun); border-radius: 999px; }
+    #fishHint { display: flex; justify-content: center; align-items: center; gap: 6px; color: #d6f1fb; font-size: 14px; min-height: 24px; }
+    #fishHint .good { color: #7ee2a8; }
+    #fishHint .warn { color: #ffb39e; }
+    #fishHint .bad { color: #ff8a78; }
+    #fishHint kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 21px; margin: 0 4px; padding: 0 6px;
+      border-radius: 6px; background: #fff; color: #0e3550; font: inherit; font-size: 12px; border-bottom: 3px solid var(--edge); box-sizing: border-box; }
     #prompt { left: 50%; bottom: 112px; transform: translateX(-50%); padding: 8px 20px; font-size: 16px;
       color: var(--ink); display: none; white-space: nowrap; border-radius: 999px; }
     #stam { left: 50%; bottom: 70px; transform: translateX(-50%); padding: 5px 14px; font-size: 13px;
@@ -364,7 +375,7 @@
     body.touch #prompt { bottom: 10px; font-size: 14px; padding: 6px 16px; max-width: 52vw; white-space: normal; text-align: center; }
     body.touch #stam { bottom: 54px; }
     body.touch #toast { top: 108px; font-size: 13px; max-width: 46vw; white-space: normal; text-align: center; }
-    body.touch #fishui { bottom: 56px; width: 270px; padding: 8px 12px; }
+    body.touch #fishui { bottom: 56px; width: 270px; padding: 8px 12px 7px; }
     body.touch #chat { top: 52px; bottom: auto; left: calc(12px + env(safe-area-inset-left)); width: min(260px, 34vw); max-height: calc(var(--vv, 100dvh) - 60px); font-size: 12px; }
     body.touch #chat.open { width: min(440px, calc(100vw - 24px - env(safe-area-inset-left) - env(safe-area-inset-right))); max-height: calc(var(--vv, 100dvh) - 60px); }
     body.touch #chatLog { max-height: min(92px, calc(var(--vv, 100dvh) - 68px)); }
@@ -497,7 +508,7 @@
   <div id="hud" class="card hudRow"><span id="hLv" title="等級">Lv.1</span><span id="hTitle" title="本週稱號"></span><span id="hClock"></span><span id="hSky"></span><span id="hMoneyBox" title="金錢"><i data-ic="coin"></i><b id="hMoney">$0</b></span></div>
   <div id="hShip" class="card hudRow"><span title="船的耐久"><i data-ic="boat"></i><b id="hHp">100%</b></span><span title="燃油"><i data-ic="fuel"></i><b id="hFuel">0</b></span><span id="hSpeed" title="船速"><i data-ic="speed"></i><b id="hBoat">0.0 節</b></span></div>
   <div id="compass" aria-hidden="true"></div>
-  <div id="fishui" class="card"><div id="fishLabel"></div><div id="bar"><div id="barSafe"></div><div id="barFill"></div><div id="barMark"></div></div><div id="prog"><div id="progFill"></div></div><div id="strain">釣竿負荷<div id="strainBar"><div id="strainFill"></div></div></div><div id="fishHint"></div></div>
+  <div id="fishui" class="card"><div class="fuHead"><span id="fishLabel"></span><span id="fishVal"></span></div><div id="bar"><div id="barSafe"></div><div id="barFill"></div><div id="barMark"></div></div><div id="prog"><div id="progFill"></div></div><div id="fishHint"></div></div>
   <div id="marquee"><span></span></div>
   <div id="toast" class="card"></div>
   <div id="aim"></div>

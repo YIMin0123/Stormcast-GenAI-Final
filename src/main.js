@@ -86,8 +86,8 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const r2 = (v) => Math.round(v * 100) / 100;
 
 function fail(msg) {
-  const el = $('err');
   $('boot')?.remove();   // 開場畫面蓋在錯誤訊息上面，先拿掉
+  const el = $('err');
   el.style.display = 'flex';
   el.textContent = msg;
   throw new Error(msg);
@@ -4982,32 +4982,46 @@ net.on('called', (m) => {
 
 // 釣魚時的介面：拋竿是力道條；收線是「亂跑的區間 + 自己的力道指標 + 拉近的進度」
 let fishUiOn = false;
+// 樣式見 index.html 的 #fishui（深海藍底、白字）。字只在變了的時候才換（每一幀都換 innerHTML 太浪費）
+const fuSet = (id, html) => { const el = $(id); if (el._html !== html) { el._html = html; el.innerHTML = html; } };
+// 提示：一個短的狀態詞（tone：good／warn／bad 決定顏色）＋要按什麼（verb：「按住」「放開」，按鍵接在後面；有 {k} 就放在 {k} 的位置）。手機上按鍵換成「釣魚」按鈕
+const fuHint = (word, tone, verb) => {
+  const key = TOUCH ? '「釣魚」' : '<kbd>F</kbd>';
+  fuSet('fishHint', (word ? `<span class="${tone}">${word}</span>` : '')
+    + (verb ? `<span>${verb.includes('{k}') ? verb.replace('{k}', key) : verb + key}</span>` : ''));
+};
 function updateFishUi() {
   const st = fishing.state, on = st === 'charge' || st === 'fight';
   if (on !== fishUiOn) { fishUiOn = on; $('fishui').style.display = on ? 'block' : 'none'; }
   if (!on) return;
-  const fight = st === 'fight';
+  const fight = st === 'fight', ui = $('fishui');
   $('barSafe').style.display = $('barMark').style.display = $('prog').style.display = fight ? 'block' : 'none';
-  // 釣竿的負荷：只有魚的力氣大到可能把竿子拉斷時才顯示；快滿的時候整塊介面跟著抖
-  const strain = fight ? fishing.strain : 0;
-  $('strain').style.display = fight && fishing.risk > 0 ? 'flex' : 'none';
-  $('strainFill').style.width = `${Math.min(strain, 1) * 100}%`;
-  $('fishui').style.marginLeft = strain > 0.35 ? `${(Math.random() - 0.5) * 10 * strain}px` : '0';
+  $('bar').classList.toggle('ticks', !fight);
+  // 釣竿的負荷：只有魚的力氣大到可能把竿子拉斷時才算；外框從白色漸漸變紅，過半整框閃紅，快滿的時候整塊介面跟著抖
+  const strain = fight && fishing.risk > 0 ? Math.min(fishing.strain, 1) : 0;
+  ui.classList.toggle('danger', strain > 0.5);
+  const k = clamp((strain - 0.15) / 0.35, 0, 1);
+  ui.style.borderColor = strain > 0.15 && strain <= 0.5 ? `rgb(255, ${Math.round(255 - 164 * k)}, ${Math.round(255 - 183 * k)})` : '';
+  ui.style.marginLeft = strain > 0.35 ? `${(Math.random() - 0.5) * 10 * strain}px` : '0';
   if (!fight) {
     $('barFill').style.width = `${fishing.power * 100}%`;
-    $('barFill').style.background = 'var(--sun)';
     $('fishLabel').textContent = '拋竿力道';
-    touchSet($('fishHint'), '放開 F 拋出去');
+    fuSet('fishVal', `<b class="pow">${Math.round(fishing.power * 100)}</b>%`);
+    fuHint('', '', '放開{k}拋出去');
     return;
   }
   $('barFill').style.width = '0';
   $('barSafe').style.left = `${(fishing.zone - fishing.zoneW / 2) * 100}%`;
   $('barSafe').style.width = `${fishing.zoneW * 100}%`;
   $('barMark').style.left = `${fishing.force * 100}%`;
-  $('barMark').style.background = fishing.inZone ? 'var(--ink)' : 'var(--coral)';
+  $('barMark').style.background = fishing.inZone ? 'var(--sun)' : 'var(--coral)';
   $('progFill').style.width = `${clamp(fishing.progress, 0, 1) * 100}%`;
-  $('fishLabel').textContent = `把指標維持在綠色區間內　還有 ${Math.max(fishing.dist, 0).toFixed(0)} 公尺`;
-  touchSet($('fishHint'), strain > 0.5 ? '釣竿快斷了！放開 F！' : fishing.inZone ? '很好，保持住' : fishing.force < fishing.zone ? '力道不夠：按住 F' : '太用力了：放開 F');
+  $('fishLabel').textContent = '拉近牠';
+  fuSet('fishVal', `還有<b>${Math.max(fishing.dist, 0).toFixed(0)}</b>公尺`);
+  if (strain > 0.5) fuHint('竿子快斷了', 'bad', '放開');
+  else if (fishing.inZone) fuHint('很好，保持住', 'good', '');
+  else if (fishing.force < fishing.zone) fuHint('太鬆了', 'warn', '按住');
+  else fuHint('太緊了', 'warn', '放開');
 }
 
 // ---- 多人：跟伺服器對時、送出自己的狀態、照伺服器說的更新 -----------------------
@@ -6297,9 +6311,9 @@ function animate(ms) {
   if (simMs > 0) advance(Math.min(simMs / 1000, 0.05));
   if (drawMs === null) return;
   if (diag) diag(ms);
-  if (bootEl) hideBoot();
   if (probe && !frameLimit) probeGfx(ms, drawMs);
   drawFrame(Math.min(drawMs / 1000, TOUCH && !inGame ? 0.075 : 0.05), ms);
+  if (bootEl) hideBoot();
   if (adaptiveEnabled || !adaptiveAsked) checkAdaptiveQuality(ms);
   if (hudClock.take(ms, TOUCH ? 10 : 20) !== null) { updatePrompt(); if (tabOpen()) { tablet.update(); if (tabHand && !view.walk.fp) syncOwnTabletTex(false); } }
   if (++fpsN && ms - fpsT >= 1000) {
