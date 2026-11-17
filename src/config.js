@@ -194,6 +194,7 @@ export const DEVMODE = {
 export const SERVER = {
   reconnectSec: 180,      // 重連寬限與離線船隻回收共用（秒）
   fixedRooms: 1,           // 常駐房（目前只開 1 號港；要多開就改這個數字，2、3 號港會跟著出現）：一直開著，沒人也不關；都滿了才臨時多開一間
+  maxPlayers: 1200,        // 整個伺服器同時最多幾個玩家（所有房間加起來）：到了就不收新玩家，已經在裡面的人斷線重連不受影響。壓測（正式機 e2-standard-2）1200 人都輕鬆
   openNextAt: 20,          // 每間房人數到這個數就算「滿了」、開下一間備用房（玩家照樣能擠進去，硬上限是 server/room.js 的 MAX_PLAYERS = 30）
   hourStep: 8,             // 相鄰兩間房的遊戲內時間差幾小時：二號比一號晚 8 小時、三號再晚 8 小時，隨時都有一間是白天
   refresh: {

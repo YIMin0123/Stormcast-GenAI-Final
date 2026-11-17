@@ -36,6 +36,7 @@ const MERGE_AFTER = +(process.env.MERGE_AFTER_SEC || 600) * 1000;   // 兩間房
 const MERGE_COUNT = +(process.env.MERGE_COUNT_SEC || 30);           // 合併前倒數幾秒
 const MERGE_BELOW = 5;
 const SAVE_EVERY = 10;   // 進度幾秒存一次（有變才寫檔）
+const MAX_TOTAL = Math.max(1, +(process.env.MAX_TOTAL_PLAYERS || SERVER.maxPlayers));   // 全服人數上限（SERVER.maxPlayers；環境變數只給測試用）
 const HELLO_TIMEOUT = 10000;
 const admission = DEV ? null : new Admission();
 
@@ -59,6 +60,7 @@ const hub = {
 if (hub.profiles.stale) { hub.daily.clear(); hub.profiles.save(); console.log('[refresh] 關機期間刷新過了，進度和今日紀錄已清空'); }
 
 const send = (ws, msg) => sendRaw(ws, JSON.stringify(msg));
+const totalPlayers = () => { let n = 0; for (const r of hub.rooms.values()) n += r.count; return n; };   // 所有房間的人數（含斷線寬限中的）
 const lobbyList = () => ({
   t: 'lobby',
   rooms: [...hub.rooms.values()].sort((a, b) => a.id - b.id).map((r) => ({ id: r.id, name: r.name, n: r.count, max: MAX_PLAYERS, weather: r.weather })),
@@ -334,6 +336,7 @@ wss.on('connection', (ws, req) => {
       if (r.count >= MAX_PLAYERS) return send(ws, { t: 'full', msg: '這間房滿了，挑別間吧', ...lobbyList() });
       if (hub.merge && hub.merge.from === r) return send(ws, { t: 'full', msg: '這間房正要合併到別間，挑別間吧', ...lobbyList() });
       if (resume(now)) return;   // 同一台裝置在別的視窗已經在房裡了：接過來
+      if (totalPlayers() >= MAX_TOTAL) return send(ws, { t: 'denied', msg: '伺服器人數已滿，請稍後再試' });   // 全服上限：新玩家擋在大廳，已在房裡的人不受影響
       if (!hub.profiles.raw.has(token) && !hub.dexbook.raw.has(token)) {
         if (admission && !admission.guest(key)) return send(ws, { t: 'denied', msg: '目前新增訪客較多，請稍後再試' });
         token = randomBytes(16).toString('hex');
