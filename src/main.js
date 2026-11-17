@@ -104,7 +104,7 @@ renderer.domElement.addEventListener('webglcontextlost', (e) => {
   document.body.appendChild(n);
   window.setTimeout(() => window.location.reload(), 1500);
 });
-// 畫質設定記在瀏覽器裡（?test 分頁只記在那個分頁）。手機開啟動態畫質後會暫時減少特效。
+// 畫質設定記在瀏覽器裡（?test 分頁只記在那個分頁）。開啟動態畫質（手機、電腦都有）後，畫面不穩時會暫時減少特效。
 //   解析度：沒調過的話，電腦跟著螢幕的縮放比例走（筆電常見 1.25、1.5 倍，畫面才不會被放大而糊掉）；
 //           手機預設 1.5 倍，可手動選 1.0 到 2.0 倍。
 //   畫質等級：低／中／高，管陰影的細緻度、草的數量、角落的暗影（AO）、濕地板的倒影、光暈和陽光光束。
@@ -116,11 +116,12 @@ const setPref = (k, v) => { try { if (prefStore) prefStore.setItem(k, String(v))
 const mobileShadowClock = new FramePacer();
 const simClock = new FramePacer(), drawClock = new FramePacer(), hudClock = new FramePacer();
 const mobileRefresh = TOUCH ? new RefreshRateProbe() : null;
-const qualityTiming = TOUCH ? new QualityTiming() : null;
-const savedAdaptive = TOUCH ? getPref('stormcast.adaptiveGfx') : null;
+const qualityTiming = new QualityTiming();
+const savedAdaptive = getPref('stormcast.adaptiveGfx');
 let adaptiveEnabled = savedAdaptive === 'on', adaptiveAsked = savedAdaptive === 'on' || savedAdaptive === 'off';
 let adaptivePrompt = false;
 let qualityReduction = 0;
+let homeTip = false;   // 這次進房要不要教「加入主畫面」（見 showHomeTip）
 const desktopRatio = () => Math.round(clamp(window.devicePixelRatio || 1, 1, 1.5) * 10) / 10;
 const RATIO_MIN = TOUCH ? 1 : 0.5;
 const RATIO_MAX = TOUCH ? 2 : Math.round(clamp(window.devicePixelRatio || 1, 1.5, 2) * 10) / 10;
@@ -3180,7 +3181,7 @@ function applyLite() {
 let viewReady = false;
 function applyGfx() {
   gfx = deriveGfx();
-  qualityTiming?.reset();
+  qualityTiming.reset();
   mobileShadowClock.reset();
   if (SHADOW_HALF !== gfx.shadowHalf) {
     SHADOW_HALF = gfx.shadowHalf;
@@ -3341,15 +3342,14 @@ let frameLimit = 0, syncFrameChoices;
     if (!TOUCH) simClock.reset();
   };
   syncFrameChoices();
-  if (TOUCH) {
-    $('adaptiveGfxRow').hidden = false;
-    $('adaptiveGfx').addEventListener('click', () => {
-      adaptivePrompt = false;
-      cancelAsk('adaptiveGfx');
-      setAdaptiveQuality(!adaptiveEnabled);
-    });
-    syncAdaptiveButton();
-  }
+  // 動態調整畫質：手機、電腦都有（電腦的目標幀率：有設上限就照上限，「不限」就以 60 FPS 為準）
+  $('adaptiveGfxRow').hidden = false;
+  $('adaptiveGfx').addEventListener('click', () => {
+    adaptivePrompt = false;
+    cancelAsk('adaptiveGfx');
+    setAdaptiveQuality(!adaptiveEnabled);
+  });
+  syncAdaptiveButton();
 }
 applyGfx();
 
@@ -3380,9 +3380,11 @@ function adjustQuality(direction) {
   }
 }
 
+const ADAPTIVE_DESKTOP_FPS = 60;   // 電腦幀率「不限」時，動態畫質以每秒 60 幀為目標
 function checkAdaptiveQuality(ms) {
-  if (!inGame || !net.online || tabOpen() || fadeIn > 0 || mode === 'sink') { qualityTiming.reset(); return; }
-  const change = qualityTiming.sample(ms, frameLimit);
+  // 電腦第一次進房量幀率（probeGfx）那幾秒先不算，免得兩邊一起降
+  if (!inGame || !net.online || tabOpen() || fadeIn > 0 || mode === 'sink' || probe) { qualityTiming.reset(); return; }
+  const change = qualityTiming.sample(ms, TOUCH ? frameLimit : frameLimit || ADAPTIVE_DESKTOP_FPS);
   if (adaptiveEnabled) {
     if (change) adjustQuality(change === 'lower' ? 1 : -1);
     return;
@@ -3421,6 +3423,16 @@ if (TOUCH && canFullscreen) {
   show();
 } else if (TOUCH && !window.navigator.standalone && !window.matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches) {
   $('fullNote').style.display = 'block';
+  homeTip = getPref('stormcast.homeTip') !== 'done';
+}
+// iPhone（瀏覽器不給網頁全螢幕）：進房幾秒後跳一張小卡，教玩家「加入主畫面」再從主畫面打開（就沒有網址列）。
+// 按「知道了」之後不再跳；按「之後再說」下次重新整理進房再提醒。設定裡那行說明（fullNote）照舊留著
+function showHomeTip() {
+  if (!inGame) return;
+  if (asking() || tabOpen() || chat.isOpen) { window.setTimeout(showHomeTip, 3000); return; }   // 別的小卡、平板、聊天開著：晚點再跳
+  ask('想要全螢幕玩？\niPhone 的瀏覽器不能直接全螢幕：點 Safari 的「分享」（方框加向上箭頭）→「加入主畫面」，之後從主畫面的圖示打開，就沒有網址列、畫面更大。', {
+    yes: '知道了', no: '之後再說', tag: 'homeTip',
+  }).then((ok) => { if (ok) setPref('stormcast.homeTip', 'done'); });
 }
 // 電腦的預設跟著螢幕縮放比例。手機預設是固定值，手動設定則一直沿用。
 if (!TOUCH) {
@@ -5677,6 +5689,7 @@ function enterRoom(j) {
   syncOwnTabletTex(true);
   fadeIn = 1.2;
   if (back?.passengerReturn) returnPassenger(back.passengerReturn);
+  if (homeTip) { homeTip = false; window.setTimeout(showHomeTip, 5000); }
 }
 
 let wakeIdx = 0, wakeTimer = 0, sprayAcc = 0, jetShake = 0, lastStep = 0, dtSim = 0.016;
@@ -6231,7 +6244,7 @@ function animate(ms) {
   if (diag) diag(ms);
   if (probe && !frameLimit) probeGfx(ms, drawMs);
   drawFrame(Math.min(drawMs / 1000, TOUCH && !inGame ? 0.075 : 0.05), ms);
-  if (TOUCH && (adaptiveEnabled || !adaptiveAsked)) checkAdaptiveQuality(ms);
+  if (adaptiveEnabled || !adaptiveAsked) checkAdaptiveQuality(ms);
   if (hudClock.take(ms, TOUCH ? 10 : 20) !== null) { updatePrompt(); if (tabOpen()) { tablet.update(); if (tabHand && !view.walk.fp) syncOwnTabletTex(false); } }
   if (++fpsN && ms - fpsT >= 1000) {
     const span = ms - fpsT;
@@ -6244,7 +6257,7 @@ function animate(ms) {
 function syncAnimation() {
   simClock.reset(); drawClock.reset(); hudClock.reset(); mobileShadowClock.reset();
   mobileRefresh?.reset();
-  qualityTiming?.reset();
+  qualityTiming.reset();
   shadowElapsed = 0;
   if (probe) { probe.t0 = 0; probe.n = 0; probe.sum = 0; }
   fpsN = 0; fpsT = performance.now();
@@ -6266,6 +6279,7 @@ window.__sim = {
   dev: (cmd, o = {}) => net.send({ t: 'dev', cmd, ...o }),   // 測試指令（伺服器開了開發模式才收）：event / calm / skip / money / fish / refresh（立刻刷新）
   sea, dangerAt, tsuAt, stormK, waterY, nearTank,
   get wreck() { return wreck; }, surfProbe, climate, lightning, updateWeather, boatEnv, rain, bolt, spouts,
+  showHomeTip,
   get rainNow() { return rainNow; }, get gloom() { return gloom; }, lampLights, boatLight, wildlife,
   updatePrompt, N, DX, L, ISLANDS, camera, scene, water, terrain, scenery, harbor, shared, spray, renderer,
   get mode() { return mode; }, NF, sun, placeSun, WIND, rays, bloom, aoPass, camBlockers, SIGHT, grass, SOLIDS, rockAt, composer, shallow, shallowNear, target, playerWater, updateSwim, toggleMap: () => tablet.toggle('map'), drawMap,
