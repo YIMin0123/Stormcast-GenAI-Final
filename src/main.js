@@ -5245,26 +5245,40 @@ function markParty() {
 }
 net.on('chumOk', () => { audio.play('plop'); toast(`已施放誘魚桶！吸引方圓 ${CHUM_SPEC.radius}m 魚群，持續 ${CHUM_SPEC.life} 秒`); });
 net.on('chat', (m) => chat.say(m.name, m.text, m.id === net.id, { lv: m.lv, title: m.title || '', gold: !!m.gold }));
-net.on('sys', (m) => chat.sys(m.text, m.kind));
-// 全服公告（跑馬燈）：伺服器發的文字，可帶「幾秒後重開」的倒數；沒有公告（text 空、left < 0）就收起來。重開之後新連線收到的是空的，舊的自然清掉
+net.on('sys', (m) => { if (m.kind === 'merge') mergeMarq(m.text, 0, 8); else chat.sys(m.text, m.kind); });   // 合併相關的提示走跑馬燈，不進聊天室
+// 跑馬燈：兩種內容共用同一條——伺服器的全服公告（可帶「幾秒後重開」的倒數），和房間合併的提示（可帶「幾秒後合併」的倒數）。
+// 合併提示優先顯示，結束後回到全服公告；都沒有就收起來。重開之後新連線收到的公告是空的，舊的自然清掉
 const marqEl = $('marquee');
-let marqTimer = 0;
-net.on('notice', (m) => {
+let marqTimer = 0, marqNotice = null, marqMerge = null, marqMergeOff = 0;
+function marqRender() {
   clearInterval(marqTimer);
-  if (!m.text && m.left < 0) { marqEl.style.display = 'none'; document.body.classList.remove('marq'); return; }
-  const end = m.left >= 0 ? performance.now() + m.left * 1000 : 0, span = marqEl.firstElementChild;
+  const it = marqMerge || marqNotice, span = marqEl.firstElementChild;
+  if (!it) { marqEl.style.display = 'none'; document.body.classList.remove('marq'); return; }
   const draw = () => {
-    const left = Math.max(0, Math.ceil((end - performance.now()) / 1000));
-    const tail = !end ? '' : left > 0 ? `伺服器將在 ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} 後重新啟動，進度會保存，斷線後會自動接回` : '伺服器重新啟動中，請稍候…';
-    const t = [m.text, tail].filter(Boolean).join('　');
+    const left = it.end ? Math.max(0, Math.ceil((it.end - performance.now()) / 1000)) : 0;
+    const t = [it.text, it.end ? it.tail(left) : ''].filter(Boolean).join('　');
     if (span.textContent !== t) span.textContent = t;
   };
   draw();
   marqEl.style.setProperty('--dur', `${Math.max(12, span.textContent.length * 0.45)}s`);
   marqEl.style.display = 'block';
   document.body.classList.add('marq');
-  if (end) marqTimer = setInterval(draw, 1000);
+  if (it.end) marqTimer = setInterval(draw, 1000);
+}
+net.on('notice', (m) => {
+  marqNotice = !m.text && m.left < 0 ? null : {
+    text: m.text, end: m.left >= 0 ? performance.now() + m.left * 1000 : 0,
+    tail: (left) => left > 0 ? `伺服器將在 ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} 後重新啟動，進度會保存，斷線後會自動接回` : '伺服器重新啟動中，請稍候…',
+  };
+  marqRender();
 });
+// 合併提示：sec 是倒數秒數（0 = 只有文字）；holdSec 秒後自動收起來（倒數中的不收，等下一個階段或取消）
+function mergeMarq(text, sec = 0, holdSec = 0) {
+  clearTimeout(marqMergeOff);
+  marqMerge = text ? { text, end: sec ? performance.now() + sec * 1000 : 0, tail: (left) => (left > 0 ? `${left} 秒後合併` : '合併中…') } : null;
+  if (marqMerge && holdSec) marqMergeOff = setTimeout(() => { marqMerge = null; marqRender(); }, holdSec * 1000);
+  marqRender();
+}
 net.on('boards', (m) => { boards.set(m); if (tabOpen()) tablet.update(); });
 net.on('lights', (m) => applyRoomLights(m.lights));
 net.on('kit', (m) => applyKit(m.kit));
@@ -5395,7 +5409,9 @@ net.on('reset', (m) => {
 
 // ---- 合併房間 ----
 net.on('merge', (m) => {
-  if (m.text) { chat.sys(m.text, 'merge'); toast(m.text); }
+  if (m.phase === 'count') mergeMarq(m.text, m.sec);
+  else if (m.phase === 'wait') mergeMarq(m.text);
+  else if (m.phase === 'cancel') mergeMarq(m.text, 0, 8);   // 沒有文字（正常中止）就直接收起來
   if (m.phase === 'count' && m.move) mergeAt = performance.now() + m.sec * 1000;
   else if (m.phase === 'cancel') { mergeAt = 0; if (!wreck && !drown) $('fade').style.opacity = 0; }
 });
@@ -5420,7 +5436,7 @@ net.on('merged', (m) => {
   lastPosMsg = lastBoatMsg = lastBoatDetail = '';
   if (!wreck && !drown) fadeIn = 1.6;
   if (m.repark) flashMyBoat();
-  chat.sys(`已經合併到${room.name}${m.repark ? '，你的船移到港口另一個船位（畫面上標出來了）' : ''}`, 'merge');
+  mergeMarq(`已經合併到${room.name}${m.repark ? '，你的船移到港口另一個船位（畫面上標出來了）' : ''}`, 0, 10);   // 跑馬燈，不進聊天室
 });
 
 // ---- 連線狀態 ----

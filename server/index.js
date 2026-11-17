@@ -33,7 +33,7 @@ const HOST = process.env.HOST || '127.0.0.1';   // 正式機在 Caddy 後面，�
 const DATA = process.env.DATA_DIR || join(dirname(fileURLToPath(import.meta.url)), 'data');
 const ORIGINS = (process.env.ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);   // 只收這些網站連進來（沒設定就都收）
 const MERGE_AFTER = +(process.env.MERGE_AFTER_SEC || 600) * 1000;   // 兩間房都少於 MERGE_BELOW 人多久之後合併
-const MERGE_COUNT = +(process.env.MERGE_COUNT_SEC || 30);           // 合併前倒數幾秒
+const MERGE_COUNT = +(process.env.MERGE_COUNT_SEC || 60);           // 合併前倒數幾秒（客戶端用跑馬燈顯示即時倒數）
 const MERGE_BELOW = 5;
 const SAVE_EVERY = 10;   // 進度幾秒存一次（有變才寫檔）
 const MAX_TOTAL = Math.max(1, +(process.env.MAX_TOTAL_PLAYERS || SERVER.maxPlayers));   // 全服人數上限（SERVER.maxPlayers；環境變數只給測試用）
@@ -169,12 +169,11 @@ function mergeStep(now) {
   }
   if (m.phase !== 'count') {
     m.phase = 'count'; m.left = MERGE_COUNT;
-    from.all({ t: 'merge', phase: 'count', move: true, sec: m.left, text: `這間房人比較少，${m.left} 秒後合併到${to.name}（位置、船和錢都會保留）` });
-    to.all({ t: 'merge', phase: 'count', sec: m.left, text: `${m.left} 秒後，${from.name}的玩家將合併進來` });
+    from.all({ t: 'merge', phase: 'count', move: true, sec: m.left, text: `這間房人比較少，將合併到${to.name}（位置、船和錢都會保留）` });
+    to.all({ t: 'merge', phase: 'count', sec: m.left, text: `${from.name}的玩家將合併進來` });
     return;
   }
   m.left--;
-  if (m.left === 10) from.all({ t: 'merge', phase: 'count', move: true, sec: 10, text: `10 秒後合併到${to.name}` });
   if (m.left <= 0) doMerge();
 }
 
